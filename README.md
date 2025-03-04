@@ -19,10 +19,10 @@ Incorporating the Iris File Extension into your code base **is simple** but requ
 ### Non-CMake Project
 If you are **NOT** using CMake to build your project, you should still use CMake to generate the Iris File Extension library.
 ```shell
-git clone --depth 1 https://github.com/IrisDigitalPathology/IrisFileExtension.git
-cmake -B ./IrisFileExtension/build ./IrisFileExtension #(optional)-DCMAKE_INSTALL_PREFIX=''
-cmake --build ./IrisFileExtension/build --config Release
-cmake --install ./IrisFileExtension/build
+git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-File-Extension.git
+cmake -B ./Iris-File-Extension/build ./Iris-File-Extension #(optional)-DCMAKE_INSTALL_PREFIX=''
+cmake --build ./Iris-File-Extension/build --config Release
+cmake --install ./Iris-File-Extension/build
 ```
 
 ### CMake Project
@@ -30,7 +30,7 @@ If you **are** using CMake for your build, You may directly incorporate this rep
 ```CMake
 FetchContent_Declare (
     IrisFileExtension
-    GIT_REPOSITORY https://github.com/IrisDigitalPathology/IrisFileExtension.git
+    GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-File-Extension.git
     GIT_TAG "origin/main"
     GIT_SHALLOW ON
 )
