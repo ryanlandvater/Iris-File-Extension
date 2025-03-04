@@ -42,23 +42,28 @@ set(IFE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-FetchContent_Declare (
-    IrisHeaders
-    GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-Headers.git
-    GIT_TAG "origin/main"
-    GIT_SHALLOW ON
-)
-FetchContent_MakeAvailable(IrisHeaders)
+if (NOT DEFINED irisheaders_SOURCE_DIR)
+    FetchContent_Declare (
+        IrisHeaders
+        GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-Headers.git
+        GIT_TAG "origin/main"
+        GIT_SHALLOW ON
+    )
+    FetchContent_MakeAvailable(IrisHeaders)
+endif()
 
 add_library(IrisFileExtension SHARED)
 target_sources (
     IrisFileExtension INTERFACE FILE_SET HEADERS
     BASE_DIRS ${IFE_SOURCE_DIR}
     FILES
+    ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
+    ${IFE_SOURCE_DIR}/IrisCodecFile.hpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
 )
 target_sources (
     IrisFileExtension PRIVATE
+    ${IFE_SOURCE_DIR}/IrisCodecFile.cpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
 )
 target_include_directories (
