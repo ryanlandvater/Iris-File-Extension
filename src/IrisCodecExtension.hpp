@@ -57,7 +57,6 @@ constexpr uint16_t IRIS_EXTENSION_MINOR = 0;
 
 // Iris' Magic Number is ASCII for 'Iris' 49 72 69 73
 #define MAGIC_BYTES 0x49726973
-#define BYTE        uint8_t
 
 /// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
 bool is_Iris_Codec_file     (BYTE* const __mapped_file_ptr, size_t file_size);

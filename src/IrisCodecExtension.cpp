@@ -38,15 +38,12 @@
 #include <bit> // NOTE: Bit requires compiling against C++20
 #include <memory>
 #include <math.h>
-#include <set>
-#include <unordered_map>
 #include <iostream>
 #include <sstream>
 #include <assert.h>
-//#include "I2S.hpp"
-#include "IrisCore.hpp"
+#include "IrisTypes.hpp"
 #include "IrisBuffer.hpp"
-#include "IrisCodecCore.hpp"
+#include "IrisCodecTypes.hpp"
 #include "IrisCodecExtension.hpp"
 static_assert(sizeof(size_t) >= 8, "Iris Codec Extension requires 64-bit architecture");
 static_assert(__cplusplus >= 202002L, "Iris Codec Extension requires C++20 or greater");
@@ -593,7 +590,7 @@ void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
         ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo layerExtentsOffset. Per the IFE specification  Section 2.3.2, layer extents shall contain a valid offset to the layer extents array (Section 2.4.2) containing the number of tiles and scale of each layer");
     #endif
     
-    auto __ptr = __base + __CI.tileTableOffset; 
+    auto __ptr = __base + __CI.tileTableOffset;
     STORE_U64   (__ptr + TILE_TABLE::VALIDATION,            __CI.tileTableOffset);
     STORE_U16   (__ptr + TILE_TABLE::RECOVERY,              RECOVER_TILE_TABLE);
     STORE_U8    (__ptr + TILE_TABLE::ENCODING,              __CI.encoding);
@@ -1888,7 +1885,7 @@ void STORE_ANNOTATION_BYTES(BYTE *const __base, Offset offset, const IrisCodec::
     if (bytes->size() > UINT32_MAX) throw std::runtime_error
         ("Failed to store annotation bytes -- data block too large (%u bytes). Per the IFE specification Section 2.4.9, the byte array shall contain less bytes than the 32-bit max value (4.29 GB).");
     #endif
-    __fp16 s = 0.f;
+    
     auto __ptr = __base + offset;
     STORE_U64(__ptr + ANNOTATION_BYTES::VALIDATION, offset);
     STORE_U16(__ptr + ANNOTATION_BYTES::RECOVERY, RECOVER_ANNOTATION_BYTES);
