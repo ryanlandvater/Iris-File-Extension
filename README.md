@@ -13,7 +13,7 @@ This repository builds tools to access Iris files as headers or as modules with 
 
 # Implementation
 ## C++ Interface
-Incorporating the Iris File Extension into your code base **is simple** but requires additional headers. The [Iris Headers repository]() is automatically included when using this repository with CMake *(recommended)*; however it can be optionally configured and installed separately. 
+Incorporating the Iris File Extension into your code base **is simple** but requires additional headers. The [Iris Headers repository](https://github.com/IrisDigitalPathology/Iris-Headers) is automatically included when using this repository with CMake *(recommended)*; however it can be optionally configured and installed separately. 
 
 ### Non-CMake Project
 If you are **NOT** using CMake to build your project, you should still use CMake to generate the Iris File Extension library.
@@ -46,32 +46,32 @@ target_link_libraries (
 It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. Validation is performed by calling the `IrisCodec::validate_file_structure` method defined in [IrisCodecExtension.hpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L69) and implemented in [IrisCodecExtension.cpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.cpp#L194). 
 ```cpp
 try {
-        size = GET_FILE_SIZE(file_handle);
-        ptr  = FILE_MAP(file_handle, size);
+    size = GET_FILE_SIZE(file_handle);
+    ptr  = FILE_MAP(file_handle, size);
 
-        IrisCodec::validate_file_structure((uint8_t*)ptr, size);
-        
-    } catch (std::runtime_error &error) {
-        ...handle the validation error
-    }
+    IrisCodec::validate_file_structure((uint8_t*)ptr, size);
+    
+} catch (std::runtime_error &error) {
+    ...handle the validation error
+}
 ```
 ### Using Slide Abstraction
 The easiest way to access slide information is via the `IrisCodec::Abstraction::File` [object](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L206-L211), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). A file abstraction can be 
 ```cpp
 struct IrisCodec::Abstraction::File {
-    Header          header;
-    TileTable       tileTable;
-    Images          images;
-    Annotations     annotations;
-    Metadata        metadata;
+    Header          header;      // File Header information
+    TileTable       tileTable;   // Table of slide extent and WSI 256 pixel tiles
+    Images          images;      // Set of ancillary images (label, thumbnail, etc...)
+    Annotations     annotations; // Set of on-slide annotation objects
+    Metadata        metadata;    // Slide metadata (patient info, acquisition. etc...)
 };
 ...
 try {
-        using namespace IrisCodec::Abstraction;
-        File file = abstract_file_structure ((uint8_t*)ptr, size);
-    } catch (std::runtime_error &error) {
-        ...handle the read error
-    }
+    using namespace IrisCodec::Abstraction;
+    File file = abstract_file_structure ((uint8_t*)ptr, size);
+} catch (std::runtime_error &error) {
+    ...handle the read error
+}
 ```
 
 ## Python Interface
