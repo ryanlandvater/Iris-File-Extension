@@ -1,12 +1,8 @@
 # Iris File Extension
 
 This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This provies the exact byte-offset vtables and enumerations referenced by the Iris Codec specification.
-
-> [!TIP]
-> This may not be the repository you wish to use. A higher level implemenation that allows for reading and encoding Iris type files (*.iris extension*) is available as part of the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git). 
-
 > [!WARNING]
-> This implementation allows for low-level manipulation of the Iris File Extension file structure. Most programmers attempting to access Iris files should not use this repository and instead should incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) into their projects. 
+> **This repository is primarily for Scanner Vendors and programmers wishing to write custom encoders and decoders**. If this does not describe your goals, you should instead should incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) into your project. This implementation allows for low-level manipulation of the Iris File Extension file structure. Most programmers (particularly for research) attempting to access Iris files **should not use this repository**. 
 
 > [!NOTE]
 > The scope of this repository is only deserializing Iris slide files. Decompression is **NOT** a component of this repository. The WSI tile byte arrays will be referenced in their compressed forms and it is up to your implementation to decompress these tiles. If you would like a system that performs image decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git).
