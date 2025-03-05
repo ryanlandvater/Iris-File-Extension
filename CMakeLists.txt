@@ -104,4 +104,13 @@ if (${PROJECT_IS_TOP_LEVEL})
         FILE IrisFileExtensionConfig.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Iris
     )
-endif()
+endif(${PROJECT_IS_TOP_LEVEL})
+
+if(BUILD_EXAMPLES)
+    message(STATUS "Configured to build text example IFE implementations (/examples directory)")
+    add_compile_definitions(BUILD_EXAMPLES_TEST)
+    set(EXAMPLES_DIR ${PROJECT_SOURCE_DIR}/examples)
+    add_executable(slide_info_abstraction ${EXAMPLES_DIR}/slide_info_abstraction.cpp)
+    target_include_directories (slide_info_abstraction PRIVATE ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include)  
+    target_link_libraries(slide_info_abstraction PRIVATE IrisFileExtensionStatic)
+endif(BUILD_EXAMPLES)
