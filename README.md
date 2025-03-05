@@ -8,6 +8,9 @@ This is the official implementation of the Iris File Extension specification, pa
 > [!WARNING]
 > This implementation allows for low-level manipulation of the Iris File Extension file structure. Most programmers attempting to access Iris files should not use this repository and instead should incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) into their projects. 
 
+> [!NOTE]
+> The scope of this repository is only deserializing Iris slide files. Decompression is **NOT** a component of this repository. The WSI tile byte arrays will be referenced in their compressed forms and it is up to your implementation to decompress these tiles. If you would like a system that performs image decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git).
+
 This repository builds tools to access Iris files as headers or as modules with Python or JavaScript bindings. The repository uses the CMake build system. 
 
 <p xmlns:cc="http://creativecommons.org/ns#" >This repository is licensed under the MIT software license. The Iris File Extension is licensed under <a href="https://creativecommons.org/licenses/by-nd/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY-ND 4.0<img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nd.svg?ref=chooser-v1" alt=""></a></p>
