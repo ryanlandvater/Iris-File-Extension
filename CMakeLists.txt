@@ -8,6 +8,8 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(IRIS_EXTENSION_BUILD_ALL ON)
+# set(STATIC_BUILD OFF)
+
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
     if (NOT EXISTS ${IFE_core_header})
@@ -52,33 +54,33 @@ if (NOT DEFINED irisheaders_SOURCE_DIR)
     FetchContent_MakeAvailable(IrisHeaders)
 endif()
 
-add_library(IrisFileExtension SHARED)
+add_library(IrisFileExtensionLib OBJECT)
 target_sources (
-    IrisFileExtension INTERFACE FILE_SET HEADERS
+    IrisFileExtensionLib INTERFACE FILE_SET HEADERS
     BASE_DIRS ${IFE_SOURCE_DIR}
     FILES
     ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
-    ${IFE_SOURCE_DIR}/IrisCodecFile.hpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
 )
 target_sources (
-    IrisFileExtension PRIVATE
-    ${IFE_SOURCE_DIR}/IrisCodecFile.cpp
+    IrisFileExtensionLib PRIVATE
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
+    ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
 )
 target_include_directories (
-    IrisFileExtension INTERFACE
+    IrisFileExtensionLib INTERFACE
     $<BUILD_INTERFACE:${IFE_SOURCE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries (
-    IrisFileExtension PRIVATE
+    IrisFileExtensionLib PRIVATE
     IrisHeaders
-    IrisBuffer
 )
+add_library(IrisFileExtension SHARED $<TARGET_OBJECTS:IrisFileExtensionLib>)
+add_library(IrisFileExtensionStatic STATIC $<TARGET_OBJECTS:IrisFileExtensionLib>)
 if (${PROJECT_IS_TOP_LEVEL})
     install(
-        TARGETS IrisFileExtension
+        TARGETS IrisFileExtensionLib IrisFileExtension IrisFileExtensionStatic
         EXPORT IrisFileExtensionConfig
         FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Iris
     )

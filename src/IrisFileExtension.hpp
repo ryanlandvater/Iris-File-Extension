@@ -11,8 +11,6 @@
 #ifndef IRIS_FILE_EXTENSION_HPP
 #define IRIS_FILE_EXTENSION_HPP
 #include <Iris/IrisTypes.hpp>
-#include <Iris/IrisCore.hpp>
 #include <Iris/IrisCodecTypes.hpp>
 #include <Iris/IrisCodecExtension.hpp>
-#include <Iris/IrisCodecFile.hpp>
 #endif
