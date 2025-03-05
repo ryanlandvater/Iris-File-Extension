@@ -45,8 +45,17 @@
 #include "IrisBuffer.hpp"
 #include "IrisCodecTypes.hpp"
 #include "IrisCodecExtension.hpp"
-static_assert(sizeof(size_t) >= 8, "Iris Codec Extension requires 64-bit architecture");
+#ifdef _MSC_VER 
+static_assert(sizeof(short)     == 2);
+static_assert(sizeof(long)      == 4);
+static_assert(sizeof(long long) == 8);
+#define __builtin_bswap16(X)    _byteswap_ushort(X)
+#define __builtin_bswap32(X)    _byteswap_ulong(X)
+#define __builtin_bswap64(X)    _byteswap_uint64(X)
+#else
 static_assert(__cplusplus >= 202002L, "Iris Codec Extension requires C++20 or greater");
+#endif
+
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 #ifndef U16_CAST
 #define U16_CAST(X)         static_cast<uint16_t>(X)

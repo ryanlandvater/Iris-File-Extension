@@ -35,6 +35,10 @@ endfunction()
 IFE_get_version()
 message(STATUS "BUILDING ACCORDING TO IRIS FILE EXTENSION (IFE) SPECIFICATION v" ${VERSION_STRING})
 
+if ((MSVC) AND (MSVC_VERSION GREATER_EQUAL 1914))
+    target_compile_options(stxxl INTERFACE "/Zc:__cplusplus")
+endif()
+
 Project(
     IrisFileExtension 
     LANGUAGES CXX 
@@ -79,6 +83,17 @@ target_link_libraries (
 add_library(IrisFileExtension SHARED $<TARGET_OBJECTS:IrisFileExtensionLib>)
 add_library(IrisFileExtensionStatic STATIC $<TARGET_OBJECTS:IrisFileExtensionLib>)
 if (${PROJECT_IS_TOP_LEVEL})
+    install(
+        TARGETS IrisHeaders
+        EXPORT IrisHeadersConfig
+        FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Iris
+    )
+    install(
+        EXPORT IrisHeadersConfig
+        FILE IrisHeadersConfig.cmake
+        NAMESPACE "Iris::"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Iris
+    )
     install(
         TARGETS IrisFileExtensionLib IrisFileExtension IrisFileExtensionStatic
         EXPORT IrisFileExtensionConfig
