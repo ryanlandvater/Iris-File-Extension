@@ -46,10 +46,37 @@ target_link_libraries (
     IrisFileExtension
 )
 ```
+### Always validate a Slide
+It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. Validation is performed by calling the `IrisCodec::validate_file_structure` method defined in [IrisCodecExtension.hpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L69) and implemented in [IrisCodecExtension.cpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.cpp#L194). 
+```cpp
+try {
+        size = GET_FILE_SIZE(file_handle);
+        ptr  = FILE_MAP(file_handle, size);
+
+        IrisCodec::validate_file_structure((uint8_t*)ptr, size);
+        
+    } catch (std::runtime_error &error) {
+        ...handle the validation error
+    }
+```
 ### Using Slide Abstraction
-The easiest way to access slide information is via the `IrisCodec::Abstraction::File` object, which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**).
-
-
+The easiest way to access slide information is via the `IrisCodec::Abstraction::File` [object](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L206-L211), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). A file abstraction can be 
+```cpp
+struct IrisCodec::Abstraction::File {
+    Header          header;
+    TileTable       tileTable;
+    Images          images;
+    Annotations     annotations;
+    Metadata        metadata;
+};
+...
+try {
+        using namespace IrisCodec::Abstraction;
+        File file = abstract_file_structure ((uint8_t*)ptr, size);
+    } catch (std::runtime_error &error) {
+        ...handle the read error
+    }
+```
 
 ## Python Interface
 
