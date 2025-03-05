@@ -7,9 +7,9 @@ This is the official implementation of the Iris File Extension specification, pa
 > [!NOTE]
 > The scope of this repository is only deserializing Iris slide files. Decompression is **NOT** a component of this repository. The WSI tile byte arrays will be referenced in their compressed forms and it is up to your implementation to decompress these tiles. If you would like a system that performs image decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git).
 
-This repository builds tools to access Iris files as headers or as modules with Python or JavaScript bindings. The repository uses the CMake build system. 
+This repository builds tools to access Iris files as C++ headers/library or as modules with Python or JavaScript (32-bit) bindings. The repository uses the CMake build system. 
 
-<p xmlns:cc="http://creativecommons.org/ns#" >This repository is licensed under the MIT software license. The Iris File Extension is licensed under <a href="https://creativecommons.org/licenses/by-nd/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY-ND 4.0<img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nd.svg?ref=chooser-v1" alt=""></a></p>
+<p xmlns:cc="http://creativecommons.org/ns#" >This repository is licensed under the MIT software license. The Iris File Extension is licensed under <a href="https://creativecommons.org/licenses/by-nd/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY-ND 4.0 <img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nd.svg?ref=chooser-v1" alt=""></a></p>
 
 # Implementation
 ## C++ Interface
@@ -19,7 +19,10 @@ Incorporating the Iris File Extension into your code base **is simple** but requ
 If you are **NOT** using CMake to build your project, you should still use CMake to generate the Iris File Extension library.
 ```shell
 git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-File-Extension.git
-cmake -B ./Iris-File-Extension/build ./Iris-File-Extension #(optional)-DCMAKE_INSTALL_PREFIX=''
+# Optional cmake flags to consider: 
+#   -DCMAKE_INSTALL_PREFIX='' for custom install directory
+#   -DBUILD_EXAMPLES=ON to test build the included examples
+cmake -B ./Iris-File-Extension/build ./Iris-File-Extension 
 cmake --build ./Iris-File-Extension/build --config Release
 cmake --install ./Iris-File-Extension/build
 ```
@@ -42,8 +45,8 @@ target_link_libraries (
     IrisFileExtension
 )
 ```
-### Always validate a Slide
-It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. Validation is performed by calling the `IrisCodec::validate_file_structure` method defined in [IrisCodecExtension.hpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L69) and implemented in [IrisCodecExtension.cpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.cpp#L194). 
+### Always Validate a Slide
+It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. Validation is performed by calling the [`IrisCodec::validate_file_structure`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L69) method defined in [IrisCodecExtension.hpp](./src/IrisCodecExtension.hpp) and implemented in [IrisCodecExtension.cpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.cpp#L194). 
 ```cpp
 try {
     size = GET_FILE_SIZE(file_handle);
@@ -56,7 +59,7 @@ try {
 }
 ```
 ### Using Slide Abstraction
-The easiest way to access slide information is via the `IrisCodec::Abstraction::File` [object](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.hpp#L206-L211), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). A file abstraction can be 
+The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L206-L212), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
 ```cpp
 struct IrisCodec::Abstraction::File {
     Header          header;      // File Header information

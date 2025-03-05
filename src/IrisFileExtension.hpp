@@ -10,7 +10,7 @@
 
 #ifndef IRIS_FILE_EXTENSION_HPP
 #define IRIS_FILE_EXTENSION_HPP
-#include <Iris/IrisTypes.hpp>
-#include <Iris/IrisCodecTypes.hpp>
-#include <Iris/IrisCodecExtension.hpp>
+#include "IrisTypes.hpp"
+#include "IrisCodecTypes.hpp"
+#include "IrisCodecExtension.hpp"
 #endif
