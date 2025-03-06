@@ -1,4 +1,3 @@
-// ConsoleApplication1.cpp : This file contains the 'main' function. Program execution begins and ends there.
 /**
  * @file slide_info_abstraction.cpp
  * @author Ryan Landvater (ryanlandvater@gmail.com)
