@@ -226,15 +226,6 @@ void validate_file_structure(BYTE *const __base, size_t __size)
     if (METADATA.annotations                            (__base))
         METADATA.get_annotations                        (__base)
         .validate_full                                  (__base);
-//    if (METADATA.color_profile                          (__base))
-//        METADATA.get_color_profile(__base).validate_
-//    if (METADATA.annotations                            (__base))
-//    {
-//        auto ANNOTATIONS    = METADATA.get_annotations  (__base);
-//        abstraction.annotations = ANNOTATIONS.read_annotations  (__base);
-//        for (auto&& note : abstraction.annotations)
-//            metadata.annotations.insert(note.first);
-//    }
 }
 Abstraction::File Abstraction::abstract_file_structure (BYTE* const __base, size_t __size) {
     using namespace Abstraction;
@@ -1313,10 +1304,10 @@ void ATTRIBUTES_BYTES::validate_full(BYTE *const __base) const
 {
     const auto __ptr    = __base + __offset;
     if (__offset + LOAD_U32(__ptr + ENTRY_NUMBER) > __size) throw std::runtime_error
-        ("ATTRIBUTES_BYTES failed validation -- full attributes byte array block ("+
+        ("ATTRIBUTES_BYTES failed validation -- full attributes byte array block (location "+
+         std::to_string(__offset)+ " - " +
          std::to_string(__offset + LOAD_U32(__ptr + ENTRY_NUMBER))+
-         ") extends beyond end of file ("+
-         std::to_string(__size)+")");
+         ") extends beyond end of file.");
 }
 void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, Attributes &attributes) const
 {
@@ -1438,8 +1429,11 @@ void IMAGE_ARRAY::validate_full (BYTE *const __base) const
         BYTE* __array   = __ptr + start;
         assert(__array != __ptr && "IMAGES_ARRAY array pointer unassigned");
         for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
-            IMAGE_BYTES(LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET),
-                        __size, __version).validate_offset(__base);
+            
+            auto __IMAGE_BYTES =
+            IMAGE_BYTES(LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET),__size, __version);
+            __IMAGE_BYTES.validate_offset(__base);
+            __IMAGE_BYTES.validate_full(__base);
             
             if (!VALIDATE_IMAGE_ENCODING_TYPE
                 ((ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING),__version))
@@ -1609,7 +1603,10 @@ void IMAGE_BYTES::validate_full (BYTE *const __base) const
     const auto BYTES    = LOAD_U32(__ptr + IMAGE_SIZE);
     
     if (__offset + TITLE + BYTES > __size) throw std::runtime_error
-        ("Associated image IMAGE_BYTES failed validation -- image bytes array extends beyond the end of file.");
+        ("Associated image IMAGE_BYTES failed validation -- image bytes array block (location "+
+         std::to_string(__offset)+ " - " +
+         std::to_string(__offset+TITLE+BYTES)+
+         " bytes) extends beyond the end of file.");
 }
 void IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::Image &image) const
 {
@@ -1772,9 +1769,59 @@ void ANNOTATION_ARRAY::validate_offset (BYTE *const __base) const
          ") tag failed validation. The tag value is ("+
          std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
-void ANNOTATION_ARRAY::validate_full (BYTE *const base) const
+void ANNOTATION_ARRAY::validate_full (BYTE *const __base) const
 {
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
+    Offset start        = 0;
     
+    std::unordered_set<uint32_t> __a;
+    if (false) {
+        VALIDATE_ANNOTATIONS:
+        BYTE* __array   = __ptr + start;
+        for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
+            auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+            if (bytes_offset == NULL_OFFSET) throw std::runtime_error
+                ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset. Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
+            if (bytes_offset > __size) throw std::runtime_error
+                ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains an offset that is out of file bounds("+
+                 std::to_string(bytes_offset)+
+                 "). Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
+
+            auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
+            __BYTES.validate_offset(__base);
+            
+            auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
+            if (__a.contains(identifier)) { printf
+                ("WARNING: duplicate annotation identifier (%X) returned; skipping duplicate. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.", identifier);
+            }
+            
+            if (VALIDATE_ANNOTATION_TYPE
+                ((AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT),
+                 __version) == false) throw std::runtime_error
+                ("Undefined tile pixel format ("+
+                 std::to_string(LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT)) +
+                 ") decoded from tile table.");
+            
+            if (__version > IRIS_EXTENSION_1_0); else continue;
+            
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+            
+        }
+        return;
+    }
+    
+    start = __offset + HEADER_V1_0_SIZE;
+    if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_ANNOTATIONS;
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    
+    goto VALIDATE_ANNOTATIONS;
 }
 Abstraction::Annotations ANNOTATION_ARRAY::read_annotations(BYTE *const __base) const
 {

@@ -8,7 +8,6 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(IRIS_EXTENSION_BUILD_ALL ON)
-# set(STATIC_BUILD OFF)
 
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
@@ -106,11 +105,24 @@ if (${PROJECT_IS_TOP_LEVEL})
     )
 endif(${PROJECT_IS_TOP_LEVEL})
 
+if (NOT DEFINED BUILD_EXAMPLES)
+    SET(BUILD_EXAMPLES OFF)
+endif()
 if(BUILD_EXAMPLES)
     message(STATUS "Configured to build text example IFE implementations (/examples directory)")
     add_compile_definitions(BUILD_EXAMPLES_TEST)
     set(EXAMPLES_DIR ${PROJECT_SOURCE_DIR}/examples)
-    add_executable(slide_info_abstraction ${EXAMPLES_DIR}/slide_info_abstraction.cpp)
-    target_include_directories (slide_info_abstraction PRIVATE ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include)  
-    target_link_libraries(slide_info_abstraction PRIVATE IrisFileExtensionStatic)
+
+    add_executable(
+        slide_info_abstraction 
+        ${EXAMPLES_DIR}/slide_info_abstraction.cpp
+    )
+    target_include_directories (
+        slide_info_abstraction PRIVATE 
+        ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include
+    )  
+    target_link_libraries(
+        slide_info_abstraction PRIVATE 
+        IrisFileExtensionStatic
+    )
 endif(BUILD_EXAMPLES)
