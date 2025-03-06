@@ -825,6 +825,7 @@ struct IMAGE_BYTES {
     
     operator    bool                () const;
     void        validate_offset     (BYTE* const __base) const;
+    void        validate_full       (BYTE* const __base) const;
     void        read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
     
 protected:
@@ -1000,7 +1001,10 @@ void STORE_ANNOTATION_BYTES         (BYTE* const __base, Offset, const IrisCodec
 struct ANNOTATION_GROUPS {
     
 };
-
+struct ANNOTATION_GROUP {
+    friend ANNOTATION_GROUPS;
+    
+};
 } // END FILE STRUCTURE
 } // END IRIS CODEC
 #endif /* IrisCodecExtension_hpp */
