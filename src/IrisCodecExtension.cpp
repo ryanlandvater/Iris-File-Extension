@@ -223,7 +223,9 @@ void validate_file_structure(BYTE *const __base, size_t __size)
     if (METADATA.color_profile                          (__base))
         METADATA.get_color_profile                      (__base);
     
-    
+    if (METADATA.annotations                            (__base))
+        METADATA.get_annotations                        (__base)
+        .validate_full                                  (__base);
 //    if (METADATA.color_profile                          (__base))
 //        METADATA.get_color_profile(__base).validate_
 //    if (METADATA.annotations                            (__base))
@@ -378,12 +380,18 @@ void FILE_HEADER::validate_header(BYTE* __base) const
         throw std::runtime_error ("Iris File Magic Number failed validation");
     if (LOAD_U16(__base + RECOVERY) != RECOVER_HEADER)
         throw std::runtime_error
-        (std::string("RECOVER_HEADER (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_HEADER, LOAD_U16 (__base + RECOVERY)));
+        ("RECOVER_HEADER ("+
+         std::to_string(RECOVER_HEADER)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + RECOVERY))+")");
         
     size_t size = LOAD_U64(__base + FILE_SIZE);
     if (size != __size) throw std::runtime_error
-        (std::string("The internally stored Iris file size (%d bytes) differs from that provided by the operating system (%d bytes). This is a failure of internal validation requiring recovery.",size,__size));
+        ("The internally stored Iris file size (" +
+         std::to_string(size) +
+         " bytes) differs from that provided by the operating system (" +
+         std::to_string(__size) +
+         " bytes). This is a failure of internal validation requiring recovery.");
     
     uint16_t major = LOAD_U32(__base + EXTENSION_MAJOR);
     uint16_t minor = LOAD_U32(__base + EXTENSION_MINOR);
@@ -496,22 +504,24 @@ void TILE_TABLE::validate_offset (BYTE* const __base) const
          ") is not the offset location ("+
          std::to_string(__offset)+").");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_TILE_TABLE) throw std::runtime_error
-        (std::string("RECOVER_TILE_TABLE ("+
-                     std::to_string(RECOVER_TILE_TABLE)+
-                     ") tag failed validation. The tag value is ("+
-                     std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")"));
+        ("RECOVER_TILE_TABLE ("+
+         std::to_string(RECOVER_TILE_TABLE)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void TILE_TABLE::validate_full(BYTE *const __base) const
 {
     auto __ptr = __base + __offset;
     if (VALIDATE_ENCODING_TYPE((Encoding)LOAD_U8(__ptr + ENCODING), __version) == false)
         throw std::runtime_error
-        (std::string("Undefined tile encoding value (%u) decoded from tile table. Per the IFE specification Section 2.3.2, enumeration shall refer to the algorithm / specification used to compress the slide tile data and be one of the enumerated values (Enumeration 2.2.3), excluding the undefined value (0)",
-                     (Encoding)LOAD_U8(__ptr + ENCODING)));
+        ("Undefined tile encoding value (" +
+         std::to_string((Encoding)LOAD_U8(__ptr + ENCODING))+
+         ") decoded from tile table. Per the IFE specification Section 2.3.2, enumeration shall refer to the algorithm / specification used to compress the slide tile data and be one of the enumerated values (Enumeration 2.2.3), excluding the undefined value (0)");
     if (VALIDATE_PIXEL_FORMAT((Format)LOAD_U8(__ptr + FORMAT), __version) == false)
         throw std::runtime_error
-        (std::string("Undefined tile pixel format (%u) decoded from tile table. Per the IFE specification Section 2.3.2, the format shall describe the pixel channel ordering and bits consumed per channel per the accepted norm using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0).",
-                     (Format)LOAD_U8(__ptr + FORMAT)));
+        ("Undefined tile pixel format (" +
+         std::to_string((Format)LOAD_U8(__ptr + FORMAT))+
+         ") decoded from tile table. Per the IFE specification Section 2.3.2, the format shall describe the pixel channel ordering and bits consumed per channel per the accepted norm using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0).");
     
     // Validate the extents array and offsets array
     get_layer_extents(__base).validate_full(__base);
@@ -525,14 +535,16 @@ TileTable TILE_TABLE::read_tile_table(BYTE *const __base) const
     tile_table.encoding         = (Encoding)LOAD_U8(__ptr + ENCODING);
     if (VALIDATE_ENCODING_TYPE(tile_table.encoding, __version) == false)
         throw std::runtime_error
-        (std::string("Undefined tile encoding value (%u) decoded from tile table.",
-                     tile_table.encoding));
+        ("Undefined tile encoding value (" +
+         std::to_string((Encoding)LOAD_U8(__ptr + ENCODING))+
+         ") decoded from tile table.");
     
     tile_table.format           = (Format)LOAD_U8(__ptr + FORMAT);
     if (VALIDATE_PIXEL_FORMAT(tile_table.format, __version) == false)
         throw std::runtime_error
-        (std::string("Undefined tile pixel format (%u) decoded from tile table.",
-                     tile_table.format));
+        ("Undefined tile pixel format (" +
+         std::to_string((Format)LOAD_U8(__ptr + FORMAT))+
+         ") decoded from tile table.");
     
     tile_table.extent.width     = LOAD_U32(__ptr + X_EXTENT);
     tile_table.extent.height    = LOAD_U32(__ptr + Y_EXTENT);
@@ -583,7 +595,10 @@ void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
         case TILE_ENCODING_IRIS:
         case TILE_ENCODING_JPEG:
         case TILE_ENCODING_AVIF: break;
-        default: throw std::runtime_error("Undefined Tile Table tile encoding value. Per the IFE specification Section 2.3.2, the enumeration shall refer to the algorithm / specification used to compress the slide tile data and be one of the enumerated values (Enumeration 2.2.3), excluding the undefined value (0)");
+        default: throw std::runtime_error
+            ("Undefined Tile Table tile encoding value ("+
+             std::to_string(__CI.encoding) +
+             ") in TileTableCreateInfo. Per the IFE specification Section 2.3.2, the enumeration shall refer to the algorithm / specification used to compress the slide tile data and be one of the enumerated values (Enumeration 2.2.3), excluding the undefined value (0)");
             break;
     }
     switch (__CI.format) {
@@ -591,12 +606,15 @@ void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
         case Iris::FORMAT_R8G8B8:
         case Iris::FORMAT_B8G8R8A8:
         case Iris::FORMAT_R8G8B8A8: break;
-        default: throw std::runtime_error("Undefined Tile Table tile encoding value. Per the IFE specification Section 2.3.2, format shall describe the pixel channel ordering and bits consumed per channel per the accepted norm using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0)");
+        default: throw std::runtime_error
+            ("Undefined Tile Table tile format value ("+
+             std::to_string(__CI.format) +
+             ") in TileTableCreateInfo. Per the IFE specification Section 2.3.2, format shall describe the pixel channel ordering and bits consumed per channel per the accepted norm using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0)");
     }
     if (__CI.tilesOffset == NULL_OFFSET) throw std::runtime_error
-        ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo tilesOffset. Per the IFE specification Section 2.3.2, the tile offsets shall contain a valid offset to the tile offsets array (Section 2.4.2) containing the byte offsets and sizes of each encoded tile");
+        ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo tilesOffset (NULL_OFFSET). Per the IFE specification Section 2.3.2, the tile offsets shall contain a valid offset to the tile offsets array (Section 2.4.2) containing the byte offsets and sizes of each encoded tile");
     if (__CI.layerExtentsOffset == NULL_OFFSET) throw std::runtime_error
-        ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo layerExtentsOffset. Per the IFE specification  Section 2.3.2, layer extents shall contain a valid offset to the layer extents array (Section 2.4.2) containing the number of tiles and scale of each layer");
+        ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo layerExtentsOffset (NULL_OFFSET). Per the IFE specification  Section 2.3.2, layer extents shall contain a valid offset to the layer extents array (Section 2.4.2) containing the number of tiles and scale of each layer");
     #endif
     
     auto __ptr = __base + __CI.tileTableOffset;
@@ -628,11 +646,15 @@ void METADATA::validate_offset (BYTE* const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid METADATA object. The METADATA was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("METADATA failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("METADATA failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_METADATA) throw std::runtime_error
-        (std::string("RECOVER_METADATA (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_METADATA, LOAD_U16 (__base + __offset + RECOVERY)));
+            ("RECOVER_METADATA ("+
+             std::to_string(RECOVER_METADATA)+
+             ") tag failed validation. The tag value is ("+
+             std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void METADATA::validate_full(BYTE *const __base) const
 {
@@ -759,19 +781,24 @@ void ATTRIBUTES::validate_offset(BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ATTRIBUTES object. The ATTRIBUTES was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ATTRIBUTES failed offset validation. The ATTRIBUTES value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ATTRIBUTES header failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ATTRIBUTES) throw std::runtime_error
-        (std::string("RECOVER_ATTRIBUTES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ATTRIBUTES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ATTRIBUTES ("+
+         std::to_string(RECOVER_ATTRIBUTES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void ATTRIBUTES::validate_full(BYTE *const __base) const
 {
     auto        __ptr   = __base + __offset;
     if (VALIDATE_METADATA_TYPE((MetadataType)LOAD_U8(__ptr + FORMAT), __version) == false)
         throw std::runtime_error
-        (std::string("Undefined tile metadata format (%u) decoded from attributes header. Per the IFE specification Section 2.3.5, The metadata format shall refer to the metadata specification format by which the file metadata was encoded and shall be one of the metadata formats (Enumeration 2.2.5), excluding the undefined value (0).",
-                     (Format)LOAD_U8(__ptr + FORMAT)));
+        ("Undefined tile metadata format ("+
+         std::to_string((Format)LOAD_U8(__ptr + FORMAT)) +
+         ") decoded from attributes header. Per the IFE specification Section 2.3.5, The metadata format shall refer to the metadata specification format by which the file metadata was encoded and shall be one of the metadata formats (Enumeration 2.2.5), excluding the undefined value (0).");
     
     get_sizes(__base).validate_full(__base);
     get_bytes(__base).validate_full(__base);
@@ -880,11 +907,15 @@ void LAYER_EXTENTS::validate_offset (BYTE* const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid LAYER_EXTENTS object. The LAYER_EXTENTS was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("LAYER_EXTENTS failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("LAYER_EXTENTS failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_LAYER_EXTENTS) throw std::runtime_error
-        (std::string("RECOVER_LAYER_EXTENTS (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_LAYER_EXTENTS, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_LAYER_EXTENTS ("+
+         std::to_string(RECOVER_LAYER_EXTENTS)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void LAYER_EXTENTS::validate_full(BYTE *const __base) const
 {
@@ -980,8 +1011,9 @@ Size SIZE_EXTENTS (const LayerExtents &__extents)
 void STORE_EXTENTS(BYTE *const __base, Offset offset, const LayerExtents &extents)
 {
     if (extents.size() > UINT32_MAX) throw std::runtime_error
-        (std::string("Failed to store layer extent sizes -- extents array length (%u) exceeds 32-bit size limit. Per the IFE specification Section 2.4.1, the number of layers shall be less than the 32-bit max value.",
-                     extents.size()));
+        ("Failed to store layer extent sizes -- extents array length ("+
+         std::to_string(extents.size())+
+         ") exceeds 32-bit size limit. Per the IFE specification Section 2.4.1, the number of layers shall be less than the 32-bit max value.");
     
     STORE_U64 (__base + offset + LAYER_EXTENTS::VALIDATION, offset);
     STORE_U16 (__base + offset + LAYER_EXTENTS::RECOVERY,   RECOVER_LAYER_EXTENTS);
@@ -1010,11 +1042,15 @@ void TILE_OFFSETS::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid TILE_OFFSETS object. The TILE_OFFSETS was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("TILE_OFFSETS failed offset validation. The TILE_OFFSETS value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("TILE_OFFSETS failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_TILE_OFFSETS) throw std::runtime_error
-        (std::string("RECOVER_TILE_OFFSETS (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_TILE_OFFSETS, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_TILE_OFFSETS ("+
+         std::to_string(RECOVER_TILE_OFFSETS)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void TILE_OFFSETS::validate_full(BYTE *const __base) const
 {
@@ -1029,8 +1065,11 @@ void TILE_OFFSETS::validate_full(BYTE *const __base) const
             if (LOAD_U40(__array + TILE_OFFSET::OFFSET) +
                 LOAD_U24(__array + TILE_OFFSET::TILE_SIZE)
                 > __size) throw std::runtime_error
-                (std::string("TILE_OFFSETS validation failed -- global tile entry (%u) failed with the tile data block (offset + size size) extending out of the file bounds (%u bytes).",
-                             TI, __size));
+                ("TILE_OFFSETS validation failed -- global tile entry (" +
+                 std::to_string(TI) +
+                 ") failed with the tile data block (offset + size size) extending out of the file bounds ("+
+                 std::to_string(__size)
+                 +"bytes).");
         return;
     }
     
@@ -1142,11 +1181,15 @@ void ATTRIBUTES_SIZES::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ATTRIBUTES_SIZES object. The ATTRIBUTES_SIZES was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ATTRIBUTES_SIZES failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ATTRIBUTES_SIZES failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ATTRIBUTES_SIZES) throw std::runtime_error
-        (std::string("RECOVER_ATTRIBUTES_SIZES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ATTRIBUTES_SIZES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ATTRIBUTES_SIZES ("+
+         std::to_string(RECOVER_ATTRIBUTES_SIZES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void ATTRIBUTES_SIZES::validate_full(BYTE *const __base) const
 {
@@ -1256,17 +1299,24 @@ void ATTRIBUTES_BYTES::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ATTRIBUTES_BYTES object. The ATTRIBUTES_BYTES was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ATTRIBUTES_BYTES failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ATTRIBUTES_BYTES failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ATTRIBUTES_BYTES) throw std::runtime_error
-        (std::string("RECOVER_ATTRIBUTES_BYTES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ATTRIBUTES_BYTES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ATTRIBUTES_BYTES ("+
+         std::to_string(RECOVER_ATTRIBUTES_BYTES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void ATTRIBUTES_BYTES::validate_full(BYTE *const __base) const
 {
     const auto __ptr    = __base + __offset;
     if (__offset + LOAD_U32(__ptr + ENTRY_NUMBER) > __size) throw std::runtime_error
-        (std::string("ATTRIBUTES_BYTES failed validation -- full attributes byte array block (offset + size) extends beyond end of file (%u)",__size));
+        ("ATTRIBUTES_BYTES failed validation -- full attributes byte array block ("+
+         std::to_string(__offset + LOAD_U32(__ptr + ENTRY_NUMBER))+
+         ") extends beyond end of file ("+
+         std::to_string(__size)+")");
 }
 void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, Attributes &attributes) const
 {
@@ -1366,11 +1416,15 @@ void IMAGE_ARRAY::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid IMAGE_ARRAY object. The IMAGE_ARRAY was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("IMAGE_ARRAY failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("IMAGE_ARRAY failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ASSOCIATED_IMAGES) throw std::runtime_error
-        (std::string("RECOVER_ASSOCIATED_IMAGES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ASSOCIATED_IMAGES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ASSOCIATED_IMAGES ("+
+         std::to_string(RECOVER_ASSOCIATED_IMAGES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void IMAGE_ARRAY::validate_full (BYTE *const __base) const
 {
@@ -1390,14 +1444,16 @@ void IMAGE_ARRAY::validate_full (BYTE *const __base) const
             if (!VALIDATE_IMAGE_ENCODING_TYPE
                 ((ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING),__version))
                 throw std::runtime_error
-                (std::string("Undefined tile associated image encoding (%u) decoded from associated image array. Per the IFE specification Section 2.4.6, the encoding parameter shall describe the compression codec used to generate the compressed image byte stream and shall be one of the defined enumerated values (Enumeration 2.2.7), excluding the undefined value (0)",
-                             (ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING)));
+                ("Undefined tile associated image encoding ("+
+                 std::to_string(LOAD_U8(__array + IMAGE_ENTRY::ENCODING))+
+                 ") decoded from associated image array. Per the IFE specification Section 2.4.6, the encoding parameter shall describe the compression codec used to generate the compressed image byte stream and shall be one of the defined enumerated values (Enumeration 2.2.7), excluding the undefined value (0)");
             
             if (!VALIDATE_PIXEL_FORMAT
                 ((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT),__version))
                 throw std::runtime_error
-                (std::string("Undefined tile associated image pixel format (%u) decoded from associated image array. Per the IFE specification Section 2.4.6,  format parameter shall describe the pixel channel ordering and bits consumed per channel using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0",
-                             (Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT)));
+                ("Undefined tile associated image pixel format ("+
+                 std::to_string((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT))+
+                 ") decoded from associated image array. Per the IFE specification Section 2.4.6,  format parameter shall describe the pixel channel ordering and bits consumed per channel using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0)");
             
             if (__version > IRIS_EXTENSION_1_0); else continue;
             
@@ -1536,11 +1592,24 @@ void IMAGE_BYTES::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid IMAGE_BYTES object. The IMAGE_BYTES was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("IMAGE_BYTES failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("IMAGE_BYTES failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ASSOCIATED_IMAGE_BYTES) throw std::runtime_error
-        (std::string("RECOVER_ASSOCIATED_IMAGE_BYTES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ASSOCIATED_IMAGE_BYTES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ASSOCIATED_IMAGE_BYTES ("+
+         std::to_string(RECOVER_ASSOCIATED_IMAGE_BYTES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
+}
+void IMAGE_BYTES::validate_full (BYTE *const __base) const
+{
+    const auto __ptr    = __base + __offset;
+    const auto TITLE    = LOAD_U16(__ptr + TITLE_SIZE);
+    const auto BYTES    = LOAD_U32(__ptr + IMAGE_SIZE);
+    
+    if (__offset + TITLE + BYTES > __size) throw std::runtime_error
+        ("Associated image IMAGE_BYTES failed validation -- image bytes array extends beyond the end of file.");
 }
 void IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::Image &image) const
 {
@@ -1624,11 +1693,15 @@ void ICC_PROFILE::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ICC_PROFILE object. The ICC_PROFILE was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ICC_PROFILE failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ICC_PROFILE failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ICC_PROFILE) throw std::runtime_error
-        (std::string("RECOVER_ICC_PROFILE (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ICC_PROFILE, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ICC_PROFILE ("+
+         std::to_string(RECOVER_ICC_PROFILE)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 std::string ICC_PROFILE::read_profile (BYTE *const __base) const
 {
@@ -1689,11 +1762,19 @@ void ANNOTATION_ARRAY::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ANNOTATION_ARRAY object. The ANNOTATION_ARRAY was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ANNOTATION_ARRAY failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ANNOTATION_ARRAY failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ANNOTATIONS) throw std::runtime_error
-        (std::string("RECOVER_ANNOTATIONS (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ANNOTATIONS, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ANNOTATIONS ("+
+         std::to_string(RECOVER_ANNOTATIONS)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
+}
+void ANNOTATION_ARRAY::validate_full (BYTE *const base) const
+{
+    
 }
 Abstraction::Annotations ANNOTATION_ARRAY::read_annotations(BYTE *const __base) const
 {
@@ -1845,11 +1926,15 @@ void ANNOTATION_BYTES::validate_offset (BYTE *const __base) const
     if (!*this) throw std::runtime_error
         ("Invalid ANNOTATION_BYTES object. The ANNOTATION_BYTES was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) throw std::runtime_error
-        (std::string("ANNOTATION_BYTES failed offset validation. The offset value (%u) is not the offset location (%u).",
-         LOAD_U64 (__base + __offset + VALIDATION),__offset));
+        ("ANNOTATION_BYTES failed offset validation. The validation value("+
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION))+
+         ") is not the offset location ("+
+         std::to_string(__offset)+")");
     if (LOAD_U16 (__base + __offset + RECOVERY) != RECOVER_ANNOTATION_BYTES) throw std::runtime_error
-        (std::string("RECOVER_ANNOTATIONBYTES (%x) tag failed validation. The tag value is (%x)",
-                     RECOVER_ANNOTATION_BYTES, LOAD_U16 (__base + __offset + RECOVERY)));
+        ("RECOVER_ANNOTATION_BYTES ("+
+         std::to_string(RECOVER_ANNOTATION_BYTES)+
+         ") tag failed validation. The tag value is ("+
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
 }
 void ANNOTATION_BYTES::read_bytes(BYTE *const __base, Annotation &annotation) const
 {
@@ -1888,11 +1973,14 @@ void STORE_ANNOTATION_BYTES(BYTE *const __base, Offset offset, const IrisCodec::
         case Iris::ANNOTATION_SVG:
         case Iris::ANNOTATION_TEXT: break;
         default: throw std::runtime_error
-            (std::string("Failed to store annotation bytes -- Undefined annotation type value (%u). Per the IFE specification Section 2.4.9, he format enumeration shall refers to the decoding algorithm used to convert the raw byte stream into a visual annotation object and shall be one of the enumerated values (Enumeration 2.2.6), excluding the undefined value (0)",
-                         annotation.type));
+            ("Failed to store annotation bytes -- Undefined annotation type value (" +
+             std::to_string(annotation.type) +
+             "). Per the IFE specification Section 2.4.9, he format enumeration shall refers to the decoding algorithm used to convert the raw byte stream into a visual annotation object and shall be one of the enumerated values (Enumeration 2.2.6), excluding the undefined value (0)");
     }
     if (bytes->size() > UINT32_MAX) throw std::runtime_error
-        ("Failed to store annotation bytes -- data block too large (%u bytes). Per the IFE specification Section 2.4.9, the byte array shall contain less bytes than the 32-bit max value (4.29 GB).");
+        ("Failed to store annotation bytes -- data block too large ("+
+         std::to_string(bytes->size()) +
+         " bytes). Per the IFE specification Section 2.4.9, the byte array shall contain less bytes than the 32-bit max value (4.29 GB).");
     #endif
     
     auto __ptr = __base + offset;
