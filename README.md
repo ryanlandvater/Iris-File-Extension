@@ -49,7 +49,7 @@ target_link_libraries (
 )
 ```
 ### Always Validate a Slide
-It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. Validation is performed by calling the [`IrisCodec::validate_file_structure`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L69) method defined in [IrisCodecExtension.hpp](./src/IrisCodecExtension.hpp) and implemented in [IrisCodecExtension.cpp](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/main/src/IrisCodecExtension.cpp#L194). 
+It is best practice to always validate an Iris slide file. The validation requires the operating system's returned file size as part of the validation process. Validation is simple but throws uncaught exceptions and thus must be wrapped in a try-catch block. We let you handle how to respond to validation errors. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L69) method defined in [IrisCodecExtension.hpp](./src/IrisCodecExtension.hpp) and implemented in [IrisCodecExtension.cpp](./src/IrisCodecExtension.cpp#L203). Alternatively you may break up `validate_file_structure` into it's component steps
 ```cpp
 try {
     size = GET_FILE_SIZE(file_handle);

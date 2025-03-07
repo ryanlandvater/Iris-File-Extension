@@ -58,23 +58,48 @@ constexpr uint16_t IRIS_EXTENSION_MINOR = 0;
 // Iris' Magic Number is ASCII for 'Iris' 49 72 69 73
 #define MAGIC_BYTES 0x49726973
 
+// These are the header and array datablocks defined in this file:
+namespace Serialization {
+// MARK: HEADER TYPES
+struct FILE_HEADER;
+struct TILE_TABLE;
+struct METADATA;
+struct ATTRIBUTES;
+struct ANNOTATIONS;
+// Version 1.0 ends here.
+
+// MARK: ARRAY TYPES
+struct LAYER_EXTENTS;
+struct TILE_OFFSETS;
+struct ATTRIBUTES_SIZES;
+struct ATTRIBUTES_BYTES;
+struct IMAGE_ARRAY;
+struct IMAGE_BYTES;
+struct ICC_PROFILE;
+struct ANNOTATIONS;
+struct ANNOTATION_BYTES;
+struct ANNOTATION_GROUP_SIZES;
+struct ANNOTATION_GROUP_BYTES;
+// Version 1.0 ends here.
+
+}
+// These are the light-weight RAM representaitons of the on-disk file:
+namespace Abstraction {
+struct File;
+struct FileMap;
+}
+// MARK: - ENTRY METHODS
 /// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
-bool is_Iris_Codec_file     (BYTE* const __mapped_file_ptr, size_t file_size);
+bool is_Iris_Codec_file     (BYTE* const __mapped_file_ptr,
+                             size_t file_size);
 /**
  * @brief Performs deep file validation checks to ensure stuctural offsets are valid. This does NOT perform
  * specification validations.
  *
  * This performs a tree validation of objects and sub-objects to ensure their offsets properly.
  */
-void validate_file_structure (BYTE* const __mapped_file_ptr, size_t file_size);
-
-// MARK: - FILE ABSTRACTIONS
-// The file abstractions pull light-weight
-// representations of the on-disk information
-// such as critial offset locations and sizes
-// of larger image or vector payloads
-namespace Abstraction {
-struct File;
+Result validate_file_structure (BYTE* const __mapped_file_ptr,
+                                size_t file_size);
 /**
  * @brief Abstract the Iris file structure into memory for quick data access. This does NOT validate.
  *
@@ -86,8 +111,29 @@ struct File;
  * separately read. This keeps the abstraction layer quick but removes memory bloat.
  */
 // START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
-File abstract_file_structure (BYTE* const __mapped_file_ptr, size_t file_size);
+Abstraction::File abstract_file_structure (BYTE* const __mapped_file_ptr,
+                                           size_t file_size);
+/**
+ * @brief Generate a file map showing the offset locations of header and array blocks with their respective
+ * types and sizes detailed. This is not a cheap method and does not need to be routinely done; only when
+ * recovering or modifying a file.
+ *
+ * File mapping is an extremely valuable tool for performing file updates to avoid overwriting important data.
+ * Fortunately it is very simple to do. Before writing, perform the \ref FileMap::upper_bound (Offset write_offset) method
+ * to identify what data exists after your proposed write location. These data will need to be rewritten or,
+ * alternatively, shifted and all references to them and their validations updated as well. For this reason, it's usually
+ * easier to simply read them into memory and then rewrite them back to disk following the update.
+ */
+// ALWAYS CREATE A FILE MAP BEFORE PERFORMING AN UPDATE TO A FILE
+Abstraction::FileMap generate_file_map (BYTE* const __mapped_file_ptr,
+                                        size_t file_size);
 
+// MARK: - FILE ABSTRACTIONS
+// The file abstractions pull light-weight
+// representations of the on-disk information
+// such as critial offset locations and sizes
+// of larger image or vector payloads
+namespace Abstraction {
 /**
  * @brief Extracted file header information
  *
@@ -162,7 +208,6 @@ struct TileTable {
 struct Image {
     using           Encoding    = ImageEncoding;
     using           Orientation = ImageOrientation;
-    std::string     title;
     Offset          offset      = NULL_OFFSET;
     Size            byteSize    = 0;
     uint32_t        width       = 0;
@@ -181,6 +226,7 @@ using Images = std::unordered_map<std::string, Image>;
  *
  */
 struct Annotation {
+    using       Identifier  = Iris::Annotation::Identifier;
     static constexpr
     uint32_t    NULL_ID     = 16777215U;
     
@@ -196,7 +242,16 @@ struct Annotation {
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
 };
-using Annotations = std::unordered_map<uint32_t, Annotation>;
+struct AnnotationGroup {
+    Offset      offset      = NULL_OFFSET;
+    uint32_t    number      = 0;
+    Size        byteSize    () {return number * 3;}
+};
+struct Annotations :
+public std::unordered_map<Annotation::Identifier, Annotation> {
+    using       Groups = std::unordered_map<std::string, AnnotationGroup>;
+    Groups      groups;
+};
 /**
  * @brief In-memory abstraction of the Iris file structure
  *
@@ -204,45 +259,32 @@ using Annotations = std::unordered_map<uint32_t, Annotation>;
  * fast access to the underlying slide data.
  */
 struct File {
-    Header          header;
-    TileTable       tileTable;
-    Images          images;
-    Annotations     annotations;
-    Metadata        metadata;
+    Header              header;
+    TileTable           tileTable;
+    Images              images;
+    Annotations         annotations;
+    Metadata            metadata;
+};
+struct FileMap :
+public std::map<Offset, struct FileMapEntry> {
+    Size                file_size   = 0;
 };
 }
 // MARK: - IRIS CODEC EXTENSION SERIALIZATION TYPES
 namespace Serialization {
 using namespace Abstraction;
 using MagicBytes                    = uint_least32_t;
-// MARK: HEADER TYPES
-struct FILE_HEADER;
-struct TILE_TABLE;
-struct METADATA;
-struct ATTRIBUTES;
-
-// MARK: ARRAY TYEPES
-struct LAYER_EXTENTS;
-struct TILE_OFFSETS;
-struct ATTRIBUTES_SIZES;
-struct ATTRIBUTES_BYTES;
-struct IMAGE_ARRAY;
-struct IMAGE_BYTES;
-struct ICC_PROFILE;
-struct ANNOTATION_ARRAY;
-struct ANNOTATION_BYTES;
-struct ANNOTATION_GROUPS;
 
 /**
  * @brief Iris Codec statically definied offset values
  */
 enum Offsets : uint_least64_t {
+    HEADER_OFFSET                   = 0,
     NULL_OFFSET                     = UINT64_MAX,
 };
 /**
  * @brief Iris Codec Files contain methods to
  * heal corrupted metadata in the event of errors
- * occur in saving or outside of the scope of Iris
  * 
  */
 enum RECOVERY : uint_least16_t {
@@ -262,26 +304,9 @@ enum RECOVERY : uint_least16_t {
     RECOVER_ASSOCIATED_IMAGE_BYTES  = 0x550B,
     RECOVER_ICC_PROFILE             = 0x550C,
     RECOVER_ANNOTATIONS             = 0x550D,
-    RECOVER_ANNOTATION_BYTES        = 0x550F,
-};
-
-enum TYPES : uint8_t {
-    TYPE_INT8                       = 0,
-    TYPE_INT16,
-    TYPE_INT32,
-    TYPE_INT64,
-    TYPE_UINT8,
-    TYPE_UINT16,
-    TYPE_UINT32,
-    TYPE_UINT64,
-    TYPE_FLOAT16,
-    TYPE_FLOAT32,
-    TYPE_FLOAT64,
-    TYPE_STRING,
-    TYPE_DATE_TIME,
-    TYPE_HALF_FLOAT                 = TYPE_FLOAT16,
-    TYPE_FLOAT                      = TYPE_FLOAT32,
-    TYPE_DOUBLE                     = TYPE_FLOAT64,
+    RECOVER_ANNOTATION_BYTES        = 0x550E,
+    RECOVER_ANNOTATION_GROUP_SIZES  = 0x550F,
+    RECOVER_ANNOTATION_GROUP_BYTES  = 0x5510,
 };
 enum TYPE_SIZES {
     TYPE_SIZE_UINT8                 = 1,
@@ -301,7 +326,15 @@ enum TYPE_SIZES {
     TYPE_SIZE_INT64                 = TYPE_SIZE_UINT64,
     TYPE_SIZE_DATE_TIME             = TYPE_SIZE_UINT64,
 };
-
+struct DATA_BLOCK {
+    Offset      __offset            = NULL_OFFSET;
+    Size        __size              = 0;
+    uint32_t    __version           = 0;
+    explicit    DATA_BLOCK          (){};
+    explicit    DATA_BLOCK          (Offset     offset,
+                                     Size       file_size,
+                                     uint32_t   IFE_version);
+};
 // MARK: - HEADER TYPES
 // MARK: File Header
 /*
@@ -314,7 +347,7 @@ enum TYPE_SIZES {
  *  Metadata offset location   (ptr) is REQUIRED even if no metadata is encoded within the table.
  *
  */
-struct FILE_HEADER {
+struct FILE_HEADER : DATA_BLOCK {
     enum vtable_sizes {
         MAGIC_BYTES_OFFSET_S        = TYPE_SIZE_UINT32,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -334,20 +367,19 @@ struct FILE_HEADER {
         FILE_REVISION               = EXTENSION_MINOR + EXTENSION_MINOR_S,
         TILE_TABLE_OFFSET           = FILE_REVISION + FILE_REVISION_S,
         METADATA_OFFSET             = TILE_TABLE_OFFSET + TILE_TABLE_OFFSET_S,
+        HEADER_V1_0_SIZE            = METADATA_OFFSET + METADATA_OFFSET_S,
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
-        HEADER_SIZE                 = METADATA_OFFSET + METADATA_OFFSET_S,
+        HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_header     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
-    std::string get_file_info       (BYTE* const __base) const;
     Header      read_header         (BYTE* const __base) const;
     TILE_TABLE  get_tile_table      (BYTE* const __base) const;
     METADATA    get_metadata        (BYTE* const __base) const;
-    
-    Size        __size              = 0;
     
     explicit FILE_HEADER            (Size file_size) noexcept;
 };
@@ -360,7 +392,7 @@ struct HeaderCreateInfo {
 void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&);
 
 // MARK: Tile Table Header
-struct TILE_TABLE {
+struct TILE_TABLE : DATA_BLOCK {
     friend FILE_HEADER;
     enum vtable_sizes   {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -383,21 +415,20 @@ struct TILE_TABLE {
         LAYER_EXTENTS_OFFSET        = TILE_OFFSETS_OFFSET + TILE_OFFSETS_OFFSET_S,
         X_EXTENT                    = LAYER_EXTENTS_OFFSET + LAYER_EXTENTS_OFFSET_S,
         Y_EXTENT                    = X_EXTENT + X_EXTENT_S,
+        HEADER_V1_0_SIZE            = Y_EXTENT + Y_EXTENT_S,
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
-        TABLE_HEADER_SIZE           = Y_EXTENT + Y_EXTENT_S,
+        TABLE_HEADER_SIZE           = HEADER_V1_0_SIZE,
     };
     operator    bool                () const;
+    Size        size                () const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
     TileTable   read_tile_table     (BYTE* const __base) const;
     LAYER_EXTENTS get_layer_extents (BYTE* const __base) const;
     TILE_OFFSETS  get_tile_offsets  (BYTE* const __base) const;
     
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
 protected:
     explicit    TILE_TABLE          (Offset tile_table_offset, Size file_size, uint32_t version) noexcept;
 };
@@ -415,7 +446,7 @@ struct TileTableCreateInfo {
 void STORE_TILE_TABLE             (BYTE* const, const TileTableCreateInfo&);
 
 // MARK: Metadata Header
-struct METADATA {
+struct METADATA : DATA_BLOCK {
     friend FILE_HEADER;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -442,15 +473,18 @@ struct METADATA {
         ANNOTATIONS_OFFSET          = ICC_COLOR_OFFSET + ICC_COLOR_OFFSET_S,
         MICRONS_PIXEL               = ANNOTATIONS_OFFSET + ANNOTATIONS_OFFSET_S,
         MAGNIFICATION               = MICRONS_PIXEL + MICRONS_PIXEL_S,
+        HEADER_V1_0_SIZE            = MAGNIFICATION + MAGNIFICATION_S,
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
-        METADATA_SIZE               = MAGNIFICATION + MAGNIFICATION_S
+        HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     
     operator    bool                () const;
+    Size        size                () const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
+    Size        get_size            (BYTE* const __base) const;
     Metadata    read_metadata       (BYTE* const __base) const;
     bool        attributes          (BYTE* const __base) const;
     ATTRIBUTES  get_attributes      (BYTE* const __base) const;
@@ -458,14 +492,9 @@ struct METADATA {
     IMAGE_ARRAY get_image_array     (BYTE* const __base) const;
     bool        color_profile       (BYTE* const __base) const;
     ICC_PROFILE get_color_profile   (BYTE* const __base) const;
-    bool                annotations             (BYTE* const __base) const;
-    ANNOTATION_ARRAY    get_annotations         (BYTE* const __base) const;
-    bool                annotation_groups       (BYTE* const __base) const;
-    ANNOTATION_GROUPS   get_annotation_groups   (BYTE* const __base) const;
+    bool        annotations         (BYTE* const __base) const;
+    ANNOTATIONS get_annotations     (BYTE* const __base) const;
     
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
 protected:
     explicit    METADATA            () = delete;
     explicit    METADATA            (Offset __metadata, Size file_size, uint32_t version) noexcept;
@@ -484,7 +513,7 @@ struct MetadataCreateInfo {
 void STORE_METADATA                 (BYTE* const __base, const MetadataCreateInfo&);
 
 // MARK: ATTRIBUTES
-struct ATTRIBUTES {
+struct ATTRIBUTES : DATA_BLOCK {
     friend METADATA;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -503,22 +532,21 @@ struct ATTRIBUTES {
         NUMBER                      = VERSION + VERSION_S,
         LENGTHS_OFFSET              = NUMBER + NUMBER_S,
         BYTE_ARRAY_OFFSET           = LENGTHS_OFFSET + LENGTHS_OFFSET_S,
+        HEADER_V1_0_SIZE            = BYTE_ARRAY_OFFSET + BYTE_ARRAY_OFFSET_S,
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
-        SIZE                        = BYTE_ARRAY_OFFSET + BYTE_ARRAY_OFFSET_S
+        HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     
     operator    bool                () const;
+    Size        size                () const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
     Attributes  read_attributes     (BYTE* const __base) const;
     ATTRIBUTES_SIZES get_sizes      (BYTE* const __base) const;
     ATTRIBUTES_BYTES get_bytes      (BYTE* const __base) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
+
 protected:
     explicit    ATTRIBUTES          () = delete;
     explicit    ATTRIBUTES          (Offset offset, Size file_size, uint32_t version) noexcept;
@@ -551,7 +579,7 @@ struct LAYER_EXTENT {
         SIZE                        = SCALE + SCALE_S
     };
 };
-struct LAYER_EXTENTS {
+struct LAYER_EXTENTS : DATA_BLOCK {
     friend TILE_TABLE;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -571,15 +599,13 @@ struct LAYER_EXTENTS {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
     LayerExtents read_layer_extents (BYTE* const __base) const;
     
-    Offset      __offset            = NULL_OFFSET;
-    uint32_t    __version           = 0;
-    
 protected:
-    explicit LAYER_EXTENTS          (Offset offset, uint32_t version) noexcept;
+    explicit LAYER_EXTENTS          (Offset offset, Size file_size, uint32_t version) noexcept;
 };
 Size SIZE_EXTENTS                   (const LayerExtents&);
 void STORE_EXTENTS                  (BYTE* const __base, Offset offset, const LayerExtents&);
@@ -600,7 +626,7 @@ struct TILE_OFFSET {
         SIZE                        = TILE_SIZE + TILE_SIZE_S,
     };
 };
-struct TILE_OFFSETS {
+struct TILE_OFFSETS : DATA_BLOCK {
     friend TILE_TABLE;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -620,13 +646,10 @@ struct TILE_OFFSETS {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
     void        read_tile_offsets   (BYTE* const __base, TileTable&) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
     
 protected:
     explicit TILE_OFFSETS           () = delete;
@@ -651,7 +674,7 @@ struct ATTRIBUTE_SIZE {
         SIZE                        = VALUE_SIZE + VALUE_SIZE_S,
     };
 };
-struct ATTRIBUTES_SIZES {
+struct ATTRIBUTES_SIZES : DATA_BLOCK {
     friend ATTRIBUTES;
     using SizeArray                 = std::vector<std::pair<uint16_t,uint32_t>>;
     enum vtable_sizes {
@@ -673,12 +696,8 @@ struct ATTRIBUTES_SIZES {
     };
     operator    bool                () const;
     void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Size        validate_full       (BYTE* const __base) const;
     SizeArray   read_sizes          (BYTE* const __base) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
     
 protected:
     explicit ATTRIBUTES_SIZES       () = delete;
@@ -689,7 +708,7 @@ void STORE_ATTRIBUTES_SIZES         (BYTE* const __base, Offset, const Attribute
 
 // MARK: ATTRIBUTES BYTES
 
-struct ATTRIBUTES_BYTES {
+struct ATTRIBUTES_BYTES : DATA_BLOCK {
     friend ATTRIBUTES;
     using SizeArray                 = ATTRIBUTES_SIZES::SizeArray;
     enum vtable_sizes {
@@ -707,13 +726,10 @@ struct ATTRIBUTES_BYTES {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    void        validate_full       (BYTE* const __base, Size expected_size) const;
     void        read_bytes          (BYTE* const __base, const SizeArray&, Attributes&) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
     
 protected:
     explicit ATTRIBUTES_BYTES       () = delete;
@@ -746,9 +762,10 @@ struct IMAGE_ENTRY {
         SIZE                        = ORIENTATION + ORIENTATION_S,
     };
 };
-struct IMAGE_ARRAY {
+struct IMAGE_ARRAY : DATA_BLOCK {
     friend METADATA;
     using Labels                    = Metadata::ImageLabels;
+    using BYTES_ARRAY               = std::vector<IMAGE_BYTES>;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -767,14 +784,11 @@ struct IMAGE_ARRAY {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
-    
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
-    Images      read_images         (BYTE* const __base) const;
+    Images      read_images         (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
 protected:
     explicit    IMAGE_ARRAY         () = delete;
@@ -799,7 +813,7 @@ Size SIZE_IMAGES_ARRAY              (AssociatedImageCreateInfo&);
 void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCreateInfo&);
 
 // MARK: IMAGE_BYTES
-struct IMAGE_BYTES {
+struct IMAGE_BYTES : DATA_BLOCK {
     friend IMAGE_ARRAY;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -819,14 +833,11 @@ struct IMAGE_BYTES {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
-    
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
-    void        read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
+    std::string read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
     
 protected:
     explicit    IMAGE_BYTES         () = delete;
@@ -843,7 +854,7 @@ void STORE_IMAGES_BYTES             (BYTE* const __base, const ImageBytesCreateI
 
 // MARK: - ICC Color Profile
 
-struct ICC_PROFILE {
+struct ICC_PROFILE : DATA_BLOCK {
     friend METADATA;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -860,12 +871,10 @@ struct ICC_PROFILE {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
+    void        validate_full       (BYTE* const __base) const;
     std::string read_profile        (BYTE* const __base) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
     
 protected:
     explicit ICC_PROFILE      () = delete;
@@ -874,7 +883,7 @@ protected:
 Size SIZE_ICC_COLOR_PROFILE         (const std::string& color_profile);
 void STORE_ICC_COLOR_PROFILE        (BYTE* const __base, Offset, const std::string& color_profile);
 
-// MARK: - Annotations
+// MARK: - Annotation Arrays
 struct ANNOTATION_ENTRY {
     enum vtable_sizes {
         IDENTIFIER_S                = TYPE_SIZE_UINT24,
@@ -906,21 +915,28 @@ struct ANNOTATION_ENTRY {
     };
 };
 // MARK: ANNOTATION ARRAY
-struct ANNOTATION_ARRAY {
+struct ANNOTATIONS : DATA_BLOCK {
     friend METADATA;
     using Annotations               = Abstraction::Annotations;
+    using BYTES_ARRAY               = std::vector<ANNOTATION_BYTES>;
+    using GROUP_SIZES               = ANNOTATION_GROUP_SIZES;
+    using GROUP_BYTES               = ANNOTATION_GROUP_BYTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
         ENTRY_SIZE_S                = TYPE_SIZE_UINT16,
         ENTRY_NUMBER_S              = TYPE_SIZE_UINT32,
+        GROUP_SIZES_OFFSET_S        = TYPE_SIZE_UINT64,
+        GROUP_BYTES_OFFSET_S        = TYPE_SIZE_UINT64,
     };
     enum vtable_offsets {
         VALIDATION                  = 0,
         RECOVERY                    = VALIDATION + VALIDATION_S,
         ENTRY_SIZE                  = RECOVERY + RECOVERY_S,
         ENTRY_NUMBER                = ENTRY_SIZE + ENTRY_SIZE_S,
-        HEADER_V1_0_SIZE            = ENTRY_NUMBER + ENTRY_NUMBER_S,
+        GROUP_SIZES_OFFSET          = ENTRY_NUMBER + ENTRY_NUMBER_S,
+        GROUP_BYTES_OFFSET          = GROUP_SIZES_OFFSET + GROUP_SIZES_OFFSET_S,
+        HEADER_V1_0_SIZE            = GROUP_BYTES_OFFSET + GROUP_BYTES_OFFSET_S,
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
@@ -928,17 +944,20 @@ struct ANNOTATION_ARRAY {
     };
     
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        validate_full       (BYTE* const __base) const;
-    Annotations read_annotations    (BYTE* const __base) const;
+    Annotations read_annotations    (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
+    
+    bool        groups              (BYTE* const __base) const;
+    GROUP_SIZES get_group_sizes     (BYTE* const __base) const;
+    GROUP_BYTES get_group_bytes     (BYTE* const __base) const;
+
     
 protected:
-    explicit ANNOTATION_ARRAY       () = delete;
-    explicit ANNOTATION_ARRAY       (Offset offset, Size file_size, uint32_t version) noexcept;
+    explicit ANNOTATIONS            () = delete;
+    explicit ANNOTATIONS            (Offset offset, Size file_size, uint32_t version) noexcept;
 };
 struct AnnotationArrayCreateInfo {
     using Annotation                = Abstraction::Annotation;
@@ -963,8 +982,8 @@ Size SIZE_ANNOTATION_ARRAY          (const AnnotationArrayCreateInfo&);
 void STORE_ANNOTATION_ARRAY         (BYTE* const __base, const AnnotationArrayCreateInfo&);
 
 // MARK: ANNOTATION BYTES
-struct ANNOTATION_BYTES {
-    friend ANNOTATION_ARRAY;
+struct ANNOTATION_BYTES : DATA_BLOCK {
+    friend ANNOTATIONS;
     using Annotation                = Abstraction::Annotation;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -983,12 +1002,9 @@ struct ANNOTATION_BYTES {
     };
     
     operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
     void        validate_offset     (BYTE* const __base) const;
     void        read_bytes          (BYTE* const __base, Annotation&) const;
-    
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
     
 protected:
     explicit ANNOTATION_BYTES       () = delete;
@@ -998,13 +1014,114 @@ Size SIZE_ANNOTATION_BYTES          (const IrisCodec::Annotation&);
 void STORE_ANNOTATION_BYTES         (BYTE* const __base, Offset, const IrisCodec::Annotation&);
 
 // MARK: ANNOTATION GROUPS
-struct ANNOTATION_GROUPS {
-    
+struct ANNOTATION_GROUP_SIZE {
+    enum vtable_sizes {
+        LABEL_SIZE_S                = TYPE_SIZE_UINT16,
+        ENTRIES_NUMBER_S            = TYPE_SIZE_UINT32,
+    };
+    enum vtable_offsets {
+        LABEL_SIZE                  = 0,
+        ENTRIES_NUMBER              = LABEL_SIZE + LABEL_SIZE_S,
+
+        // Version 1.0 ends here.
+        // -----------------------------------------------------------------------
+        
+        SIZE                        = ENTRIES_NUMBER + ENTRIES_NUMBER_S,
+    };
 };
-struct ANNOTATION_GROUP {
-    friend ANNOTATION_GROUPS;
+struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
+    friend ANNOTATIONS;
+    using GroupSizes                = std::vector<std::pair<uint16_t,uint32_t>>;
+    using Groups                    = Abstraction::Annotations::Groups;
+    enum vtable_sizes {
+        VALIDATION_S                = TYPE_SIZE_UINT64,
+        RECOVERY_S                  = TYPE_SIZE_UINT16,
+        ENTRY_SIZE_S                = TYPE_SIZE_UINT16,
+        ENTRY_NUMBER_S              = TYPE_SIZE_UINT32,
+    };
+    enum vtable_offsets {
+        VALIDATION                  = 0,
+        RECOVERY                    = VALIDATION + VALIDATION_S,
+        ENTRY_SIZE                  = RECOVERY + RECOVERY_S,
+        ENTRY_NUMBER                = ENTRY_SIZE + ENTRY_SIZE_S,
+        HEADER_V1_0_SIZE            = ENTRY_NUMBER + ENTRY_NUMBER_S,
+        // Version 1.0 ends here.
+        // -----------------------------------------------------------------------
+        
+        HEADER_SIZE                 = HEADER_V1_0_SIZE,
+    };
     
+    operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
+    void        validate_offset     (BYTE* const __base) const;
+    Size        validate_full       (BYTE* const __base) const;
+    GroupSizes  read_group_sizes    (BYTE* const __base) const;
+    
+protected:
+    explicit ANNOTATION_GROUP_SIZES () = delete;
+    explicit ANNOTATION_GROUP_SIZES (Offset offset, Size file_size, uint32_t version) noexcept;
+};
+struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
+    friend ANNOTATIONS;
+    using GroupSizes                = ANNOTATION_GROUP_SIZES::GroupSizes;
+    using Annotations               = Abstraction::Annotations;
+    enum vtable_sizes {
+        VALIDATION_S                = TYPE_SIZE_UINT64,
+        RECOVERY_S                  = TYPE_SIZE_UINT16,
+        ENTRY_NUMBER_S              = TYPE_SIZE_UINT32,
+    };
+    enum vtable_offsets {
+        VALIDATION                  = 0,
+        RECOVERY                    = VALIDATION + VALIDATION_S,
+        ENTRY_NUMBER                = RECOVERY + RECOVERY_S,
+        HEADER_V1_0_SIZE            = ENTRY_NUMBER + ENTRY_NUMBER_S,
+        // Version 1.0 ends here.
+        // -----------------------------------------------------------------------
+        
+        HEADER_SIZE                 = HEADER_V1_0_SIZE,
+    };
+    
+    operator    bool                () const;
+    Size        size                (BYTE* const __base) const;
+    void        validate_offset     (BYTE* const __base) const;
+    void        validate_full       (BYTE* const __base, Size total_size) const;
+    void        read_bytes          (BYTE* const __base, const GroupSizes&, Annotations&) const;
+    
+protected:
+    explicit ANNOTATION_GROUP_BYTES () = delete;
+    explicit ANNOTATION_GROUP_BYTES (Offset offset, Size file_size, uint32_t version) noexcept;
 };
 } // END FILE STRUCTURE
+namespace Abstraction {
+enum MapEntryType {
+    MAP_ENTRY_UNDEFINED         = 0,
+    MAP_ENTRY_FILE_HEADER,
+    MAP_ENTRY_TILE_TABLE,
+    MAP_ENTRY_CIPHER,
+    MAP_ENTRY_METADATA,
+    MAP_ENTRY_ATTRIBUTES,
+    MAP_ENTRY_LAYER_EXTENTS,
+    MAP_ENTRY_TILE_DATA,
+    MAP_ENTRY_TILE_OFFSETS,
+    MAP_ENTRY_ATTRIBUTE_SIZES,
+    MAP_ENTRY_ATTRIBUTES_BYTES,
+    MAP_ENTRY_ASSOCIATED_IMAGES,
+    MAP_ENTRY_ASSOCIATED_IMAGE_BYTES,
+    MAP_ENTRY_ICC_PROFILE,
+    MAP_ENTRY_ANNOTATIONS,
+    MAP_ENTRY_ANNOTATION_BYTES,
+    MAP_ENTRY_ANNOTATION_GROUP_SIZES,
+    MAP_ENTRY_ANNOTATION_GROUP_BYTES,
+};
+/**
+ * @brief FileMap entry representing a datablock within the IFE file structure system.
+ */
+struct FileMapEntry {
+    using Datablock                 = Serialization::DATA_BLOCK;
+    MapEntryType        type        = MAP_ENTRY_UNDEFINED;
+    Datablock           datablock;
+    Size                size        = 0;
+};
+}
 } // END IRIS CODEC
 #endif /* IrisCodecExtension_hpp */
