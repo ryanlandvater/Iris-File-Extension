@@ -99,7 +99,7 @@ bool is_Iris_Codec_file     (BYTE* const __mapped_file_ptr,
  * This performs a tree validation of objects and sub-objects to ensure their offsets properly.
  */
 Result validate_file_structure (BYTE* const __mapped_file_ptr,
-                                size_t file_size);
+                                size_t file_size) noexcept;
 /**
  * @brief Abstract the Iris file structure into memory for quick data access. This does NOT validate.
  *
@@ -291,6 +291,7 @@ enum RECOVERY : uint_least16_t {
     // In the event of recovery, we will search
     // for a byte offset that stores its own value
     // followed by one of these sequences.
+    RECOVER_UNDEFINED               = 0x5500,
     RECOVER_HEADER                  = 0x5501,
     RECOVER_TILE_TABLE              = 0x5502,
     RECOVER_CIPHER                  = 0x5503,
@@ -327,13 +328,25 @@ enum TYPE_SIZES {
     TYPE_SIZE_DATE_TIME             = TYPE_SIZE_UINT64,
 };
 struct DATA_BLOCK {
+    static constexpr
+    std::string type                = "UNDEFINED_DATA_BLOCK";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_UNDEFINED;
+    enum vtable_sizes   {
+        VALIDATION_S                = TYPE_SIZE_UINT64,
+        RECOVERY_S                  = TYPE_SIZE_UINT16,
+    };
+    enum vtable_offsets {
+        VALIDATION                  = 0,
+        RECOVERY                    = VALIDATION + VALIDATION_S,
+    };
     Offset      __offset            = NULL_OFFSET;
     Size        __size              = 0;
     uint32_t    __version           = 0;
+    operator    bool                () const;
     explicit    DATA_BLOCK          (){};
-    explicit    DATA_BLOCK          (Offset     offset,
-                                     Size       file_size,
-                                     uint32_t   IFE_version);
+    explicit    DATA_BLOCK          (Offset, Size file_size, uint32_t IFE_version);
+    Result      validate_offset     (BYTE* const __base) const noexcept;
 };
 // MARK: - HEADER TYPES
 // MARK: File Header
@@ -348,6 +361,10 @@ struct DATA_BLOCK {
  *
  */
 struct FILE_HEADER : DATA_BLOCK {
+    static constexpr
+    std::string block_name          = "FILE_HEADER";
+    static constexpr
+    enum RECOVERY    recovery       = RECOVER_HEADER;
     enum vtable_sizes {
         MAGIC_BYTES_OFFSET_S        = TYPE_SIZE_UINT32,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -373,10 +390,9 @@ struct FILE_HEADER : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_header     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_header     (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     Header      read_header         (BYTE* const __base) const;
     TILE_TABLE  get_tile_table      (BYTE* const __base) const;
     METADATA    get_metadata        (BYTE* const __base) const;
@@ -394,6 +410,10 @@ void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&
 // MARK: Tile Table Header
 struct TILE_TABLE : DATA_BLOCK {
     friend FILE_HEADER;
+    static constexpr
+    std::string type                = "TILE_TABLE";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_TILE_TABLE;
     enum vtable_sizes   {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -421,10 +441,8 @@ struct TILE_TABLE : DATA_BLOCK {
         
         TABLE_HEADER_SIZE           = HEADER_V1_0_SIZE,
     };
-    operator    bool                () const;
     Size        size                () const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     TileTable   read_tile_table     (BYTE* const __base) const;
     LAYER_EXTENTS get_layer_extents (BYTE* const __base) const;
     TILE_OFFSETS  get_tile_offsets  (BYTE* const __base) const;
@@ -448,6 +466,10 @@ void STORE_TILE_TABLE             (BYTE* const, const TileTableCreateInfo&);
 // MARK: Metadata Header
 struct METADATA : DATA_BLOCK {
     friend FILE_HEADER;
+    static constexpr
+    std::string type                = "METADATA";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_METADATA;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -480,10 +502,8 @@ struct METADATA : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     
-    operator    bool                () const;
     Size        size                () const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     Size        get_size            (BYTE* const __base) const;
     Metadata    read_metadata       (BYTE* const __base) const;
     bool        attributes          (BYTE* const __base) const;
@@ -515,6 +535,10 @@ void STORE_METADATA                 (BYTE* const __base, const MetadataCreateInf
 // MARK: ATTRIBUTES
 struct ATTRIBUTES : DATA_BLOCK {
     friend METADATA;
+    static constexpr
+    std::string type                = "ATTRIBUTES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ATTRIBUTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -538,11 +562,8 @@ struct ATTRIBUTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                () const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     Attributes  read_attributes     (BYTE* const __base) const;
     ATTRIBUTES_SIZES get_sizes      (BYTE* const __base) const;
     ATTRIBUTES_BYTES get_bytes      (BYTE* const __base) const;
@@ -581,6 +602,10 @@ struct LAYER_EXTENT {
 };
 struct LAYER_EXTENTS : DATA_BLOCK {
     friend TILE_TABLE;
+    static constexpr
+    std::string type                = "LAYER_EXTENTS";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_LAYER_EXTENTS;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -598,10 +623,8 @@ struct LAYER_EXTENTS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     LayerExtents read_layer_extents (BYTE* const __base) const;
     
 protected:
@@ -628,6 +651,8 @@ struct TILE_OFFSET {
 };
 struct TILE_OFFSETS : DATA_BLOCK {
     friend TILE_TABLE;
+    static constexpr
+    enum RECOVERY    recovery       = RECOVER_TILE_OFFSETS;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -645,10 +670,8 @@ struct TILE_OFFSETS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     void        read_tile_offsets   (BYTE* const __base, TileTable&) const;
     
 protected:
@@ -676,6 +699,10 @@ struct ATTRIBUTE_SIZE {
 };
 struct ATTRIBUTES_SIZES : DATA_BLOCK {
     friend ATTRIBUTES;
+    static constexpr
+    std::string type                = "ATTRIBUTES_SIZES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ATTRIBUTES_SIZES;
     using SizeArray                 = std::vector<std::pair<uint16_t,uint32_t>>;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
@@ -694,9 +721,7 @@ struct ATTRIBUTES_SIZES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
-    void        validate_offset     (BYTE* const __base) const;
-    Size        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
     SizeArray   read_sizes          (BYTE* const __base) const;
     
 protected:
@@ -711,6 +736,10 @@ void STORE_ATTRIBUTES_SIZES         (BYTE* const __base, Offset, const Attribute
 struct ATTRIBUTES_BYTES : DATA_BLOCK {
     friend ATTRIBUTES;
     using SizeArray                 = ATTRIBUTES_SIZES::SizeArray;
+    static constexpr
+    std::string type                = "ATTRIBUTES_BYTES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ATTRIBUTES_BYTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -725,10 +754,8 @@ struct ATTRIBUTES_BYTES : DATA_BLOCK {
         // -----------------------------------------------------------------------
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base, Size expected_size) const;
+    Result      validate_full       (BYTE* const __base, Size expected_bytes) const noexcept;
     void        read_bytes          (BYTE* const __base, const SizeArray&, Attributes&) const;
     
 protected:
@@ -766,6 +793,10 @@ struct IMAGE_ARRAY : DATA_BLOCK {
     friend METADATA;
     using Labels                    = Metadata::ImageLabels;
     using BYTES_ARRAY               = std::vector<IMAGE_BYTES>;
+    static constexpr
+    std::string type                = "IMAGE_ARRAY";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ASSOCIATED_IMAGES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -783,11 +814,8 @@ struct IMAGE_ARRAY : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     Images      read_images         (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
 protected:
@@ -815,6 +843,10 @@ void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCr
 // MARK: IMAGE_BYTES
 struct IMAGE_BYTES : DATA_BLOCK {
     friend IMAGE_ARRAY;
+    static constexpr
+    std::string type                = "IMAGE_BYTES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ASSOCIATED_IMAGE_BYTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -832,11 +864,8 @@ struct IMAGE_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     std::string read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
     
 protected:
@@ -856,6 +885,10 @@ void STORE_IMAGES_BYTES             (BYTE* const __base, const ImageBytesCreateI
 
 struct ICC_PROFILE : DATA_BLOCK {
     friend METADATA;
+    static constexpr
+    std::string type                = "ICC_PROFILE";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ICC_PROFILE;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -870,10 +903,8 @@ struct ICC_PROFILE : DATA_BLOCK {
         // -----------------------------------------------------------------------
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     std::string read_profile        (BYTE* const __base) const;
     
 protected:
@@ -921,6 +952,10 @@ struct ANNOTATIONS : DATA_BLOCK {
     using BYTES_ARRAY               = std::vector<ANNOTATION_BYTES>;
     using GROUP_SIZES               = ANNOTATION_GROUP_SIZES;
     using GROUP_BYTES               = ANNOTATION_GROUP_BYTES;
+    static constexpr
+    std::string type                = "ANNOTATIONS";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ANNOTATIONS;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -942,11 +977,8 @@ struct ANNOTATIONS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base) const noexcept;
     Annotations read_annotations    (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
     
@@ -985,6 +1017,10 @@ void STORE_ANNOTATION_ARRAY         (BYTE* const __base, const AnnotationArrayCr
 struct ANNOTATION_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
     using Annotation                = Abstraction::Annotation;
+    static constexpr
+    std::string type                = "ANNOTATION_BYTES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ANNOTATION_BYTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -1000,10 +1036,7 @@ struct ANNOTATION_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
     void        read_bytes          (BYTE* const __base, Annotation&) const;
     
 protected:
@@ -1033,6 +1066,10 @@ struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
     friend ANNOTATIONS;
     using GroupSizes                = std::vector<std::pair<uint16_t,uint32_t>>;
     using Groups                    = Abstraction::Annotations::Groups;
+    static constexpr
+    std::string type                = "ANNOTATION_GROUP_SIZES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ANNOTATION_GROUP_SIZES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -1050,11 +1087,8 @@ struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    Size        validate_full       (BYTE* const __base) const;
+    Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
     GroupSizes  read_group_sizes    (BYTE* const __base) const;
     
 protected:
@@ -1065,6 +1099,10 @@ struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
     using GroupSizes                = ANNOTATION_GROUP_SIZES::GroupSizes;
     using Annotations               = Abstraction::Annotations;
+    static constexpr
+    std::string type                = "ANNOTATION_GROUP_BYTES";
+    static constexpr enum
+    RECOVERY    recovery            = RECOVER_ANNOTATION_GROUP_BYTES;
     enum vtable_sizes {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -1080,11 +1118,8 @@ struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    
-    operator    bool                () const;
     Size        size                (BYTE* const __base) const;
-    void        validate_offset     (BYTE* const __base) const;
-    void        validate_full       (BYTE* const __base, Size total_size) const;
+    Result      validate_full       (BYTE* const __base, Size total_size) const noexcept;
     void        read_bytes          (BYTE* const __base, const GroupSizes&, Annotations&) const;
     
 protected:

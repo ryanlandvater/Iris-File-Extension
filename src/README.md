@@ -72,13 +72,11 @@ if (result != IRIS_SUCCESS) {
     ...handle the validation error
 }
 ```
-This method performs a chain of `validate_full(uint8_t*)` methods on the component parts of slides. If you prefer to validate individual data blocks, you may individually call the `validate_offset(uint8_t*)` and `validate_full(uint8_t*)` methods that are defined in all data blocks. See the more in-depth [README](./src/README.md) associated with the source directory. 
+This method performs a chain of `validate_full(uint8_t*)` methods on the component parts of slides. If you prefer to validate individual data blocks, you may individually call the `validate_offset(uint8_t*)` and `validate_full(uint8_t*)` methods that are defined in all data blocks. See the more indepth [README](./src) associated with the source directory. 
 
 
 ### Using Slide Abstraction
 The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L206-L212), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
-> [!WARNING]
-> If you did not validate prior to abstraction, uncaught runtime exceptions will be thrown if the slide violates the standard. We leave how to deal with validation exceptions to your implementation, should they arise.  
 ```cpp
 struct IrisCodec::Abstraction::File {
     Header          header;      // File Header information
@@ -98,13 +96,11 @@ try {
     
     // We can retrieve data easily from the slide
     // Get the encoding type (IrisCodec::Encoding)
-    auto compression_format = file.tileTable.encoding;
+    auto compression_fmt = file.tileTable.encoding;
     // Get the location and offset of the tile (layer, tile_index)
     auto& layer_0_1_bytes = file.tileTable.layers[0][1];
     // And 'decompress' based upon whatever JPEG, AVIF, etc... library you use
     char* some_buffer = decompress (ptr + layer_0_1_bytes.offset,layer_0_1_bytes.size);
-    // Or copy it from disk
-    memcpy(some_buffer, ptr + layer_0_1_bytes.offset,layer_0_1_bytes.size);
 
     // Don't worry about clean up. You're just referencing on-disk locations.
 } catch (std::runtime_error &error) {
@@ -112,35 +108,53 @@ try {
 }
 ```
 
-### Manually *without* File Abstraction 
-Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the `Serialization::DATA_BLOCK` structure defined below. These data blocks reside within the `Serialization:: namespace` and are **always** fully capitalized. They are accessed by retrieval from parent data blocks using methods that begin with "get" followed by the name of any derived data blocks. Data block information is read using the "read" methods. These methods generate structures within the `Abstraction:: namespace`. This method for manually reading data from within the IFE will be covered in greater detail within the [README](./src/README.md) associated with the source directory. 
+### Manually without file mapping
+Insteand of using the file mapping routine, you may manually access data block elements. *Abstracted* objects live in the `Abstraction:: namespace` and use CammelCase; whereas *serialized data block* objects live in the `Serialization:: namespace` and are CAPITALIZED. *Serialized* objects are polymorphic classes derived from the DATA_BLOCK structure (*shown below*) and will return other DATA_BLOCKs using the **get_xxx(ptr)** methods; alteratively, they return *Abstraction* objects when using the **read_xxx(ptr)** methods. Creation of DATA_BLOCK objects is controlled in a layered manner by protecting constructors such that only valid precursor objects may derive objects to which they point (FILE_HEADER --> TILE_TABLE --> TILE_OFFSETS).
+
 ```cpp
+// DATA_BLOCKs are very light-weight representations.
 struct DATA_BLOCK {
-    // Each datablock has an vtable
-    enum vtable_sizes   {
-        VALIDATION_S                = TYPE_SIZE_UINT64,
-        RECOVERY_S                  = TYPE_SIZE_UINT16,
-        ///... Other elements (see IFE Specification)
-    };
-    enum vtable_offsets {
-        VALIDATION                  = 0,
-        RECOVERY                    = VALIDATION + VALIDATION_S,
-        ///... Other elements (see IFE Specification)
-    };
-    // And only stores 3 pieces of information
-    // 1) The datablock offset on disk
-    // 2) The file size for validation
-    // 3) The IFE version
     Offset      __offset            = NULL_OFFSET;
     Size        __size              = 0;
     uint32_t    __version           = 0;
-    explicit    DATA_BLOCK          (Offset, Size file_size, uint32_t IFE_version);
-    Result      validate_offset     (BYTE* const __base) const noexcept;
 };
+```
+```cpp
+try {
+    
+    Size     size = GET_FILE_SIZE(file_handle);
+    uint8_t* ptr  = FILE_MAP(file_handle, size);
+
+    using namespace Serialization;
+    FILE_HEADER __HEADER = FILE_HEADER (size);
+    // You must separately validate the header as no ptr was provided
+    // during creation. This step may change in the future.
+    __HEADER.validate_header (ptr);
+
+    // Get the tile table.
+    TILE_TABLE  __TABLE     = __HEADER.get_tile_table (ptr);
+    // The tile table header is validated as a part of this routine.
+    // However you can still fully validate if not done already.
+    __TABLE.validate_full (ptr); 
+
+    // We can get derived DATA_BLOCKS
+    LAYER_EXTENTS __EXTENTS = __TABLE.get_layer_extents (ptr);
+    TILE_OFFSETS __OFFSETS  = __TABLE.get_tile_offsets (ptr);
+
+    // Or read abstracted data
+    Abstraction::header     = FILE_HEADER.read_header (ptr);
+    Abstrction::tileTable   = TILE_TABLE.read_tile_table (ptr);
+
+    // This method should be used if you only need/want some aspects
+    // of the file without needing to abstract the entire slide
+} catch (...) {
+    ...handle validation / read errors
+}
+
 ```
 
 ### File Data Mapping
-**File data mapping is more advanced functionality**. The IFE provides a powerful tool to assess the location of data blocks within a serialized slide file. This is critical when performing file recovery or file updates, as you may overwrite already used regions (eg. when expanding arrays). A file map allows for finding all data-blocks before or after a byte offset location (using std::map binary search tree internally). A file map entry, shown below, describes the location, size, and type of data block within the file at the given location. You may recast the datablock as it's internally defined type and use it per the API, though we recommend validating it first before attempting to do so. 
+**File data mapping is more advanced functionality**. The IFE provides a powerful tool to assess the location of data blocks within a serialized slide file. This is critical when performing file updates as you may overwrite already used regions (eg.when expanding arrays). A file map allows for finding all data-blocks before or after a byte offset location (using std::map binary search tree internally). A file map entry, shown below, describes the location, size, and type of data block within the file at the given location. You may recast the datablock as it's internally defined type and use it per the API, though we recommend validating it first before attempting to do so. 
 ```cpp
 // File Map Entry contains information about the datablock (what type)
 // and the offset location
