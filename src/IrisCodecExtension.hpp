@@ -329,7 +329,7 @@ enum TYPE_SIZES {
 };
 struct DATA_BLOCK {
     static constexpr
-    std::string type                = "UNDEFINED_DATA_BLOCK";
+    char type []                    = "UNDEFINED_DATA_BLOCK";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_UNDEFINED;
     enum vtable_sizes   {
@@ -362,8 +362,8 @@ struct DATA_BLOCK {
  */
 struct FILE_HEADER : DATA_BLOCK {
     static constexpr
-    std::string block_name          = "FILE_HEADER";
-    static constexpr
+    char type []                    = "FILE_HEADER";
+    static const
     enum RECOVERY    recovery       = RECOVER_HEADER;
     enum vtable_sizes {
         MAGIC_BYTES_OFFSET_S        = TYPE_SIZE_UINT32,
@@ -411,7 +411,7 @@ void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&
 struct TILE_TABLE : DATA_BLOCK {
     friend FILE_HEADER;
     static constexpr
-    std::string type                = "TILE_TABLE";
+    char type []                    = "TILE_TABLE";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_TILE_TABLE;
     enum vtable_sizes   {
@@ -467,7 +467,7 @@ void STORE_TILE_TABLE             (BYTE* const, const TileTableCreateInfo&);
 struct METADATA : DATA_BLOCK {
     friend FILE_HEADER;
     static constexpr
-    std::string type                = "METADATA";
+    char type []                    = "METADATA";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_METADATA;
     enum vtable_sizes {
@@ -536,7 +536,7 @@ void STORE_METADATA                 (BYTE* const __base, const MetadataCreateInf
 struct ATTRIBUTES : DATA_BLOCK {
     friend METADATA;
     static constexpr
-    std::string type                = "ATTRIBUTES";
+    char type []                    = "ATTRIBUTES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ATTRIBUTES;
     enum vtable_sizes {
@@ -603,7 +603,7 @@ struct LAYER_EXTENT {
 struct LAYER_EXTENTS : DATA_BLOCK {
     friend TILE_TABLE;
     static constexpr
-    std::string type                = "LAYER_EXTENTS";
+    char type []                    = "LAYER_EXTENTS";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_LAYER_EXTENTS;
     enum vtable_sizes {
@@ -683,7 +683,6 @@ void STORE_TILE_OFFSETS             (BYTE* const, Offset, const TileTable::Layer
 
 // MARK: ATTRIBUTES SIZES
 struct ATTRIBUTE_SIZE {
-    friend ATTRIBUTE_SIZE;
     enum vtable_sizes {
         KEY_SIZE_S                  = TYPE_SIZE_UINT16,
         VALUE_SIZE_S                = TYPE_SIZE_UINT32,
@@ -700,7 +699,7 @@ struct ATTRIBUTE_SIZE {
 struct ATTRIBUTES_SIZES : DATA_BLOCK {
     friend ATTRIBUTES;
     static constexpr
-    std::string type                = "ATTRIBUTES_SIZES";
+    char type []                    = "ATTRIBUTES_SIZES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ATTRIBUTES_SIZES;
     using SizeArray                 = std::vector<std::pair<uint16_t,uint32_t>>;
@@ -737,7 +736,7 @@ struct ATTRIBUTES_BYTES : DATA_BLOCK {
     friend ATTRIBUTES;
     using SizeArray                 = ATTRIBUTES_SIZES::SizeArray;
     static constexpr
-    std::string type                = "ATTRIBUTES_BYTES";
+    char type []                    = "ATTRIBUTES_BYTES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ATTRIBUTES_BYTES;
     enum vtable_sizes {
@@ -794,7 +793,7 @@ struct IMAGE_ARRAY : DATA_BLOCK {
     using Labels                    = Metadata::ImageLabels;
     using BYTES_ARRAY               = std::vector<IMAGE_BYTES>;
     static constexpr
-    std::string type                = "IMAGE_ARRAY";
+    char type []                    = "IMAGE_ARRAY";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ASSOCIATED_IMAGES;
     enum vtable_sizes {
@@ -844,7 +843,7 @@ void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCr
 struct IMAGE_BYTES : DATA_BLOCK {
     friend IMAGE_ARRAY;
     static constexpr
-    std::string type                = "IMAGE_BYTES";
+    char type []                    = "IMAGE_BYTES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ASSOCIATED_IMAGE_BYTES;
     enum vtable_sizes {
@@ -886,7 +885,7 @@ void STORE_IMAGES_BYTES             (BYTE* const __base, const ImageBytesCreateI
 struct ICC_PROFILE : DATA_BLOCK {
     friend METADATA;
     static constexpr
-    std::string type                = "ICC_PROFILE";
+    char type []                    = "ICC_PROFILE";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ICC_PROFILE;
     enum vtable_sizes {
@@ -953,7 +952,7 @@ struct ANNOTATIONS : DATA_BLOCK {
     using GROUP_SIZES               = ANNOTATION_GROUP_SIZES;
     using GROUP_BYTES               = ANNOTATION_GROUP_BYTES;
     static constexpr
-    std::string type                = "ANNOTATIONS";
+    char type []                    = "ANNOTATIONS";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ANNOTATIONS;
     enum vtable_sizes {
@@ -1018,7 +1017,7 @@ struct ANNOTATION_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
     using Annotation                = Abstraction::Annotation;
     static constexpr
-    std::string type                = "ANNOTATION_BYTES";
+    char type []                    = "ANNOTATION_BYTES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ANNOTATION_BYTES;
     enum vtable_sizes {
@@ -1067,7 +1066,7 @@ struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
     using GroupSizes                = std::vector<std::pair<uint16_t,uint32_t>>;
     using Groups                    = Abstraction::Annotations::Groups;
     static constexpr
-    std::string type                = "ANNOTATION_GROUP_SIZES";
+    char type []                    = "ANNOTATION_GROUP_SIZES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ANNOTATION_GROUP_SIZES;
     enum vtable_sizes {
@@ -1100,7 +1099,7 @@ struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
     using GroupSizes                = ANNOTATION_GROUP_SIZES::GroupSizes;
     using Annotations               = Abstraction::Annotations;
     static constexpr
-    std::string type                = "ANNOTATION_GROUP_BYTES";
+    char type []                    = "ANNOTATION_GROUP_BYTES";
     static constexpr enum
     RECOVERY    recovery            = RECOVER_ANNOTATION_GROUP_BYTES;
     enum vtable_sizes {
