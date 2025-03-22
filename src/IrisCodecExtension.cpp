@@ -40,7 +40,6 @@
 #include <math.h>
 #include <float.h>
 #include <iostream>
-#include <sstream>
 #include <assert.h>
 #include "IrisTypes.hpp"
 #include "IrisBuffer.hpp"
@@ -402,18 +401,18 @@ Abstraction::FileMap generate_file_map (BYTE* const __base, size_t __size) {
         {
             auto __GRPS = __ANNOT.get_group_sizes       (__base);
             map[__GRPS.__offset] = {
-                .type   = MAP_ENTRY_ANNOTATION_GROUP_SIZES,
-                .datablock = __GRPS
+                .type       = MAP_ENTRY_ANNOTATION_GROUP_SIZES,
+                .datablock  = __GRPS,
+                .size       = __GRPS.size               (__base)
             };
             auto __GRPB = __ANNOT.get_group_bytes       (__base);
             map[__GRPB.__offset] = {
-                .type   = MAP_ENTRY_ANNOTATION_GROUP_BYTES,
-                .datablock = __GRPS
+                .type       = MAP_ENTRY_ANNOTATION_GROUP_BYTES,
+                .datablock  = __GRPB,
+                .size       = __GRPB.size               (__base)
             };
         }
     }
-    
- 
     
     return map;
 }
@@ -536,15 +535,16 @@ DATA_BLOCK::operator bool() const
 }
 Result DATA_BLOCK::validate_offset(BYTE *const __base) const noexcept
 {
+    const auto _type = std::string(type);
     if (!*this) return Result
-        (IRIS_FAILURE, "Invalid "+type+" object. The "+type+" was not created with a valid offset value.");
+        (IRIS_FAILURE, "Invalid "+_type+" object. The "+_type+" was not created with a valid offset value.");
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) Result
-        (IRIS_FAILURE, type+" failed offset validation. The VALIDATION value (" +
+        (IRIS_FAILURE, _type+" failed offset validation. The VALIDATION value (" +
          std::to_string(LOAD_U64 (__base + __offset + VALIDATION)) +
          ") is not the offset location ("+
          std::to_string(__offset)+").");
     if (LOAD_U16 (__base + __offset + RECOVERY) != recovery) Result
-        (IRIS_FAILURE, "RECOVER_"+type+" ("+
+        (IRIS_FAILURE, "RECOVER_"+_type+" ("+
          std::to_string(recovery)+
          ") tag failed validation. The tag value is ("+
          std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
@@ -649,26 +649,26 @@ Header FILE_HEADER::read_header(BYTE *const __base) const
 }
 TILE_TABLE FILE_HEADER::get_tile_table (BYTE* const __base) const
 {
-    auto header         = read_header(__base);
+    const auto header       = read_header(__base);
     if (header.extVersion == 0) throw std::runtime_error
         ("Failed to retrieve tile table. Invalid file header");
-    auto offset         = LOAD_U64(__base + TILE_TABLE_OFFSET);
+    const auto offset       = LOAD_U64(__base + TILE_TABLE_OFFSET);
     if (offset == NULL_OFFSET || offset > __size) throw std::runtime_error
         ("Failed to retrieve tile table. Invalid offset value");
-    auto __TILE_TABLE   = TILE_TABLE(offset, __size, header.extVersion);
+    const auto __TILE_TABLE = TILE_TABLE(offset, __size, header.extVersion);
     
     __TILE_TABLE.validate_offset(__base);
     return __TILE_TABLE;
 }
 METADATA FILE_HEADER::get_metadata (BYTE *const __base) const
 {
-    auto header         = read_header(__base);
+    const auto header       = read_header(__base);
     if (header.extVersion == 0) throw std::runtime_error
         ("Failed to retrieve file metadata. Invalid file header");
-    auto offset         = LOAD_U64(__base + METADATA_OFFSET);
+    const auto offset       = LOAD_U64(__base + METADATA_OFFSET);
     if (offset == NULL_OFFSET || offset > __size) throw std::runtime_error
         ("Failed to retrieve file metadata. Invalid offset value");
-    auto __METADATA     = METADATA(offset, __size, header.extVersion);
+    const auto __METADATA   = METADATA(offset, __size, header.extVersion);
     
     __METADATA.validate_offset(__base);
     return __METADATA;
@@ -727,7 +727,7 @@ Result TILE_TABLE::validate_full(BYTE *const __base) const noexcept
     Result result = validate_offset(__base);
     if (result == IRIS_FAILURE) return result;
     
-    auto __ptr = __base + __offset;
+    const auto __ptr = __base + __offset;
     if (VALIDATE_ENCODING_TYPE((Encoding)LOAD_U8(__ptr + ENCODING), __version) == false) return Result
         (IRIS_FAILURE,"Undefined tile encoding value (" +
          std::to_string((Encoding)LOAD_U8(__ptr + ENCODING))+
@@ -738,12 +738,12 @@ Result TILE_TABLE::validate_full(BYTE *const __base) const noexcept
          ") decoded from tile table. Per the IFE specification Section 2.3.2, the format shall describe the pixel channel ordering and bits consumed per channel per the accepted norm using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0).");
 
     auto offset = LOAD_U64(__base + __offset + LAYER_EXTENTS_OFFSET);
-    auto __LAYER_EXTENTS = LAYER_EXTENTS(offset, __size, __version);
+    const auto __LAYER_EXTENTS = LAYER_EXTENTS(offset, __size, __version);
     result = __LAYER_EXTENTS.validate_full (__base);
     if (result == IRIS_FAILURE) return result;
     
     offset = LOAD_U64(__base + __offset + TILE_OFFSETS_OFFSET);
-    auto __TILE_OFFSETS = TILE_OFFSETS(offset, __size, __version);
+    const auto __TILE_OFFSETS = TILE_OFFSETS(offset, __size, __version);
     result = __TILE_OFFSETS.validate_full (__base);
     if (result == IRIS_FAILURE) return result;
     
@@ -753,7 +753,7 @@ TileTable TILE_TABLE::read_tile_table(BYTE *const __base) const
 {
     TileTable tile_table;
     
-    auto        __ptr           = __base + __offset;
+    const auto  __ptr           = __base + __offset;
     tile_table.encoding         = (Encoding)LOAD_U8(__ptr + ENCODING);
     if (VALIDATE_ENCODING_TYPE(tile_table.encoding, __version) == false)
         throw std::runtime_error
@@ -790,20 +790,20 @@ TileTable TILE_TABLE::read_tile_table(BYTE *const __base) const
 }
 TILE_OFFSETS TILE_TABLE::get_tile_offsets(BYTE *const __base) const
 {
-    auto __TILE_OFFSETS = TILE_OFFSETS
+    const auto __TILE_OFFSETS = TILE_OFFSETS
     (LOAD_U64(__base + __offset + TILE_OFFSETS_OFFSET), __size, __version);
     
-    auto result = __TILE_OFFSETS.validate_offset(__base);
+    const auto result = __TILE_OFFSETS.validate_offset(__base);
     if (result == IRIS_FAILURE) throw std::runtime_error(result.message);
     
     return __TILE_OFFSETS;
 }
 LAYER_EXTENTS TILE_TABLE::get_layer_extents(BYTE *const __base) const
 {
-    auto __LAYER_EXTENTS = LAYER_EXTENTS
+    const auto __LAYER_EXTENTS = LAYER_EXTENTS
     (LOAD_U64(__base + __offset + LAYER_EXTENTS_OFFSET), __size, __version);
     
-    auto result = __LAYER_EXTENTS.validate_offset(__base);
+    const auto result = __LAYER_EXTENTS.validate_offset(__base);
     if (result == IRIS_FAILURE) throw std::runtime_error(result.message);
     return __LAYER_EXTENTS;
 }
@@ -838,7 +838,7 @@ void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
         ("Failed STORE_TILE_TABLE header -- Invalid TileTableCreateInfo layerExtentsOffset (NULL_OFFSET). Per the IFE specification  Section 2.3.2, layer extents shall contain a valid offset to the layer extents array (Section 2.4.2) containing the number of tiles and scale of each layer");
     #endif
     
-    auto __ptr = __base + __CI.tileTableOffset;
+    const auto __ptr = __base + __CI.tileTableOffset;
     STORE_U64   (__ptr + TILE_TABLE::VALIDATION,            __CI.tileTableOffset);
     STORE_U16   (__ptr + TILE_TABLE::RECOVERY,              RECOVER_TILE_TABLE);
     STORE_U8    (__ptr + TILE_TABLE::ENCODING,              __CI.encoding);
@@ -916,7 +916,7 @@ Metadata METADATA::read_metadata (BYTE *const __base) const
     auto result = validate_offset(__base);
     if (result == IRIS_FAILURE) throw std::runtime_error(result.message);
     
-    auto        __ptr           = __base + __offset;
+    const auto  __ptr           = __base + __offset;
     metadata.codec.major        = LOAD_U16(__ptr + CODEC_MAJOR);
     metadata.codec.minor        = LOAD_U16(__ptr + CODEC_MINOR);
     metadata.codec.build        = LOAD_U16(__ptr + CODEC_BUILD);
@@ -1025,7 +1025,7 @@ Result ATTRIBUTES::validate_full(BYTE *const __base) const noexcept
     auto result         = validate_offset(__base);
     if (result == IRIS_FAILURE) return result;
     
-    auto        __ptr   = __base + __offset;
+    const auto  __ptr   = __base + __offset;
     if (VALIDATE_METADATA_TYPE((MetadataType)LOAD_U8(__ptr + FORMAT), __version) == false)
         return Result
             (IRIS_FAILURE, "Undefined tile metadata format ("+
@@ -1033,12 +1033,12 @@ Result ATTRIBUTES::validate_full(BYTE *const __base) const noexcept
          ") decoded from attributes header. Per the IFE specification Section 2.3.5, The metadata format shall refer to the metadata specification format by which the file metadata was encoded and shall be one of the metadata formats (Enumeration 2.2.5), excluding the undefined value (0).");
     
     Size expected_bytes;
-    auto __LENGTHS = ATTRIBUTES_SIZES
+    const auto __LENGTHS = ATTRIBUTES_SIZES
     (LOAD_U64(__base + __offset + LENGTHS_OFFSET),__size, __version);
     result = __LENGTHS.validate_full(__base, expected_bytes);
     if (result == IRIS_FAILURE) return result;
     
-    auto __BYTES = ATTRIBUTES_BYTES
+    const auto __BYTES = ATTRIBUTES_BYTES
     (LOAD_U64(__base + __offset + BYTE_ARRAY_OFFSET),__size, __version);
     result = __BYTES.validate_full(__base, expected_bytes);
     if (result == IRIS_FAILURE) return result;
@@ -1049,20 +1049,20 @@ Attributes ATTRIBUTES::read_attributes(BYTE *const __base) const
 {
     Attributes attributes;
     
-    auto        __ptr   = __base + __offset;
+    const auto  __ptr   = __base + __offset;
     attributes.type     = (MetadataType)LOAD_U8(__ptr + ATTRIBUTES::FORMAT);
     if (VALIDATE_METADATA_TYPE(attributes.type, __version) == false)
         throw std::runtime_error ("Undefined attributes encoding format ("+
                                   std::to_string(attributes.type) +
                                   ") decoded from attributes table.");
     
-    attributes.version  = LOAD_U16(__ptr + ATTRIBUTES::VERSION);
+    attributes.version      = LOAD_U16(__ptr + ATTRIBUTES::VERSION);
     
-    auto SIZES          = get_sizes(__base);
-    auto size_array     = SIZES.read_sizes(__base);
+    const auto SIZES        = get_sizes(__base);
+    const auto size_array   = SIZES.read_sizes(__base);
     
-    auto BYTES          = get_bytes(__base);
-    BYTES.read_bytes    (__base, size_array, attributes);
+    const auto BYTES        = get_bytes(__base);
+    BYTES.read_bytes        (__base, size_array, attributes);
     
     if (__version > IRIS_EXTENSION_1_0); else return attributes;
     
@@ -1106,7 +1106,7 @@ void STORE_ATTRIBUTES (BYTE *const __base, const AttributesCreateInfo &info)
     // TODO: Recursive validation: Create ATTRIBUTE_SIZES and ATTRIBUTE_BYTES objects and validate them before writing the ATTRIBUTES block. Validate the sizes purported byte size and bytes block size are the same.
     #endif
     
-    auto __ptr = __base + info.attributesOffset;
+    const auto __ptr = __base + info.attributesOffset;
     STORE_U64(__ptr + ATTRIBUTES::VALIDATION,           info.attributesOffset);
     STORE_U16(__ptr + ATTRIBUTES::RECOVERY,             RECOVER_ATTRIBUTES);
     STORE_U8 (__ptr + ATTRIBUTES::FORMAT,               info.format);
@@ -1123,9 +1123,9 @@ DATA_BLOCK(__TileTable_Offset, file_size, version)
 }
 Size LAYER_EXTENTS::size (BYTE *const __base) const
 {
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
+    const auto __ptr    = __base + __offset;
+    auto STEP           = LOAD_U16(__ptr + ENTRY_SIZE);
+    auto ENTRIES        = LOAD_U32(__ptr + ENTRY_NUMBER);
     
     Size size = HEADER_V1_0_SIZE + ENTRIES*STEP;
     if (__version > IRIS_EXTENSION_1_0); else return size;
@@ -1138,100 +1138,89 @@ Size LAYER_EXTENTS::size (BYTE *const __base) const
 }
 Result LAYER_EXTENTS::validate_full(BYTE *const __base) const noexcept
 {
-    auto result     = validate_offset(__base);
+    auto result         = validate_offset(__base);
     if (result != IRIS_SUCCESS) return result;
     
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start    = 0;
-    
-    if (false) {
-    VALIDATE_EXTENTS:
-        if (start + ENTRIES*STEP > __size) return Result
-            (IRIS_FAILURE,
-             "LAYER_EXTENTS failed validation -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array       = __base + start;
-        float prior_scale   = 0.f;
-        for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
-            if (LOAD_U32(__array + LAYER_EXTENT::X_TILES) < 1) return Result
-                (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the X-tiles shall encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero");
-            if (LOAD_U32(__array + LAYER_EXTENT::Y_TILES) < 1) return Result
-                (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the Y-tiles shall encode the number of 256 pixel tiles in the vertical direction and shall be greater than zero");
-            if (!(LOAD_F32(__array + LAYER_EXTENT::SCALE) > prior_scale)) return Result
-                (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the scale of a layer shall have a value greater than zero (0.f) and any subsequent layer shall have a scale that is greater than the previous scale");
-            prior_scale = LOAD_F32(__array + LAYER_EXTENT::SCALE);
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2 LAYER_extent (no S) PARAMETERS
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-        }
-        return IRIS_SUCCESS;
-    }
-        
-    start = __offset + HEADER_V1_0_SIZE;
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
+
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_EXTENTS;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2 LAYER_extentS PARAMETERS
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_EXTENTS;
+    VALIDATE_EXTENTS:
+    if (start + ENTRIES*STEP > __size) return Result
+        (IRIS_FAILURE,
+         "LAYER_EXTENTS failed validation -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array       = __base + start;
+    float prior_scale   = 0.f;
+    for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
+        if (LOAD_U32(__array + LAYER_EXTENT::X_TILES) < 1) return Result
+            (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the X-tiles shall encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero");
+        if (LOAD_U32(__array + LAYER_EXTENT::Y_TILES) < 1) return Result
+            (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the Y-tiles shall encode the number of 256 pixel tiles in the vertical direction and shall be greater than zero");
+        if (!(LOAD_F32(__array + LAYER_EXTENT::SCALE) > prior_scale)) return Result
+            (IRIS_FAILURE,"LAYER_EXTENTS failed validation. Per the IFE specifciation Section 2.4.1, the scale of a layer shall have a value greater than zero (0.f) and any subsequent layer shall have a scale that is greater than the previous scale");
+        prior_scale = LOAD_F32(__array + LAYER_EXTENT::SCALE);
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2 LAYER_extent (no S) PARAMETERS
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    }
+    return IRIS_SUCCESS;
 }
 LayerExtents LAYER_EXTENTS::read_layer_extents(BYTE *const __base) const
 {
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start    = 0;
-    
-    
-    if (false) {
-    READ_EXTENTS:
-        if (start + ENTRIES*STEP > __size)
-            throw std::runtime_error
-            ("LAYER_EXTENTS::read_layer_extents failed -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array       = __base + start;
-        LayerExtents extents (ENTRIES);
-        for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
-            auto& extent    = extents[LI];
-            extent.xTiles   = LOAD_U32(__array + LAYER_EXTENT::X_TILES);
-            extent.yTiles   = LOAD_U32(__array + LAYER_EXTENT::Y_TILES);
-            extent.scale    = LOAD_F32(__array + LAYER_EXTENT::SCALE);
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2 LAYER_extent (no S) PARAMETERS
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-        }
-        
-        // Calculate downsampling
-        float max_scale = extents.back().scale;
-        for (auto r_it = extents.rbegin(); r_it != extents.rend(); ++r_it)
-            r_it->downsample = max_scale / r_it->scale;
-        
-        return extents;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
+
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_EXTENTS;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2 LAYER_extentS PARAMETERS
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_EXTENTS;
+    READ_EXTENTS:
+    if (start + ENTRIES*STEP > __size)
+        throw std::runtime_error
+        ("LAYER_EXTENTS::read_layer_extents failed -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array       = __base + start;
+    LayerExtents extents (ENTRIES);
+    for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
+        auto& extent    = extents[LI];
+        extent.xTiles   = LOAD_U32(__array + LAYER_EXTENT::X_TILES);
+        extent.yTiles   = LOAD_U32(__array + LAYER_EXTENT::Y_TILES);
+        extent.scale    = LOAD_F32(__array + LAYER_EXTENT::SCALE);
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2 LAYER_extent (no S) PARAMETERS
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    }
+    
+    // Calculate downsampling
+    float max_scale = extents.back().scale;
+    for (auto r_it = extents.rbegin(); r_it != extents.rend(); ++r_it)
+        r_it->downsample = max_scale / r_it->scale;
+    
+    return extents;
 }
 inline Size STORE_EXTENT (BYTE* const __base, Offset offset, const LayerExtent &extent)
 {
@@ -1270,11 +1259,11 @@ DATA_BLOCK(offset, file_size, version)
 }
 Size TILE_OFFSETS::size(BYTE *const __base) const
 {
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
     
-    Size size = HEADER_V1_0_SIZE + ENTRIES*STEP;
+    Size size           = HEADER_V1_0_SIZE + ENTRIES*STEP;
     if (__version > IRIS_EXTENSION_1_0); else return size;
     
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
@@ -1287,84 +1276,44 @@ Result TILE_OFFSETS::validate_full (BYTE *const __base) const noexcept
 {    auto result    = validate_offset(__base);
     if(result == IRIS_FAILURE) return result;
     
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start    = 0;
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
     
-    if (false) {
-    VALIDATE_TILE_OFFSETS:
-        if (start + ENTRIES*STEP > __size) return Result
-            (IRIS_FAILURE,
-             "TILE_OFFSETS failed validation -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array = __base + start;
-        for (auto TI = 0; TI < ENTRIES; ++TI, __array+=STEP)
-            if (LOAD_U40(__array + TILE_OFFSET::OFFSET) +
-                LOAD_U24(__array + TILE_OFFSET::TILE_SIZE) > __size) return Result
-                (IRIS_FAILURE,
-                 "TILE_OFFSETS validation failed -- global tile entry (" +
-                 std::to_string(TI) +
-                 ") failed with the tile data block (offset + size size) extending out of the file bounds ("+
-                 std::to_string(__size)
-                 +"bytes).");
-        
-        return IRIS_SUCCESS;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_TILE_OFFSETS;
     
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_TILE_OFFSETS;
+    VALIDATE_TILE_OFFSETS:
+    if (start + ENTRIES*STEP > __size) return Result
+        (IRIS_FAILURE,
+         "TILE_OFFSETS failed validation -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array = __base + start;
+    for (auto TI = 0; TI < ENTRIES; ++TI, __array+=STEP)
+        if (LOAD_U40(__array + TILE_OFFSET::OFFSET) +
+            LOAD_U24(__array + TILE_OFFSET::TILE_SIZE) > __size) return Result
+            (IRIS_FAILURE,
+             "TILE_OFFSETS validation failed -- global tile entry (" +
+             std::to_string(TI) +
+             ") failed with the tile data block (offset + size size) extending out of the file bounds ("+
+             std::to_string(__size)
+             +"bytes).");
+    
+    return IRIS_SUCCESS;
 }
 void TILE_OFFSETS::read_tile_offsets(BYTE *const __base, TileTable& table) const
 {
-    auto __ptr      = __base + __offset;
-    auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
-    auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start    = 0;
-    
-    if (false) {
-    READ_OFFSETS:
-        if (start + ENTRIES*STEP > __size)
-            throw std::runtime_error
-            ("TILE_OFFSETS::read_tile_offsets failed -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array   = __base + start;
-        table.layers = TileTable::Layers (table.extent.layers.size());
-        for (int LI = 0; LI < table.layers.size(); ++LI) {
-            auto& LE        = table.extent.layers[LI];
-            auto& layer     = table.layers[LI];
-            auto  tiles     = LE.xTiles*LE.yTiles;
-            layer = TileTable::Layer(tiles);
-            for (auto TI = 0; TI < tiles; ++TI, __array+=STEP) {
-                auto&tile   = layer[TI];
-                tile.offset = LOAD_U40(__array + TILE_OFFSET::OFFSET);
-                tile.size   = LOAD_U24(__array + TILE_OFFSET::TILE_SIZE);
-                if (tile.offset + tile.size > __size) throw std::runtime_error
-                    ("read_tile_offsets returned tile data offset value out of file bounds.");
-                
-                if (__version > IRIS_EXTENSION_1_0); else continue;
-                
-                // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-                // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-                // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-                
-            }
-        }
-        return;
-    }
-    
+    const auto __ptr      = __base + __offset;
+    const auto STEP       = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES    = LOAD_U32(__ptr + ENTRY_NUMBER);
+
     auto total_tiles = 0;
     for (auto&& layer : table.extent.layers)
         total_tiles += layer.xTiles * layer.yTiles;
@@ -1374,14 +1323,44 @@ void TILE_OFFSETS::read_tile_offsets(BYTE *const __base, TileTable& table) const
          " does not match total entries in the tile offset array "+
          std::to_string(ENTRIES));
     
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_OFFSETS;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_OFFSETS;
+    READ_OFFSETS:
+    if (start + ENTRIES*STEP > __size)
+        throw std::runtime_error
+        ("TILE_OFFSETS::read_tile_offsets failed -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array   = __base + start;
+    table.layers = TileTable::Layers (table.extent.layers.size());
+    for (int LI = 0; LI < table.layers.size(); ++LI) {
+        auto& LE        = table.extent.layers[LI];
+        auto& layer     = table.layers[LI];
+        auto  tiles     = LE.xTiles*LE.yTiles;
+        layer = TileTable::Layer(tiles);
+        for (auto TI = 0; TI < tiles; ++TI, __array+=STEP) {
+            auto&tile   = layer[TI];
+            tile.offset = LOAD_U40(__array + TILE_OFFSET::OFFSET);
+            tile.size   = LOAD_U24(__array + TILE_OFFSET::TILE_SIZE);
+            if (tile.offset + tile.size > __size) throw std::runtime_error
+                ("read_tile_offsets returned tile data offset value out of file bounds.");
+            
+            if (__version > IRIS_EXTENSION_1_0); else continue;
+            
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+            
+        }
+    }
+    return;
 }
 //TileTable::
 //Layers      read_tile_offsets   (BYTE* const __base, const LayerExtents&) const;
@@ -1427,81 +1406,71 @@ Result ATTRIBUTES_SIZES::validate_full(BYTE *const __base, Size& expected_bytes)
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
     
-    Offset start        = 0;
-    if (false) {
-    READ_SIZES:
-        if (start + ENTRIES * STEP > __size) return Result
-            (IRIS_FAILURE,"ATTRIBUTES_SIZES failed validation -- sizes array block (location "+
-             std::to_string(start)+ " - " +
-             std::to_string(start + ENTRIES * STEP)+
-             " bytes) extends beyond the end of file.");
-        
-        BYTE* __array   = __base + start;
-        expected_bytes  = 0;
-        for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
-            expected_bytes += LOAD_U16(__ptr + ATTRIBUTE_SIZE::KEY_SIZE);
-            expected_bytes += LOAD_U32(__ptr + ATTRIBUTE_SIZE::VALUE_SIZE);
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        return IRIS_SUCCESS;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_SIZES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_SIZES;
+    READ_SIZES:
+    if (start + ENTRIES * STEP > __size) return Result
+        (IRIS_FAILURE,"ATTRIBUTES_SIZES failed validation -- sizes array block (location "+
+         std::to_string(start)+ " - " +
+         std::to_string(start + ENTRIES * STEP)+
+         " bytes) extends beyond the end of file.");
+    
+    BYTE* __array   = __base + start;
+    expected_bytes  = 0;
+    for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
+        expected_bytes += LOAD_U16(__ptr + ATTRIBUTE_SIZE::KEY_SIZE);
+        expected_bytes += LOAD_U32(__ptr + ATTRIBUTE_SIZE::VALUE_SIZE);
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    return IRIS_SUCCESS;
 }
 ATTRIBUTES_SIZES::SizeArray ATTRIBUTES_SIZES::read_sizes(BYTE *const __base) const
 {
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
     
-    SizeArray sizes (ENTRIES);
-    if (false) {
-    READ_SIZES:
-        if (start + ENTRIES * STEP > __size) throw std::runtime_error
-            ("ANNOTATION_GROUP_SIZES failed -- sizes array block (location "+
-             std::to_string(start)+ " - " +
-             std::to_string(start + ENTRIES * STEP)+
-             " bytes) extends beyond the end of file.");
-        
-        BYTE* __array   = __base + start;
-        for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
-            sizes[EI] = {
-                LOAD_U16(__ptr + ATTRIBUTE_SIZE::KEY_SIZE),
-                LOAD_U32(__ptr + ATTRIBUTE_SIZE::VALUE_SIZE)
-            };
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        return sizes;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_SIZES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_SIZES;
+    READ_SIZES:
+    SizeArray sizes (ENTRIES);
+    if (start + ENTRIES * STEP > __size) throw std::runtime_error
+        ("ANNOTATION_GROUP_SIZES failed -- sizes array block (location "+
+         std::to_string(start)+ " - " +
+         std::to_string(start + ENTRIES * STEP)+
+         " bytes) extends beyond the end of file.");
+    
+    BYTE* __array   = __base + start;
+    for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
+        sizes[EI] = {
+            LOAD_U16(__ptr + ATTRIBUTE_SIZE::KEY_SIZE),
+            LOAD_U32(__ptr + ATTRIBUTE_SIZE::VALUE_SIZE)
+        };
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    return sizes;
 }
 Size SIZE_ATTRIBUTES_SIZES (const Attributes& attributes)
 {
@@ -1610,25 +1579,6 @@ void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, At
              ")");
     }
     
-    if (false) {
-    READ_STRINGS:
-        if (start + BYTES > __size) throw std::runtime_error
-            ("Failed ATTRIBUTES_BYTES::read_bytes -- out of bounds. Byte array offset and size (" +
-             std::to_string(start+BYTES) +
-             ") exceeds file size "+
-             std::to_string(__size)+" bytes.");
-        
-        attributes.clear();
-        BYTE* __array = __base + start;
-        for (auto&& size : sizes) {
-            Size total_bytes = size.first + size.second;
-            attributes[std::string((char*)__array,size.first)] =
-            std::u8string((char8_t*)__array+size.first,size.second);
-            __array += total_bytes;
-        }
-        return;
-    }
-    
     start = HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_STRINGS;
 
@@ -1636,7 +1586,22 @@ void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, At
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_STRINGS;
+    READ_STRINGS:
+    if (start + BYTES > __size) throw std::runtime_error
+        ("Failed ATTRIBUTES_BYTES::read_bytes -- out of bounds. Byte array offset and size (" +
+         std::to_string(start+BYTES) +
+         ") exceeds file size "+
+         std::to_string(__size)+" bytes.");
+    
+    attributes.clear();
+    BYTE* __array = __base + start;
+    for (auto&& size : sizes) {
+        Size total_bytes = size.first + size.second;
+        attributes[std::string((char*)__array,size.first)] =
+        std::u8string((char8_t*)__array+size.first,size.second);
+        __array += total_bytes;
+    }
+    return;
 }
 Size SIZE_ATTRIBUTES_BYTES (const Attributes& attributes)
 {
@@ -1710,124 +1675,117 @@ Result IMAGE_ARRAY::validate_full (BYTE *const __base) const noexcept
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
-    
-    if (false) {
-        VALIDATE_IMAGES:
-        BYTE* __array   = __base + start;
-        for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
-            
-            auto __IMAGE_BYTES =
-            IMAGE_BYTES(LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET),__size, __version);
-            __IMAGE_BYTES.validate_offset(__base);
-            __IMAGE_BYTES.validate_full(__base);
-            
-            if (!VALIDATE_IMAGE_ENCODING_TYPE
-                ((ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING),__version)) return Result(IRIS_FAILURE,"Undefined tile associated image encoding ("+
-                 std::to_string(LOAD_U8(__array + IMAGE_ENTRY::ENCODING))+
-                 ") decoded from associated image array. Per the IFE specification Section 2.4.6, the encoding parameter shall describe the compression codec used to generate the compressed image byte stream and shall be one of the defined enumerated values (Enumeration 2.2.7), excluding the undefined value (0)");
-            
-            if (!VALIDATE_PIXEL_FORMAT
-                ((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT),__version)) return Result(IRIS_FAILURE,"Undefined tile associated image pixel format ("+
-                 std::to_string((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT))+
-                 ") decoded from associated image array. Per the IFE specification Section 2.4.6,  format parameter shall describe the pixel channel ordering and bits consumed per channel using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0)");
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-        }
-        return result;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_IMAGES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_IMAGES;
+    VALIDATE_IMAGES:
+    BYTE* __array   = __base + start;
+    for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
+        
+        auto __IMAGE_BYTES =
+        IMAGE_BYTES(LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET),__size, __version);
+        __IMAGE_BYTES.validate_offset(__base);
+        __IMAGE_BYTES.validate_full(__base);
+        
+        if (!VALIDATE_IMAGE_ENCODING_TYPE
+            ((ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING),__version)) return Result
+            (IRIS_FAILURE,"Undefined tile associated image encoding ("+
+             std::to_string(LOAD_U8(__array + IMAGE_ENTRY::ENCODING))+
+             ") decoded from associated image array. Per the IFE specification Section 2.4.6, the encoding parameter shall describe the compression codec used to generate the compressed image byte stream and shall be one of the defined enumerated values (Enumeration 2.2.7), excluding the undefined value (0)");
+        
+        if (!VALIDATE_PIXEL_FORMAT
+            ((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT),__version)) return Result
+            (IRIS_FAILURE,"Undefined tile associated image pixel format ("+
+             std::to_string((Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT))+
+             ") decoded from associated image array. Per the IFE specification Section 2.4.6,  format parameter shall describe the pixel channel ordering and bits consumed per channel using one of the defined enumerated values (Enumeration 2.2.4), excluding the undefined value (0)");
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    }
+    return result;
 }
 Abstraction::Images IMAGE_ARRAY::read_images (BYTE *const __base, BYTES_ARRAY* __image_bytes) const
 {
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
     
-    Abstraction::Images images;
-    BYTES_ARRAY bytes_array;
-    if (false) {
-    READ_IMAGES:
-        if (start + ENTRIES*STEP > __size)
-            throw std::runtime_error
-            ("IMAGE_ARRAY::read_images failed -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array   = __base + start;
-        for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
-            
-            auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
-            if (bytes_offset == NULL_OFFSET) throw std::runtime_error
-                ("Failed IMAGES_ARRAY::read_images -- image entry contains invalid offset");
-            if (bytes_offset > __size) throw std::runtime_error
-                ("Failed IMAGES_ARRAY::read_images -- image entry out of file bounds read");
-            
-            auto __IMAGE_BYTES  = IMAGE_BYTES(bytes_offset, __size, __version);
-            __IMAGE_BYTES.validate_offset(__base);
-            bytes_array.push_back(__IMAGE_BYTES);
-            
-            Abstraction::Image image;
-            auto title = __IMAGE_BYTES.read_image_bytes(__base, image);
-            if (images.contains(title)) { printf
-                ("WARNING: duplicate associated image title (%s) returned; skipping duplicate. Per the IFE Specification Sections 2.4.6-2.4.7, each image title within the associated images array shall be referenced by unique ASCII encoded labels.", title.c_str());
-                continue;
-            }
-            
-            images[title]       = image;
-            image.width         = LOAD_U32(__array + IMAGE_ENTRY::WIDTH);
-            image.height        = LOAD_U32(__array + IMAGE_ENTRY::HEIGHT);
-            image.encoding      = (ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING);
-            if (VALIDATE_IMAGE_ENCODING_TYPE(image.encoding, __version) == false)
-                throw std::runtime_error ("Undefined tile pixel format ("+
-                                          std::to_string(image.format) +
-                                          ") decoded from tile table.");
-            image.format        = (Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT);
-            if (VALIDATE_PIXEL_FORMAT(image.format, __version) == false)
-                throw std::runtime_error ("Undefined tile pixel format ("+
-                                          std::to_string(image.format) +
-                                          ") decoded from tile table.");
-            image.orientation   = (ImageOrientation)(LOAD_U16(__array + IMAGE_ENTRY::ORIENTATION)%360);
-            // NOTE: We will NOT validate here; while this is an enumeration
-            // uint16_t values outside of the stated enumerations are permitted
-            // per the IFE Specification.
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        // If an array of the image bytes was requested
-        if (__image_bytes) *__image_bytes = bytes_array;
-        
-        // Return the images
-        return images;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_IMAGES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_IMAGES;
+    
+    READ_IMAGES:
+    Abstraction::Images images;
+    BYTES_ARRAY bytes_array;
+    if (start + ENTRIES*STEP > __size)
+        throw std::runtime_error
+        ("IMAGE_ARRAY::read_images failed -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array   = __base + start;
+    for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
+        
+        auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+        if (bytes_offset == NULL_OFFSET) throw std::runtime_error
+            ("Failed IMAGES_ARRAY::read_images -- image entry contains invalid offset");
+        if (bytes_offset > __size) throw std::runtime_error
+            ("Failed IMAGES_ARRAY::read_images -- image entry out of file bounds read");
+        
+        auto __IMAGE_BYTES  = IMAGE_BYTES(bytes_offset, __size, __version);
+        __IMAGE_BYTES.validate_offset(__base);
+        bytes_array.push_back(__IMAGE_BYTES);
+        
+        Abstraction::Image image;
+        auto title = __IMAGE_BYTES.read_image_bytes(__base, image);
+        if (images.contains(title)) { printf
+            ("WARNING: duplicate associated image title (%s) returned; skipping duplicate. Per the IFE Specification Sections 2.4.6-2.4.7, each image title within the associated images array shall be referenced by unique ASCII encoded labels.", title.c_str());
+            continue;
+        }
+        
+        images[title]       = image;
+        image.width         = LOAD_U32(__array + IMAGE_ENTRY::WIDTH);
+        image.height        = LOAD_U32(__array + IMAGE_ENTRY::HEIGHT);
+        image.encoding      = (ImageEncoding)LOAD_U8(__array + IMAGE_ENTRY::ENCODING);
+        if (VALIDATE_IMAGE_ENCODING_TYPE(image.encoding, __version) == false)
+            throw std::runtime_error ("Undefined tile pixel format ("+
+                                      std::to_string(image.format) +
+                                      ") decoded from tile table.");
+        image.format        = (Format)LOAD_U8(__array + IMAGE_ENTRY::FORMAT);
+        if (VALIDATE_PIXEL_FORMAT(image.format, __version) == false)
+            throw std::runtime_error ("Undefined tile pixel format ("+
+                                      std::to_string(image.format) +
+                                      ") decoded from tile table.");
+        image.orientation   = (ImageOrientation)(LOAD_U16(__array + IMAGE_ENTRY::ORIENTATION)%360);
+        // NOTE: We will NOT validate here; while this is an enumeration
+        // uint16_t values outside of the stated enumerations are permitted
+        // per the IFE Specification.
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    // If an array of the image bytes was requested
+    if (__image_bytes) *__image_bytes = bytes_array;
+    
+    // Return the images
+    return images;
 }
 Size SIZE_IMAGES_ARRAY (AssociatedImageCreateInfo& info)
 {
@@ -1907,36 +1865,31 @@ std::string IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::Image
     const auto __ptr    = __base + __offset;
     const auto TITLE    = LOAD_U16(__ptr + TITLE_SIZE);
     image.byteSize      = LOAD_U32(__ptr + IMAGE_SIZE);
-    Offset start        = 0;
     
-    if (false) {
-        READ_BYTES:
-        BYTE* __bytes   = __base + start;
-        auto title      = std::string((char*)__bytes, TITLE);
-        image.offset    = start + TITLE;
-        if (image.offset + image.byteSize > __size) throw std::runtime_error
-            ("Read_image_bytes failed validation -- image bytes block ("+
-             std::to_string(image.offset) + "-" +
-             std::to_string(image.offset+image.byteSize)+
-             "bytes) extends beyond the end of the file.");
-        
-        if (__version > IRIS_EXTENSION_1_0); else return title;
-        
-        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-        
-        return title;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_BYTES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_BYTES;
+    READ_BYTES:
+    BYTE* __bytes   = __base + start;
+    auto title      = std::string((char*)__bytes, TITLE);
+    image.offset    = start + TITLE;
+    if (image.offset + image.byteSize > __size) throw std::runtime_error
+        ("Read_image_bytes failed validation -- image bytes block ("+
+         std::to_string(image.offset) + "-" +
+         std::to_string(image.offset+image.byteSize)+
+         "bytes) extends beyond the end of the file.");
+    
+    if (__version > IRIS_EXTENSION_1_0); else return title;
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    
+    return title;
 }
 Size SIZE_IMAGES_BYTES(const ImageBytesCreateInfo &image)
 {
@@ -1998,55 +1951,43 @@ Result ICC_PROFILE::validate_full(BYTE *const __base) const noexcept
     
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset offset       = 0;
-    
-    if (false) {
-    VALIDATE_BYTES:
-        if (offset + BYTES > __size) return Result
-            (IRIS_FAILURE,"ICC_PROFILE failed validation -- bytes block ("+
-             std::to_string(offset) + "-" +
-             std::to_string(offset + BYTES)+
-             "bytes) extends beyond the end of the file.");
-        return result;
-    }
-    
-    offset = __offset + HEADER_V1_0_SIZE;
+    Offset offset       = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_BYTES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_BYTES;
+    VALIDATE_BYTES:
+    if (offset + BYTES > __size) return Result
+        (IRIS_FAILURE,"ICC_PROFILE failed validation -- bytes block ("+
+         std::to_string(offset) + "-" +
+         std::to_string(offset + BYTES)+
+         "bytes) extends beyond the end of the file.");
+    return result;
 }
 std::string ICC_PROFILE::read_profile (BYTE *const __base) const
 {
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset offset       = 0;
-    
-    if (false) {
-        READ_BYTES:
-        if (offset + BYTES > __size)
-            throw std::runtime_error
-            ("ICC_PROFILE::read_profile failed -- bytes block ("+
-             std::to_string(offset) + "-" +
-             std::to_string(offset + BYTES)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __bytes = __base + offset;
-        assert(__bytes != __ptr && "ICC_COLOR_PROFILE bytes pointer unassigned");
-        return std::string((char*)__bytes, BYTES);
-    }
-    
-    offset = __offset + HEADER_V1_0_SIZE;
+
+    Offset offset       = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_BYTES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_BYTES;
+    READ_BYTES:
+    if (offset + BYTES > __size)
+        throw std::runtime_error
+        ("ICC_PROFILE::read_profile failed -- bytes block ("+
+         std::to_string(offset) + "-" +
+         std::to_string(offset + BYTES)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __bytes = __base + offset;
+    return std::string((char*)__bytes, BYTES);
 }
 Size SIZE_ICC_COLOR_PROFILE(const std::string &color_profile)
 {
@@ -2099,50 +2040,6 @@ Result ANNOTATIONS::validate_full (BYTE *const __base) const noexcept
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
     Offset start        = 0;
     
-    std::unordered_set<uint32_t> __a;
-    if (false) {
-        VALIDATE_ANNOTATIONS:
-        if (start + ENTRIES*STEP > __size) return Result
-            (IRIS_FAILURE,"ANNOTATIONS::read_annotations failed validation -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        BYTE* __array   = __base + start;
-        for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
-            auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
-            if (bytes_offset == NULL_OFFSET) return Result
-                (IRIS_FAILURE, "Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset. Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
-            if (bytes_offset > __size) return Result
-                (IRIS_FAILURE,"Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains an offset that is out of file bounds(" +
-                 std::to_string(bytes_offset)+
-                 "). Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
-
-            auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
-            __BYTES.validate_offset(__base);
-            
-            auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
-            if (__a.contains(identifier)) { printf
-                ("WARNING: duplicate annotation identifier (%X) returned. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.",
-                 identifier);
-            }
-            
-            if (VALIDATE_ANNOTATION_TYPE
-                ((AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT),
-                 __version) == false) return Result
-                (IRIS_FAILURE,"Undefined tile pixel format ("+
-                 std::to_string(LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT)) +
-                 ") decoded from tile table.");
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        return result;
-    }
     
     if (groups(__base)) {
         Size expected_bytes;
@@ -2165,66 +2062,110 @@ Result ANNOTATIONS::validate_full (BYTE *const __base) const noexcept
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_ANNOTATIONS;
+    VALIDATE_ANNOTATIONS:
+    std::unordered_set<uint32_t> __a;
+    if (start + ENTRIES*STEP > __size) return Result
+        (IRIS_FAILURE,"ANNOTATIONS::read_annotations failed validation -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    BYTE* __array   = __base + start;
+    for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
+        auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+        if (bytes_offset == NULL_OFFSET) return Result
+            (IRIS_FAILURE, "Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset. Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
+        if (bytes_offset > __size) return Result
+            (IRIS_FAILURE,"Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains an offset that is out of file bounds(" +
+             std::to_string(bytes_offset)+
+             "). Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
+        
+        auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
+        __BYTES.validate_offset(__base);
+        
+        auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
+        if (__a.contains(identifier)) { printf
+            ("WARNING: duplicate annotation identifier (%X) returned. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.",
+             identifier);
+        }
+        
+        if (VALIDATE_ANNOTATION_TYPE
+            ((AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT),
+             __version) == false) return Result
+            (IRIS_FAILURE,"Undefined tile pixel format ("+
+             std::to_string(LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT)) +
+             ") decoded from tile table.");
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    return result;
 }
 Abstraction::Annotations ANNOTATIONS::read_annotations(BYTE *const __base, BYTES_ARRAY* __bytes_array) const
 {
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
     
-    Abstraction::Annotations annotations;
-    if (false) {
-    READ_ANNOTATIONS:
-        BYTE* __array   = __base + start;
-        if (start + ENTRIES*STEP > __size)
-            throw std::runtime_error
-            ("ANNOTATIONS::read_annotations failed -- bytes block ("+
-             std::to_string(start) + "-" +
-             std::to_string(start + ENTRIES*STEP)+
-             "bytes) extends beyond the end of the file.");
-        
-        for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
-            
-            auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
-            if (bytes_offset == NULL_OFFSET) throw std::runtime_error
-                ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset");
-            if (bytes_offset > __size) throw std::runtime_error
-                ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry out of file bounds read");
+    Offset start        = __offset + HEADER_V1_0_SIZE;
+    if (__version > IRIS_EXTENSION_1_0); else goto READ_ANNOTATIONS;
 
-            auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
-            __BYTES.validate_offset(__base);
-            
-            auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
-            if (annotations.contains(identifier)) { printf
-                ("WARNING: duplicate annotation identifier (%X) returned; skipping duplicate. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.", identifier);
-            }
-            
-            Abstraction::Annotation annotation;
-            __BYTES.read_bytes(__base, annotation);
-            annotation.type      = (AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT);
-            if (VALIDATE_ANNOTATION_TYPE(annotation.type, __version) == false)
-                throw std::runtime_error ("Undefined tile pixel format ("+
-                                          std::to_string(annotation.type) +
-                                          ") decoded from tile table.");
-            annotation.xLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_LOCATION);
-            annotation.yLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_LOCATION);
-            annotation.xSize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_SIZE);
-            annotation.ySize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_SIZE);
-            annotation.width     = LOAD_U32(__ptr + ANNOTATION_ENTRY::WIDTH);
-            annotation.height    = LOAD_U32(__ptr + ANNOTATION_ENTRY::HEIGHT);
-            annotation.parent    = LOAD_U24(__ptr + ANNOTATION_ENTRY::PARENT);
-            
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    
+    READ_ANNOTATIONS:
+    Abstraction::Annotations annotations;
+    BYTE* __array   = __base + start;
+    if (start + ENTRIES*STEP > __size)
+        throw std::runtime_error
+        ("ANNOTATIONS::read_annotations failed -- bytes block ("+
+         std::to_string(start) + "-" +
+         std::to_string(start + ENTRIES*STEP)+
+         "bytes) extends beyond the end of the file.");
+    
+    for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
+        
+        auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+        if (bytes_offset == NULL_OFFSET) throw std::runtime_error
+            ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset");
+        if (bytes_offset > __size) throw std::runtime_error
+            ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry out of file bounds read");
+        
+        auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
+        __BYTES.validate_offset(__base);
+        
+        auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
+        if (annotations.contains(identifier)) { printf
+            ("WARNING: duplicate annotation identifier (%X) returned; skipping duplicate. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.", identifier);
         }
-        return annotations;
+        
+        Abstraction::Annotation annotation;
+        __BYTES.read_bytes(__base, annotation);
+        annotation.type      = (AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT);
+        if (VALIDATE_ANNOTATION_TYPE(annotation.type, __version) == false)
+            throw std::runtime_error ("Undefined tile pixel format ("+
+                                      std::to_string(annotation.type) +
+                                      ") decoded from tile table.");
+        annotation.xLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_LOCATION);
+        annotation.yLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_LOCATION);
+        annotation.xSize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_SIZE);
+        annotation.ySize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_SIZE);
+        annotation.width     = LOAD_U32(__ptr + ANNOTATION_ENTRY::WIDTH);
+        annotation.height    = LOAD_U32(__ptr + ANNOTATION_ENTRY::HEIGHT);
+        annotation.parent    = LOAD_U24(__ptr + ANNOTATION_ENTRY::PARENT);
+        
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
     }
     
     if (groups(__base))
@@ -2236,14 +2177,7 @@ Abstraction::Annotations ANNOTATIONS::read_annotations(BYTE *const __base, BYTES
         BYTES.read_bytes    (__base, size_array, annotations);
     }
     
-    start = __offset + HEADER_V1_0_SIZE;
-    if (__version > IRIS_EXTENSION_1_0); else goto READ_ANNOTATIONS;
-
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-    // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-    
-    goto READ_ANNOTATIONS;
+    return annotations;
 }
 bool ANNOTATIONS::groups(BYTE *const __base) const
 {
@@ -2369,29 +2303,24 @@ void ANNOTATION_BYTES::read_bytes(BYTE *const __base, Annotation &annotation) co
 {
     const auto __ptr        = __base + __offset;
     annotation.byteSize     = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset offset           = 0;
-    
-    if (false) {
-    READ_BYTES:
-        if (offset + annotation.byteSize > __size)
-            throw std::runtime_error
-            ("ANNOTATION_BYTES::read_bytes failed validation -- bytes block ("+
-             std::to_string(offset) + "-" +
-             std::to_string(offset+annotation.byteSize)+
-             "bytes) extends beyond the end of the file.");
-            
-        annotation.offset   = offset;
-        return;
-    }
-    
-    offset = __offset + HEADER_V1_0_SIZE;
+
+    Offset offset = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_BYTES;
     
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_BYTES;
+    READ_BYTES:
+    if (offset + annotation.byteSize > __size)
+        throw std::runtime_error
+        ("ANNOTATION_BYTES::read_bytes failed validation -- bytes block ("+
+         std::to_string(offset) + "-" +
+         std::to_string(offset+annotation.byteSize)+
+         "bytes) extends beyond the end of the file.");
+        
+    annotation.offset   = offset;
+    return;
 }
 Size SIZE_ANNOTATION_BYTES(const IrisCodec::Annotation &annotation)
 {
@@ -2457,83 +2386,73 @@ Result ANNOTATION_GROUP_SIZES::validate_full (BYTE *const __base, Size& expected
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
     
-    if (false) {
-    VALIDATE_GROUPS:
-        if (start + ENTRIES * STEP > __size) return Result
-            (IRIS_FAILURE, "ANNOTATION_GROUP_SIZES failed validation -- sizes array block (location "+
-             std::to_string(start)+ " - " +
-             std::to_string(start + ENTRIES * STEP)+
-             " bytes) extends beyond the end of file.");
-        
-        BYTE* __array   = __base + start;
-        expected_bytes  = 0;
-        for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
-            expected_bytes += LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE);
-            expected_bytes += LOAD_U24(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER)
-            * TYPE_SIZE_UINT24 /*byte size of Annotation Identifier*/;
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        return result;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto VALIDATE_GROUPS;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto VALIDATE_GROUPS;
+    VALIDATE_GROUPS:
+    if (start + ENTRIES * STEP > __size) return Result
+        (IRIS_FAILURE, "ANNOTATION_GROUP_SIZES failed validation -- sizes array block (location "+
+         std::to_string(start)+ " - " +
+         std::to_string(start + ENTRIES * STEP)+
+         " bytes) extends beyond the end of file.");
+    
+    BYTE* __array   = __base + start;
+    expected_bytes  = 0;
+    for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
+        expected_bytes += LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE);
+        expected_bytes += LOAD_U24(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER)
+        * TYPE_SIZE_UINT24 /*byte size of Annotation Identifier*/;
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    return result;
 }
 ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(BYTE *const __base) const
 {
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
-    Offset start        = 0;
     
-    ANNOTATION_GROUP_SIZES::GroupSizes sizes (ENTRIES);
-    if (false) {
-    READ_GROUP_SIZES:
-        if (start + ENTRIES * STEP > __size) throw std::runtime_error
-            ("ANNOTATION_GROUP_SIZES failed -- sizes array block (location "+
-             std::to_string(start)+ " - " +
-             std::to_string(start + ENTRIES * STEP)+
-             " bytes) extends beyond the end of file.");
-        
-        BYTE* __array   = __base + start;
-        for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
-            sizes[GI] = {
-                LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE),
-                LOAD_U32(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER),
-            };
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        return sizes;
-    }
-    
-    start = __offset + HEADER_V1_0_SIZE;
+    Offset start        = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_GROUP_SIZES;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_GROUP_SIZES;
+    READ_GROUP_SIZES:
+    ANNOTATION_GROUP_SIZES::GroupSizes sizes (ENTRIES);
+    if (start + ENTRIES * STEP > __size) throw std::runtime_error
+        ("ANNOTATION_GROUP_SIZES failed -- sizes array block (location "+
+         std::to_string(start)+ " - " +
+         std::to_string(start + ENTRIES * STEP)+
+         " bytes) extends beyond the end of file.");
+    
+    BYTE* __array   = __base + start;
+    for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
+        sizes[GI] = {
+            LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE),
+            LOAD_U32(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER),
+        };
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    return sizes;
 }
 // MARK: - ANNOTATION_GROUP_BYTES
 ANNOTATION_GROUP_BYTES::ANNOTATION_GROUP_BYTES (Offset offset, Size file_size, uint32_t version) noexcept :
@@ -2592,38 +2511,6 @@ void ANNOTATION_GROUP_BYTES::read_bytes (BYTE *const __base, const GroupSizes &s
              "). Did you validate?");
     }
     
-    if (false) {
-    READ_GROUP_OFFSETS:
-        if (offset + BYTES > __size) throw std::runtime_error
-            ("Failed ANNOTATION_GROUP_BYTES::read_bytes -- out of bounds. Byte array block (location "+
-             std::to_string(offset)+ " - " +
-             std::to_string(offset + BYTES)+
-             " bytes) extends beyond the end of file. Did you validate?");
-        annotations.groups.clear();
-        
-        BYTE* __array = __base + offset;
-        for (auto&& size : sizes) {
-            annotations.groups[std::string((char*)__array,size.first)] =
-            Abstraction::AnnotationGroup {
-                .offset = offset,
-                .number = size.second
-            };
-            Size total_bytes = size.first + size.second * TYPE_SIZE_UINT24;
-            offset  += total_bytes;
-            __array += total_bytes;
-            
-            if (__version > IRIS_EXTENSION_1_0); else continue;
-            
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-            
-        }
-        
-        
-        return;
-    }
-    
     offset = __offset + HEADER_V1_0_SIZE;
     if (__version > IRIS_EXTENSION_1_0); else goto READ_GROUP_OFFSETS;
 
@@ -2631,7 +2518,33 @@ void ANNOTATION_GROUP_BYTES::read_bytes (BYTE *const __base, const GroupSizes &s
     // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
-    goto READ_GROUP_OFFSETS;
+    READ_GROUP_OFFSETS:
+    if (offset + BYTES > __size) throw std::runtime_error
+        ("Failed ANNOTATION_GROUP_BYTES::read_bytes -- out of bounds. Byte array block (location "+
+         std::to_string(offset)+ " - " +
+         std::to_string(offset + BYTES)+
+         " bytes) extends beyond the end of file. Did you validate?");
+    annotations.groups.clear();
+    
+    BYTE* __array = __base + offset;
+    for (auto&& size : sizes) {
+        annotations.groups[std::string((char*)__array,size.first)] =
+        Abstraction::AnnotationGroup {
+            .offset = offset,
+            .number = size.second
+        };
+        Size total_bytes = size.first + size.second * TYPE_SIZE_UINT24;
+        offset  += total_bytes;
+        __array += total_bytes;
+        
+        if (__version > IRIS_EXTENSION_1_0); else continue;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        // VERSION CONTROL: VERSION 2+ PARAMETERS ARE ADDED HERE
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+        
+    }
+    
 }
 } // END SERIALIZATION
 } // END IRIS CODEC
