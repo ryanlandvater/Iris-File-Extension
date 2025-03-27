@@ -7,7 +7,18 @@ include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(IRIS_EXTENSION_BUILD_ALL ON)
+
+option(IRIS_EXTENSION_BUILD_ALL "Convenience option to build all targets" OFF)
+
+option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" OFF)
+option(IFE_BUILD_STATIC "Build static Iris File Extension Libraries" ON)
+option(IFE_BUILD_EXAMPLES "Build shared Iris File Extension Example implementations" OFF)
+
+if(IRIS_EXTENSION_BUILD_ALL)
+    set (IFE_BUILD_SHARED ON)
+    set (IFE_BUILD_STATIC ON)
+    set (IFE_BUILD_EXAMPLES ON)
+endif(IRIS_EXTENSION_BUILD_ALL)
 
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
@@ -43,7 +54,9 @@ Project(
     LANGUAGES CXX 
     VERSION ${VERSION_STRING}
 )
+
 set(IFE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -57,30 +70,77 @@ if (NOT DEFINED irisheaders_SOURCE_DIR)
     FetchContent_MakeAvailable(IrisHeaders)
 endif()
 
-add_library(IrisFileExtensionLib OBJECT)
-target_sources (
-    IrisFileExtensionLib INTERFACE FILE_SET HEADERS
-    BASE_DIRS ${IFE_SOURCE_DIR}
-    FILES
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Iris File Extension Universal Object Build
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+set (
+    IFE_SourcesExport 
     ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
 )
-target_sources (
-    IrisFileExtensionLib PRIVATE
+set (
+    IFE_SourcesPriv
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
 )
-target_include_directories (
-    IrisFileExtensionLib INTERFACE
-    $<BUILD_INTERFACE:${IFE_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+set (
+    IFE_IncludeDir
+    ${irisheaders_SOURCE_DIR}/priv
+    ${IFE_SOURCE_DIR}
 )
-target_link_libraries (
-    IrisFileExtensionLib PRIVATE
+set (
+    IFE_Dependencies
     IrisHeaders
 )
-add_library(IrisFileExtension SHARED $<TARGET_OBJECTS:IrisFileExtensionLib>)
-add_library(IrisFileExtensionStatic STATIC $<TARGET_OBJECTS:IrisFileExtensionLib>)
+add_library(IrisFileExtensionLib OBJECT)
+target_sources (
+    IrisFileExtensionLib INTERFACE FILE_SET HEADERS
+    BASE_DIRS ${IFE_SOURCE_DIR} FILES
+    ${IFE_SourcesExport}
+)
+target_sources (
+    IrisFileExtensionLib PRIVATE
+    ${IFE_SourcesPriv}
+)
+target_include_directories (
+    IrisFileExtensionLib PRIVATE
+    ${IFE_IncludeDir}
+)
+target_link_libraries (
+    IrisFileExtensionLib
+    PRIVATE ${IFE_Dependencies}
+)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# END Universal Object Build
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+set (
+    IFE_Targets
+    IrisFileExtensionLib
+)
+if(IFE_BUILD_SHARED)
+    add_library(
+        IrisFileExtension SHARED 
+        $<TARGET_OBJECTS:IrisFileExtensionLib>
+    ) 
+    target_link_libraries(
+        IrisFileExtension
+        PRIVATE ${IFE_Dependencies}
+    )
+    set(IFE_Targets ${IFE_Targets} IrisFileExtension)
+endif(IFE_BUILD_SHARED)
+
+if(IFE_BUILD_STATIC)
+    add_library(
+        IrisFileExtensionStatic STATIC 
+        $<TARGET_OBJECTS:IrisFileExtensionLib>
+    )
+    target_link_libraries (
+        IrisFileExtensionStatic
+        PRIVATE ${IFE_Dependencies}
+    )
+    set(IFE_Targets ${IFE_Targets} IrisFileExtensionStatic)
+endif(IFE_BUILD_STATIC)
+
 if (${PROJECT_IS_TOP_LEVEL})
     install(
         TARGETS IrisHeaders
@@ -105,10 +165,7 @@ if (${PROJECT_IS_TOP_LEVEL})
     )
 endif(${PROJECT_IS_TOP_LEVEL})
 
-if (NOT DEFINED BUILD_EXAMPLES)
-    SET(BUILD_EXAMPLES OFF)
-endif()
-if(BUILD_EXAMPLES)
+if(IFE_BUILD_EXAMPLES)
     message(STATUS "Configured to build text example IFE implementations (/examples directory)")
     add_compile_definitions(BUILD_EXAMPLES_TEST)
     set(EXAMPLES_DIR ${PROJECT_SOURCE_DIR}/examples)
@@ -125,4 +182,4 @@ if(BUILD_EXAMPLES)
         slide_info_abstraction PRIVATE 
         IrisFileExtensionStatic
     )
-endif(BUILD_EXAMPLES)
+endif(IFE_BUILD_EXAMPLES)
