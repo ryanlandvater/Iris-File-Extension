@@ -47,6 +47,24 @@
 
 #ifndef IrisCodecExtension_hpp
 #define IrisCodecExtension_hpp
+
+// Should we export the IFE API for low-level calls to the IFE bytestream.
+// If being compiled as a part of another project and you do not want to
+// or need to export calls that directly manipulate the byte stream,
+// set this preprocessor macro to false.
+#ifndef IFE_EXPORT_API
+#define IFE_EXPORT_API true
+#endif
+#if IFE_EXPORT_API
+    #ifndef IFE_EXPORT
+    #define IFE_EXPORT __attribute__ ((visibility ("default")))
+    #endif
+#else
+    #ifndef IFE_EXPORT
+    #define IFE_EXPORT __attribute__ ((visibility ("hidden")))
+    #endif
+#endif
+
 namespace IrisCodec {
 using namespace Iris;
 constexpr Offset   NULL_OFFSET          = UINT64_MAX;
@@ -89,10 +107,6 @@ namespace Abstraction {
 struct File;
 struct FileMap;
 }
-
-#ifndef IFE_EXPORT
-#define IFE_EXPORT __attribute__ ((visibility ("default")))
-#endif
 
 // MARK: - ENTRY METHODS
 /// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
