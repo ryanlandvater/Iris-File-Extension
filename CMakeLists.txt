@@ -33,10 +33,6 @@ endfunction()
 IFE_get_version()
 message(STATUS "BUILDING ACCORDING TO IRIS FILE EXTENSION (IFE) SPECIFICATION v" ${VERSION_STRING})
 
-if ((MSVC) AND (MSVC_VERSION GREATER_EQUAL 1914))
-    target_compile_options(stxxl INTERFACE "/Zc:__cplusplus")
-endif()
-
 Project(
     IrisFileExtension 
     LANGUAGES CXX 
