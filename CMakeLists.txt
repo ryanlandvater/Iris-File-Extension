@@ -8,18 +8,6 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(IRIS_EXTENSION_BUILD_ALL "Convenience option to build all targets" OFF)
-
-option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" ON)
-option(IFE_BUILD_STATIC "Build static Iris File Extension Libraries" ON)
-option(IFE_BUILD_EXAMPLES "Build shared Iris File Extension Example implementations" OFF)
-
-if(IRIS_EXTENSION_BUILD_ALL)
-    set (IFE_BUILD_SHARED ON)
-    set (IFE_BUILD_STATIC ON)
-    set (IFE_BUILD_EXAMPLES ON)
-endif(IRIS_EXTENSION_BUILD_ALL)
-
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
     if (NOT EXISTS ${IFE_core_header})
@@ -54,6 +42,17 @@ Project(
     LANGUAGES CXX 
     VERSION ${VERSION_STRING}
 )
+
+option(IRIS_EXTENSION_BUILD_ALL "Convenience option to build all targets" OFF)
+
+option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" ON)
+option(IFE_BUILD_STATIC "Build static Iris File Extension Libraries" ON)
+option(IFE_BUILD_EXAMPLES "Build shared Iris File Extension Example implementations" OFF)
+if(IRIS_EXTENSION_BUILD_ALL)
+    set (IFE_BUILD_SHARED ON)
+    set (IFE_BUILD_STATIC ON)
+    set (IFE_BUILD_EXAMPLES ON)
+endif(IRIS_EXTENSION_BUILD_ALL)
 
 set(IFE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
 
