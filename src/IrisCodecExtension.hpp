@@ -55,13 +55,28 @@
 #ifndef IFE_EXPORT_API
 #define IFE_EXPORT_API true
 #endif
+#if defined(_MSC_VER)
+#ifdef _EXPORTING
+   #define IFE_DECLSPEC    __declspec(dllexport)
+#else
+   #define IFE_DECLSPEC    __declspec(dllimport)
+#endif
+#endif
 #if IFE_EXPORT_API
     #ifndef IFE_EXPORT
+    #if defined(_MSC_VER)
+    #define IFE_EXPORT IFE_DECLSPEC
+    #else
     #define IFE_EXPORT __attribute__ ((visibility ("default")))
+    #endif
     #endif
 #else
     #ifndef IFE_EXPORT
+    #if defined(_MSC_VER)
+    #define IFE_EXPORT
+    #else
     #define IFE_EXPORT __attribute__ ((visibility ("hidden")))
+    #endif
     #endif
 #endif
 
