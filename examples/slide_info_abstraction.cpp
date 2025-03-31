@@ -143,7 +143,7 @@
      try {
          using namespace IrisCodec::Abstraction;
  
-         auto slide = abstract_file_structure((uint8_t*)ptr, size);
+         auto slide = IrisCodec::abstract_file_structure((uint8_t*)ptr, size);
          std::cout << "Slide File information:\n"
              << "\t Encoded using IFE Spec v"
              << (slide.header.extVersion >> 16) << "."

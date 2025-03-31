@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(IRIS_EXTENSION_BUILD_ALL "Convenience option to build all targets" OFF)
 
-option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" OFF)
+option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" ON)
 option(IFE_BUILD_STATIC "Build static Iris File Extension Libraries" ON)
 option(IFE_BUILD_EXAMPLES "Build shared Iris File Extension Example implementations" OFF)
 
@@ -106,6 +106,10 @@ target_include_directories (
     IrisFileExtensionLib PRIVATE
     ${IFE_IncludeDir}
 )
+set_target_properties(
+    IrisFileExtensionLib 
+    PROPERTIES CXX_VISIBILITY_PRESET hidden
+)
 target_link_libraries (
     IrisFileExtensionLib
     PRIVATE ${IFE_Dependencies}
@@ -154,7 +158,7 @@ if (${PROJECT_IS_TOP_LEVEL})
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Iris
     )
     install(
-        TARGETS IrisFileExtensionLib IrisFileExtension IrisFileExtensionStatic
+        TARGETS ${IFE_Targets}
         EXPORT IrisFileExtensionConfig
         FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Iris
     )
