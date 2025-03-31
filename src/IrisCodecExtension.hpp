@@ -60,6 +60,7 @@ constexpr uint16_t IRIS_EXTENSION_MINOR = 0;
 
 // These are the header and array datablocks defined in this file:
 namespace Serialization {
+
 // MARK: HEADER TYPES
 struct FILE_HEADER;
 struct TILE_TABLE;
@@ -88,18 +89,23 @@ namespace Abstraction {
 struct File;
 struct FileMap;
 }
+
+#ifndef IFE_EXPORT
+#define IFE_EXPORT __attribute__ ((visibility ("default")))
+#endif
+
 // MARK: - ENTRY METHODS
 /// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
-bool is_Iris_Codec_file     (BYTE* const __mapped_file_ptr,
-                             size_t file_size);
+bool IFE_EXPORT is_Iris_Codec_file    (BYTE* const __mapped_file_ptr,
+                                        size_t file_size);
 /**
  * @brief Performs deep file validation checks to ensure stuctural offsets are valid. This does NOT perform
  * specification validations.
  *
  * This performs a tree validation of objects and sub-objects to ensure their offsets properly.
  */
-Result validate_file_structure (BYTE* const __mapped_file_ptr,
-                                size_t file_size) noexcept;
+Result IFE_EXPORT validate_file_structure (BYTE* const __mapped_file_ptr,
+                                           size_t file_size) noexcept;
 /**
  * @brief Abstract the Iris file structure into memory for quick data access. This does NOT validate.
  *
@@ -111,8 +117,8 @@ Result validate_file_structure (BYTE* const __mapped_file_ptr,
  * separately read. This keeps the abstraction layer quick but removes memory bloat.
  */
 // START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
-Abstraction::File abstract_file_structure (BYTE* const __mapped_file_ptr,
-                                           size_t file_size);
+Abstraction::File IFE_EXPORT abstract_file_structure (BYTE* const __mapped_file_ptr,
+                                                      size_t file_size);
 /**
  * @brief Generate a file map showing the offset locations of header and array blocks with their respective
  * types and sizes detailed. This is not a cheap method and does not need to be routinely done; only when
@@ -125,15 +131,15 @@ Abstraction::File abstract_file_structure (BYTE* const __mapped_file_ptr,
  * easier to simply read them into memory and then rewrite them back to disk following the update.
  */
 // ALWAYS CREATE A FILE MAP BEFORE PERFORMING AN UPDATE TO A FILE
-Abstraction::FileMap generate_file_map (BYTE* const __mapped_file_ptr,
-                                        size_t file_size);
+Abstraction::FileMap IFE_EXPORT generate_file_map (BYTE* const __mapped_file_ptr,
+                                                   size_t file_size);
 
 // MARK: - FILE ABSTRACTIONS
 // The file abstractions pull light-weight
 // representations of the on-disk information
 // such as critial offset locations and sizes
 // of larger image or vector payloads
-namespace Abstraction {
+namespace IFE_EXPORT Abstraction {
 /**
  * @brief Extracted file header information
  *
@@ -141,7 +147,7 @@ namespace Abstraction {
  * used to validate the file such as the magic number;
  * this was used internally already to produce the footer
  */
-struct Header {
+struct IFE_EXPORT Header {
     Size            fileSize    = 0;
     uint32_t        extVersion  = 0;
     uint32_t        revision    = 0;
@@ -152,7 +158,7 @@ struct Header {
  * This is related to ongoing research related to image
  * compression and is reserved for future use.
  */
-struct Cipher {
+struct IFE_EXPORT Cipher {
     Offset          offset      = NULL_OFFSET;
 };
 /**
@@ -165,7 +171,7 @@ struct Cipher {
  * read the compressed file byte stream into the memory
  * pointed to by dst.
  */
-struct TileEntry {
+struct IFE_EXPORT TileEntry {
     Offset          offset      = NULL_OFFSET;
     uint32_t        size        = 0;
 };
@@ -188,7 +194,7 @@ struct TileEntry {
  * of each tile of each layer relative to the beginning
  * of the whole file (ie byte 0 of the mapped file).
  */
-struct TileTable {
+struct IFE_EXPORT TileTable {
     using Layer     = std::vector<TileEntry>;
     using Layers    = std::vector<Layer>;
     Encoding        encoding    = TILE_ENCODING_UNDEFINED;
@@ -205,7 +211,7 @@ struct TileTable {
  * reading the image data from disk and decompressing it.
  *
  */
-struct Image {
+struct IFE_EXPORT Image {
     using           Encoding    = ImageEncoding;
     using           Orientation = ImageOrientation;
     Offset          offset      = NULL_OFFSET;
@@ -219,13 +225,13 @@ struct Image {
 /**
  * @brief Label-image dictionary for associated images
  */
-using Images = std::unordered_map<std::string, Image>;
+using Images = IFE_EXPORT std::unordered_map<std::string, Image>;
 /**
  * @brief Annotation abstraction containing on-slide annotations by annotation
  * identifier (24-bit value) and annotation groups by group name (string)
  *
  */
-struct Annotation {
+struct IFE_EXPORT Annotation {
     using       Identifier  = Iris::Annotation::Identifier;
     static constexpr
     uint32_t    NULL_ID     = 16777215U;
@@ -242,12 +248,12 @@ struct Annotation {
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
 };
-struct AnnotationGroup {
+struct IFE_EXPORT AnnotationGroup {
     Offset      offset      = NULL_OFFSET;
     uint32_t    number      = 0;
     Size        byteSize    () {return number * 3;}
 };
-struct Annotations :
+struct IFE_EXPORT Annotations :
 public std::unordered_map<Annotation::Identifier, Annotation> {
     using       Groups = std::unordered_map<std::string, AnnotationGroup>;
     Groups      groups;
@@ -258,14 +264,14 @@ public std::unordered_map<Annotation::Identifier, Annotation> {
  * This is a low-overhead file abstraction that allows for
  * fast access to the underlying slide data.
  */
-struct File {
+struct IFE_EXPORT File {
     Header              header;
     TileTable           tileTable;
     Images              images;
     Annotations         annotations;
     Metadata            metadata;
 };
-struct FileMap :
+struct IFE_EXPORT FileMap :
 public std::map<Offset, struct FileMapEntry> {
     Size                file_size   = 0;
 };
@@ -278,16 +284,17 @@ using MagicBytes                    = uint_least32_t;
 /**
  * @brief Iris Codec statically definied offset values
  */
-enum Offsets : uint_least64_t {
+enum IFE_EXPORT Offsets : uint_least64_t {
     HEADER_OFFSET                   = 0,
-    NULL_OFFSET                     = UINT64_MAX,
+    NULL_OFFSET                     = 18446744073709551615ULL,
+    NULL_TILE                       = 1099511627775ULL,
 };
 /**
  * @brief Iris Codec Files contain methods to
  * heal corrupted metadata in the event of errors
  * 
  */
-enum RECOVERY : uint_least16_t {
+enum IFE_EXPORT RECOVERY : uint_least16_t {
     // In the event of recovery, we will search
     // for a byte offset that stores its own value
     // followed by one of these sequences.
@@ -309,7 +316,7 @@ enum RECOVERY : uint_least16_t {
     RECOVER_ANNOTATION_GROUP_SIZES  = 0x550F,
     RECOVER_ANNOTATION_GROUP_BYTES  = 0x5510,
 };
-enum TYPE_SIZES {
+enum IFE_EXPORT TYPE_SIZES {
     TYPE_SIZE_UINT8                 = 1,
     TYPE_SIZE_UINT16                = 2,
     TYPE_SIZE_UINT24                = 3,
@@ -327,11 +334,7 @@ enum TYPE_SIZES {
     TYPE_SIZE_INT64                 = TYPE_SIZE_UINT64,
     TYPE_SIZE_DATE_TIME             = TYPE_SIZE_UINT64,
 };
-struct DATA_BLOCK {
-    static constexpr
-    char type []                    = "UNDEFINED_DATA_BLOCK";
-    static constexpr enum
-    RECOVERY    recovery            = RECOVER_UNDEFINED;
+struct IFE_EXPORT DATA_BLOCK {
     enum vtable_sizes   {
         VALIDATION_S                = TYPE_SIZE_UINT64,
         RECOVERY_S                  = TYPE_SIZE_UINT16,
@@ -339,6 +342,7 @@ struct DATA_BLOCK {
     enum vtable_offsets {
         VALIDATION                  = 0,
         RECOVERY                    = VALIDATION + VALIDATION_S,
+        SIZE                        = RECOVERY + RECOVERY_S
     };
     Offset      __offset            = NULL_OFFSET;
     Size        __size              = 0;
@@ -346,7 +350,8 @@ struct DATA_BLOCK {
     operator    bool                () const;
     explicit    DATA_BLOCK          (){};
     explicit    DATA_BLOCK          (Offset, Size file_size, uint32_t IFE_version);
-    Result      validate_offset     (BYTE* const __base) const noexcept;
+    Result      validate_offset     (BYTE* const __base, const char*, enum RECOVERY) const noexcept;
+    Size        validate_bounds     () const noexcept;
 };
 // MARK: - HEADER TYPES
 // MARK: File Header
@@ -360,7 +365,7 @@ struct DATA_BLOCK {
  *  Metadata offset location   (ptr) is REQUIRED even if no metadata is encoded within the table.
  *
  */
-struct FILE_HEADER : DATA_BLOCK {
+struct IFE_EXPORT FILE_HEADER : DATA_BLOCK {
     static constexpr
     char type []                    = "FILE_HEADER";
     static const
@@ -399,7 +404,7 @@ struct FILE_HEADER : DATA_BLOCK {
     
     explicit FILE_HEADER            (Size file_size) noexcept;
 };
-struct HeaderCreateInfo {
+struct IFE_EXPORT HeaderCreateInfo {
     size_t      fileSize            = 0;
     uint32_t    revision            = 0;
     Offset      tileTableOffset     = NULL_OFFSET;
@@ -408,7 +413,7 @@ struct HeaderCreateInfo {
 void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&);
 
 // MARK: Tile Table Header
-struct TILE_TABLE : DATA_BLOCK {
+struct IFE_EXPORT TILE_TABLE : DATA_BLOCK {
     friend FILE_HEADER;
     static constexpr
     char type []                    = "TILE_TABLE";
@@ -442,6 +447,7 @@ struct TILE_TABLE : DATA_BLOCK {
         TABLE_HEADER_SIZE           = HEADER_V1_0_SIZE,
     };
     Size        size                () const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     TileTable   read_tile_table     (BYTE* const __base) const;
     LAYER_EXTENTS get_layer_extents (BYTE* const __base) const;
@@ -450,7 +456,7 @@ struct TILE_TABLE : DATA_BLOCK {
 protected:
     explicit    TILE_TABLE          (Offset tile_table_offset, Size file_size, uint32_t version) noexcept;
 };
-struct TileTableCreateInfo {
+struct IFE_EXPORT TileTableCreateInfo {
     Offset      tileTableOffset     = NULL_OFFSET;
     Encoding    encoding            = TILE_ENCODING_UNDEFINED;
     Format      format              = FORMAT_UNDEFINED;
@@ -461,10 +467,10 @@ struct TileTableCreateInfo {
     uint32_t    widthPixels         = 0;
     uint32_t    heightPixels        = 0;
 };
-void STORE_TILE_TABLE             (BYTE* const, const TileTableCreateInfo&);
+void STORE_TILE_TABLE               (BYTE* const __base, const TileTableCreateInfo&);
 
 // MARK: Metadata Header
-struct METADATA : DATA_BLOCK {
+struct IFE_EXPORT METADATA : DATA_BLOCK {
     friend FILE_HEADER;
     static constexpr
     char type []                    = "METADATA";
@@ -503,6 +509,7 @@ struct METADATA : DATA_BLOCK {
     };
     
     Size        size                () const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     Size        get_size            (BYTE* const __base) const;
     Metadata    read_metadata       (BYTE* const __base) const;
@@ -519,7 +526,7 @@ protected:
     explicit    METADATA            () = delete;
     explicit    METADATA            (Offset __metadata, Size file_size, uint32_t version) noexcept;
 };
-struct MetadataCreateInfo {
+struct IFE_EXPORT MetadataCreateInfo {
     Offset      metadataOffset      = NULL_OFFSET;
     Version     codecVersion        = {0,0,0};
     int16_t     I2Standard          = -1;
@@ -530,10 +537,10 @@ struct MetadataCreateInfo {
     float       micronsPerPixel     = 0.f;
     float       magnification       = 0.f;
 };
-void STORE_METADATA                 (BYTE* const __base, const MetadataCreateInfo&);
+void IFE_EXPORT STORE_METADATA      (BYTE* const __base, const MetadataCreateInfo&);
 
 // MARK: ATTRIBUTES
-struct ATTRIBUTES : DATA_BLOCK {
+struct IFE_EXPORT ATTRIBUTES : DATA_BLOCK {
     friend METADATA;
     static constexpr
     char type []                    = "ATTRIBUTES";
@@ -544,7 +551,6 @@ struct ATTRIBUTES : DATA_BLOCK {
         RECOVERY_S                  = TYPE_SIZE_UINT16,
         FORMAT_S                    = TYPE_SIZE_UINT8,
         VERSION_S                   = TYPE_SIZE_UINT16,
-        NUMBER_S                    = TYPE_SIZE_UINT16,
         LENGTHS_OFFSET_S            = TYPE_SIZE_UINT64,
         BYTE_ARRAY_OFFSET_S         = TYPE_SIZE_UINT64,
     };
@@ -553,8 +559,7 @@ struct ATTRIBUTES : DATA_BLOCK {
         RECOVERY                    = VALIDATION + VALIDATION_S,
         FORMAT                      = RECOVERY + RECOVERY_S,
         VERSION                     = FORMAT + FORMAT_S,
-        NUMBER                      = VERSION + VERSION_S,
-        LENGTHS_OFFSET              = NUMBER + NUMBER_S,
+        LENGTHS_OFFSET              = VERSION + VERSION_S,
         BYTE_ARRAY_OFFSET           = LENGTHS_OFFSET + LENGTHS_OFFSET_S,
         HEADER_V1_0_SIZE            = BYTE_ARRAY_OFFSET + BYTE_ARRAY_OFFSET_S,
         // Version 1.0 ends here.
@@ -563,6 +568,7 @@ struct ATTRIBUTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                () const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     Attributes  read_attributes     (BYTE* const __base) const;
     ATTRIBUTES_SIZES get_sizes      (BYTE* const __base) const;
@@ -572,7 +578,7 @@ protected:
     explicit    ATTRIBUTES          () = delete;
     explicit    ATTRIBUTES          (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-struct AttributesCreateInfo {
+struct IFE_EXPORT AttributesCreateInfo {
     Offset      attributesOffset    = NULL_OFFSET;
     MetadataType format             = METADATA_UNDEFINED;
     uint32_t    version             = 0;
@@ -583,7 +589,7 @@ void STORE_ATTRIBUTES               (BYTE* const __base, const AttributesCreateI
 
 // MARK: - ARRAY DATA TYPES
 // MARK: LAYER EXTENTS (Slide dimensions)
-struct LAYER_EXTENT {
+struct IFE_EXPORT LAYER_EXTENT {
     friend LAYER_EXTENTS;
     enum vtable_sizes {
         X_TILES_S                   = TYPE_SIZE_UINT32,
@@ -600,7 +606,7 @@ struct LAYER_EXTENT {
         SIZE                        = SCALE + SCALE_S
     };
 };
-struct LAYER_EXTENTS : DATA_BLOCK {
+struct IFE_EXPORT LAYER_EXTENTS : DATA_BLOCK {
     friend TILE_TABLE;
     static constexpr
     char type []                    = "LAYER_EXTENTS";
@@ -624,17 +630,18 @@ struct LAYER_EXTENTS : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     LayerExtents read_layer_extents (BYTE* const __base) const;
     
 protected:
     explicit LAYER_EXTENTS          (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-Size SIZE_EXTENTS                   (const LayerExtents&);
-void STORE_EXTENTS                  (BYTE* const __base, Offset offset, const LayerExtents&);
+Size IFE_EXPORT SIZE_EXTENTS        (const LayerExtents&);
+void IFE_EXPORT STORE_EXTENTS       (BYTE* const __base, Offset offset, const LayerExtents&);
 
 // MARK: Tile Offsets (tile lookup table)
-struct TILE_OFFSET {
+struct IFE_EXPORT TILE_OFFSET {
     friend TILE_OFFSETS;
     enum vtable_sizes {
         OFFSET_S                    = TYPE_SIZE_UINT40, // (40-bit FAULTS AT 1TB)
@@ -649,8 +656,10 @@ struct TILE_OFFSET {
         SIZE                        = TILE_SIZE + TILE_SIZE_S,
     };
 };
-struct TILE_OFFSETS : DATA_BLOCK {
+struct IFE_EXPORT TILE_OFFSETS : DATA_BLOCK {
     friend TILE_TABLE;
+    static constexpr
+    char type []                    = "TILE_OFFSETS";
     static constexpr
     enum RECOVERY    recovery       = RECOVER_TILE_OFFSETS;
     enum vtable_sizes {
@@ -671,6 +680,7 @@ struct TILE_OFFSETS : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     void        read_tile_offsets   (BYTE* const __base, TileTable&) const;
     
@@ -678,11 +688,11 @@ protected:
     explicit TILE_OFFSETS           () = delete;
     explicit TILE_OFFSETS           (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-Size SIZE_TILE_OFFSETS              (const TileTable::Layers&);
-void STORE_TILE_OFFSETS             (BYTE* const, Offset, const TileTable::Layers&);
+Size IFE_EXPORT SIZE_TILE_OFFSETS   (const TileTable::Layers&);
+void IFE_EXPORT STORE_TILE_OFFSETS  (BYTE* const, Offset, const TileTable::Layers&);
 
 // MARK: ATTRIBUTES SIZES
-struct ATTRIBUTE_SIZE {
+struct IFE_EXPORT ATTRIBUTE_SIZE {
     enum vtable_sizes {
         KEY_SIZE_S                  = TYPE_SIZE_UINT16,
         VALUE_SIZE_S                = TYPE_SIZE_UINT32,
@@ -696,7 +706,7 @@ struct ATTRIBUTE_SIZE {
         SIZE                        = VALUE_SIZE + VALUE_SIZE_S,
     };
 };
-struct ATTRIBUTES_SIZES : DATA_BLOCK {
+struct IFE_EXPORT ATTRIBUTES_SIZES : DATA_BLOCK {
     friend ATTRIBUTES;
     static constexpr
     char type []                    = "ATTRIBUTES_SIZES";
@@ -720,6 +730,7 @@ struct ATTRIBUTES_SIZES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
     SizeArray   read_sizes          (BYTE* const __base) const;
     
@@ -727,12 +738,12 @@ protected:
     explicit ATTRIBUTES_SIZES       () = delete;
     explicit ATTRIBUTES_SIZES       (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-Size SIZE_ATTRIBUTES_SIZES          (const Attributes&);
-void STORE_ATTRIBUTES_SIZES         (BYTE* const __base, Offset, const Attributes&);
+Size IFE_EXPORT SIZE_ATTRIBUTES_SIZES   (const Attributes&);
+void IFE_EXPORT STORE_ATTRIBUTES_SIZES  (BYTE* const __base, Offset, const Attributes&);
 
 // MARK: ATTRIBUTES BYTES
 
-struct ATTRIBUTES_BYTES : DATA_BLOCK {
+struct IFE_EXPORT ATTRIBUTES_BYTES : DATA_BLOCK {
     friend ATTRIBUTES;
     using SizeArray                 = ATTRIBUTES_SIZES::SizeArray;
     static constexpr
@@ -754,6 +765,7 @@ struct ATTRIBUTES_BYTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base, Size expected_bytes) const noexcept;
     void        read_bytes          (BYTE* const __base, const SizeArray&, Attributes&) const;
     
@@ -761,12 +773,12 @@ protected:
     explicit ATTRIBUTES_BYTES       () = delete;
     explicit ATTRIBUTES_BYTES       (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-Size SIZE_ATTRIBUTES_BYTES          (const Attributes&);
-void STORE_ATTRIBUTES_BYTES         (BYTE* const __base, Offset, const Attributes&);
+Size IFE_EXPORT SIZE_ATTRIBUTES_BYTES   (const Attributes&);
+void IFE_EXPORT STORE_ATTRIBUTES_BYTES  (BYTE* const __base, Offset, const Attributes&);
 
 // MARK: - ASSOCIATED IMAGES
 // MARK: IMAGES ARRAY
-struct IMAGE_ENTRY {
+struct IFE_EXPORT IMAGE_ENTRY {
     enum vtable_sizes {
         BYTES_OFFSET_S              = TYPE_SIZE_UINT64,
         WIDTH_S                     = TYPE_SIZE_UINT32,
@@ -788,7 +800,7 @@ struct IMAGE_ENTRY {
         SIZE                        = ORIENTATION + ORIENTATION_S,
     };
 };
-struct IMAGE_ARRAY : DATA_BLOCK {
+struct IFE_EXPORT IMAGE_ARRAY : DATA_BLOCK {
     friend METADATA;
     using Labels                    = Metadata::ImageLabels;
     using BYTES_ARRAY               = std::vector<IMAGE_BYTES>;
@@ -814,6 +826,7 @@ struct IMAGE_ARRAY : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     Images      read_images         (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
@@ -821,8 +834,8 @@ protected:
     explicit    IMAGE_ARRAY         () = delete;
     explicit    IMAGE_ARRAY         (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-struct AssociatedImageCreateInfo {
-    struct ImageInfo {
+struct IFE_EXPORT AssociatedImageCreateInfo {
+    struct IFE_EXPORT ImageInfo {
         using       Encoding        = ImageEncoding;
         using       Orientation     = ImageOrientation;
         Offset      offset          = NULL_OFFSET;
@@ -840,7 +853,7 @@ Size SIZE_IMAGES_ARRAY              (AssociatedImageCreateInfo&);
 void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCreateInfo&);
 
 // MARK: IMAGE_BYTES
-struct IMAGE_BYTES : DATA_BLOCK {
+struct IFE_EXPORT IMAGE_BYTES : DATA_BLOCK {
     friend IMAGE_ARRAY;
     static constexpr
     char type []                    = "IMAGE_BYTES";
@@ -864,6 +877,7 @@ struct IMAGE_BYTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     std::string read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
     
@@ -871,18 +885,18 @@ protected:
     explicit    IMAGE_BYTES         () = delete;
     explicit    IMAGE_BYTES         (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-struct ImageBytesCreateInfo {
+struct IFE_EXPORT ImageBytesCreateInfo {
     Offset      offset              = NULL_OFFSET;
     std::string title;
     BYTE* const data                = nullptr;
     size_t      dataBytes           = 0;
 };
-Size SIZE_IMAGES_BYTES              (const ImageBytesCreateInfo&);
-void STORE_IMAGES_BYTES             (BYTE* const __base, const ImageBytesCreateInfo&);
+Size IFE_EXPORT SIZE_IMAGES_BYTES   (const ImageBytesCreateInfo&);
+void IFE_EXPORT STORE_IMAGES_BYTES  (BYTE* const __base, const ImageBytesCreateInfo&);
 
 // MARK: - ICC Color Profile
 
-struct ICC_PROFILE : DATA_BLOCK {
+struct IFE_EXPORT ICC_PROFILE : DATA_BLOCK {
     friend METADATA;
     static constexpr
     char type []                    = "ICC_PROFILE";
@@ -903,6 +917,7 @@ struct ICC_PROFILE : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     std::string read_profile        (BYTE* const __base) const;
     
@@ -914,7 +929,7 @@ Size SIZE_ICC_COLOR_PROFILE         (const std::string& color_profile);
 void STORE_ICC_COLOR_PROFILE        (BYTE* const __base, Offset, const std::string& color_profile);
 
 // MARK: - Annotation Arrays
-struct ANNOTATION_ENTRY {
+struct IFE_EXPORT ANNOTATION_ENTRY {
     enum vtable_sizes {
         IDENTIFIER_S                = TYPE_SIZE_UINT24,
         BYTES_OFFSET_S              = TYPE_SIZE_UINT64,
@@ -945,7 +960,7 @@ struct ANNOTATION_ENTRY {
     };
 };
 // MARK: ANNOTATION ARRAY
-struct ANNOTATIONS : DATA_BLOCK {
+struct IFE_EXPORT ANNOTATIONS : DATA_BLOCK {
     friend METADATA;
     using Annotations               = Abstraction::Annotations;
     using BYTES_ARRAY               = std::vector<ANNOTATION_BYTES>;
@@ -977,6 +992,7 @@ struct ANNOTATIONS : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
     Annotations read_annotations    (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
@@ -990,9 +1006,9 @@ protected:
     explicit ANNOTATIONS            () = delete;
     explicit ANNOTATIONS            (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-struct AnnotationArrayCreateInfo {
+struct IFE_EXPORT AnnotationArrayCreateInfo {
     using Annotation                = Abstraction::Annotation;
-    struct AnnotationInfo {
+    struct IFE_EXPORT AnnotationInfo {
         using Type                  = AnnotationTypes;
         uint32_t    identifier      = Annotation::NULL_ID;
         Offset      bytesOffset     = NULL_OFFSET;
@@ -1009,11 +1025,11 @@ struct AnnotationArrayCreateInfo {
     Offset          offset          = NULL_OFFSET;
     AnnotationInfos annotations;
 };
-Size SIZE_ANNOTATION_ARRAY          (const AnnotationArrayCreateInfo&);
-void STORE_ANNOTATION_ARRAY         (BYTE* const __base, const AnnotationArrayCreateInfo&);
+Size IFE_EXPORT SIZE_ANNOTATION_ARRAY   (const AnnotationArrayCreateInfo&);
+void IFE_EXPORT STORE_ANNOTATION_ARRAY  (BYTE* const __base, const AnnotationArrayCreateInfo&);
 
 // MARK: ANNOTATION BYTES
-struct ANNOTATION_BYTES : DATA_BLOCK {
+struct IFE_EXPORT ANNOTATION_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
     using Annotation                = Abstraction::Annotation;
     static constexpr
@@ -1036,17 +1052,18 @@ struct ANNOTATION_BYTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     void        read_bytes          (BYTE* const __base, Annotation&) const;
     
 protected:
     explicit ANNOTATION_BYTES       () = delete;
     explicit ANNOTATION_BYTES       (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-Size SIZE_ANNOTATION_BYTES          (const IrisCodec::Annotation&);
-void STORE_ANNOTATION_BYTES         (BYTE* const __base, Offset, const IrisCodec::Annotation&);
+Size IFE_EXPORT SIZE_ANNOTATION_BYTES   (const IrisCodec::Annotation&);
+void IFE_EXPORT STORE_ANNOTATION_BYTES  (BYTE* const __base, Offset, const IrisCodec::Annotation&);
 
 // MARK: ANNOTATION GROUPS
-struct ANNOTATION_GROUP_SIZE {
+struct IFE_EXPORT ANNOTATION_GROUP_SIZE {
     enum vtable_sizes {
         LABEL_SIZE_S                = TYPE_SIZE_UINT16,
         ENTRIES_NUMBER_S            = TYPE_SIZE_UINT32,
@@ -1061,7 +1078,7 @@ struct ANNOTATION_GROUP_SIZE {
         SIZE                        = ENTRIES_NUMBER + ENTRIES_NUMBER_S,
     };
 };
-struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
+struct IFE_EXPORT ANNOTATION_GROUP_SIZES : DATA_BLOCK {
     friend ANNOTATIONS;
     using GroupSizes                = std::vector<std::pair<uint16_t,uint32_t>>;
     using Groups                    = Abstraction::Annotations::Groups;
@@ -1087,6 +1104,7 @@ struct ANNOTATION_GROUP_SIZES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
     GroupSizes  read_group_sizes    (BYTE* const __base) const;
     
@@ -1094,7 +1112,7 @@ protected:
     explicit ANNOTATION_GROUP_SIZES () = delete;
     explicit ANNOTATION_GROUP_SIZES (Offset offset, Size file_size, uint32_t version) noexcept;
 };
-struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
+struct IFE_EXPORT ANNOTATION_GROUP_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
     using GroupSizes                = ANNOTATION_GROUP_SIZES::GroupSizes;
     using Annotations               = Abstraction::Annotations;
@@ -1118,6 +1136,7 @@ struct ANNOTATION_GROUP_BYTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                (BYTE* const __base) const;
+    Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base, Size total_size) const noexcept;
     void        read_bytes          (BYTE* const __base, const GroupSizes&, Annotations&) const;
     
@@ -1127,7 +1146,7 @@ protected:
 };
 } // END FILE STRUCTURE
 namespace Abstraction {
-enum MapEntryType {
+enum IFE_EXPORT MapEntryType {
     MAP_ENTRY_UNDEFINED         = 0,
     MAP_ENTRY_FILE_HEADER,
     MAP_ENTRY_TILE_TABLE,
@@ -1150,7 +1169,7 @@ enum MapEntryType {
 /**
  * @brief FileMap entry representing a datablock within the IFE file structure system.
  */
-struct FileMapEntry {
+struct IFE_EXPORT FileMapEntry {
     using Datablock                 = Serialization::DATA_BLOCK;
     MapEntryType        type        = MAP_ENTRY_UNDEFINED;
     Datablock           datablock;
