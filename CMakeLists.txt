@@ -101,6 +101,10 @@ target_include_directories (
     IrisFileExtensionLib PRIVATE
     ${IFE_IncludeDir}
 )
+target_compile_definitions (
+    IrisFileExtensionLib
+    PRIVATE IRIS_EXPORT_API=true 
+)
 set_target_properties(
     IrisFileExtensionLib 
     PROPERTIES CXX_VISIBILITY_PRESET hidden
