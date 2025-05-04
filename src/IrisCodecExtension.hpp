@@ -53,7 +53,7 @@
 // or need to export calls that directly manipulate the byte stream,
 // set this preprocessor macro to false.
 #ifndef IFE_EXPORT_API
-#define IFE_EXPORT_API true
+#define IFE_EXPORT_API      false
 #endif
 #if defined(_MSC_VER)
 #ifdef _EXPORTING
@@ -65,17 +65,17 @@
 #if IFE_EXPORT_API
     #ifndef IFE_EXPORT
     #if defined(_MSC_VER)
-    #define IFE_EXPORT IFE_DECLSPEC
+    #define IFE_EXPORT      __declspec(dllexport)
     #else
-    #define IFE_EXPORT __attribute__ ((visibility ("default")))
-    #endif
+    #define IFE_EXPORT      __attribute__ ((visibility ("default")))
+#endif
     #endif
 #else
     #ifndef IFE_EXPORT
     #if defined(_MSC_VER)
-    #define IFE_EXPORT
+    #define IFE_EXPORT      __declspec(dllimport)
     #else
-    #define IFE_EXPORT __attribute__ ((visibility ("hidden")))
+    #define IFE_EXPORT      // Default is hidden (see CMakeLists)
     #endif
     #endif
 #endif
@@ -240,21 +240,16 @@ struct IFE_EXPORT TileTable {
  * reading the image data from disk and decompressing it.
  *
  */
-struct IFE_EXPORT Image {
-    using           Encoding    = ImageEncoding;
-    using           Orientation = ImageOrientation;
+struct IFE_EXPORT AssociatedImage {
+    using Info                  = AssociatedImageInfo;
     Offset          offset      = NULL_OFFSET;
     Size            byteSize    = 0;
-    uint32_t        width       = 0;
-    uint32_t        height      = 0;
-    Encoding        encoding    = IMAGE_ENCODING_UNDEFINED;
-    Format          format      = Iris::FORMAT_UNDEFINED;
-    Orientation     orientation = ORIENTATION_0;
+    Info            info;
 };
 /**
  * @brief Label-image dictionary for associated images
  */
-using Images = IFE_EXPORT std::unordered_map<std::string, Image>;
+using AssociatedImages = IFE_EXPORT std::unordered_map<std::string, AssociatedImage>;
 /**
  * @brief Annotation abstraction containing on-slide annotations by annotation
  * identifier (24-bit value) and annotation groups by group name (string)
@@ -296,7 +291,7 @@ public std::unordered_map<Annotation::Identifier, Annotation> {
 struct IFE_EXPORT File {
     Header              header;
     TileTable           tileTable;
-    Images              images;
+    AssociatedImages    images;
     Annotations         annotations;
     Metadata            metadata;
 };
@@ -312,6 +307,7 @@ using MagicBytes                    = uint_least32_t;
 
 /**
  * @brief Iris Codec statically definied offset values
+ * IFE Specification Section 2.2.0
  */
 enum IFE_EXPORT Offsets : uint_least64_t {
     HEADER_OFFSET                   = 0,
@@ -321,7 +317,9 @@ enum IFE_EXPORT Offsets : uint_least64_t {
 /**
  * @brief Iris Codec Files contain methods to
  * heal corrupted metadata in the event of errors
- * 
+ *
+ * IFE Specification Section 2.2.1
+ *
  */
 enum IFE_EXPORT RECOVERY : uint_least16_t {
     // In the event of recovery, we will search
@@ -371,7 +369,7 @@ struct IFE_EXPORT DATA_BLOCK {
     enum vtable_offsets {
         VALIDATION                  = 0,
         RECOVERY                    = VALIDATION + VALIDATION_S,
-        SIZE                        = RECOVERY + RECOVERY_S
+        HEADER_SIZE                 = RECOVERY + RECOVERY_S
     };
     Offset      __offset            = NULL_OFFSET;
     Size        __size              = 0;
@@ -473,7 +471,7 @@ struct IFE_EXPORT TILE_TABLE : DATA_BLOCK {
         // Version 1.0 ends here.
         // -----------------------------------------------------------------------
         
-        TABLE_HEADER_SIZE           = HEADER_V1_0_SIZE,
+        HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                () const;
     Result      validate_offset     (BYTE* const __base) const noexcept;
@@ -558,7 +556,6 @@ protected:
 struct IFE_EXPORT MetadataCreateInfo {
     Offset      metadataOffset      = NULL_OFFSET;
     Version     codecVersion        = {0,0,0};
-    int16_t     I2Standard          = -1;
     Offset      attributes          = NULL_OFFSET;
     Offset      images              = NULL_OFFSET;
     Offset      ICC_profile         = NULL_OFFSET;
@@ -609,7 +606,7 @@ protected:
 };
 struct IFE_EXPORT AttributesCreateInfo {
     Offset      attributesOffset    = NULL_OFFSET;
-    MetadataType format             = METADATA_UNDEFINED;
+    MetadataType type               = METADATA_UNDEFINED;
     uint32_t    version             = 0;
     Offset      sizes               = NULL_OFFSET;
     Offset      bytes               = NULL_OFFSET;
@@ -831,6 +828,7 @@ struct IFE_EXPORT IMAGE_ENTRY {
 };
 struct IFE_EXPORT IMAGE_ARRAY : DATA_BLOCK {
     friend METADATA;
+    using Images                    = Abstraction::AssociatedImages;
     using Labels                    = Metadata::ImageLabels;
     using BYTES_ARRAY               = std::vector<IMAGE_BYTES>;
     static constexpr
@@ -857,26 +855,20 @@ struct IFE_EXPORT IMAGE_ARRAY : DATA_BLOCK {
     Size        size                (BYTE* const __base) const;
     Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
-    Images      read_images         (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
+    Images      read_assoc_images   (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
 protected:
     explicit    IMAGE_ARRAY         () = delete;
     explicit    IMAGE_ARRAY         (Offset offset, Size file_size, uint32_t version) noexcept;
 };
 struct IFE_EXPORT AssociatedImageCreateInfo {
-    struct IFE_EXPORT ImageInfo {
-        using       Encoding        = ImageEncoding;
-        using       Orientation     = ImageOrientation;
-        Offset      offset          = NULL_OFFSET;
-        uint32_t    width           = 0;
-        uint32_t    height          = 0;
-        Encoding    encoding        = IMAGE_ENCODING_UNDEFINED;
-        Format      format          = FORMAT_UNDEFINED;
-        Orientation orientation     = ORIENTATION_0;
-    }; using ImageInfos             = std::vector<ImageInfo>;
+    struct IFE_EXPORT Entry {
+        Offset              offset  = NULL_OFFSET;
+        AssociatedImageInfo info;
+    }; using Entries                = std::vector<Entry>;
     
     Offset      offset              = NULL_OFFSET;
-    ImageInfos  images;
+    Entries     images;
 };
 Size SIZE_IMAGES_ARRAY              (AssociatedImageCreateInfo&);
 void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCreateInfo&);
@@ -908,7 +900,7 @@ struct IFE_EXPORT IMAGE_BYTES : DATA_BLOCK {
     Size        size                (BYTE* const __base) const;
     Result      validate_offset     (BYTE* const __base) const noexcept;
     Result      validate_full       (BYTE* const __base) const noexcept;
-    std::string read_image_bytes    (BYTE* const __base, Abstraction::Image&) const;
+    std::string read_image_bytes    (BYTE* const __base, Abstraction::AssociatedImage&) const;
     
 protected:
     explicit    IMAGE_BYTES         () = delete;
