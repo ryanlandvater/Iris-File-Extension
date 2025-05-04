@@ -183,7 +183,7 @@
              std::cout << "\t Associated image labels:\n";
              for (auto&& image : slide.metadata.associatedImages)
                  if (slide.images.contains(image)) {
-                     auto info = slide.images[image];
+                     auto info = slide.images[image].info;
                      std::cout << "\t\t" << image << ": \n"
                          << "\t\t\t" << info.width << "px x " << info.height << "px\n"
                          << "\t\t\tFormat:" << PARSE_IMAGE_ENCODING(info.encoding) << "\n";
