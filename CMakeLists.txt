@@ -103,7 +103,8 @@ target_include_directories (
 )
 target_compile_definitions (
     IrisFileExtensionLib
-    PRIVATE IRIS_EXPORT_API=true 
+    PRIVATE IRIS_EXPORT_API=true #Do not export Iris Core Fn-ality
+    PRIVATE IFE_EXPORT_API=true 
 )
 set_target_properties(
     IrisFileExtensionLib 
@@ -182,7 +183,7 @@ if(IFE_BUILD_EXAMPLES)
         ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include
     )  
     target_link_libraries(
-        slide_info_abstraction PRIVATE 
-        IrisFileExtensionStatic
+        slide_info_abstraction PUBLIC 
+        IrisFileExtension
     )
 endif(IFE_BUILD_EXAMPLES)
