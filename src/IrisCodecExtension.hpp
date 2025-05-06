@@ -55,13 +55,6 @@
 #ifndef IFE_EXPORT_API
 #define IFE_EXPORT_API      false
 #endif
-#if defined(_MSC_VER)
-#ifdef _EXPORTING
-   #define IFE_DECLSPEC    __declspec(dllexport)
-#else
-   #define IFE_DECLSPEC    __declspec(dllimport)
-#endif
-#endif
 #if IFE_EXPORT_API
     #ifndef IFE_EXPORT
     #if defined(_MSC_VER)
@@ -119,8 +112,8 @@ struct ANNOTATION_GROUP_BYTES;
 }
 // These are the light-weight RAM representaitons of the on-disk file:
 namespace Abstraction {
-struct File;
-struct FileMap;
+struct IFE_EXPORT File;
+struct IFE_EXPORT FileMap;
 }
 
 // MARK: - ENTRY METHODS
@@ -168,7 +161,7 @@ Abstraction::FileMap IFE_EXPORT generate_file_map (BYTE* const __mapped_file_ptr
 // representations of the on-disk information
 // such as critial offset locations and sizes
 // of larger image or vector payloads
-namespace IFE_EXPORT Abstraction {
+namespace Abstraction {
 /**
  * @brief Extracted file header information
  *
@@ -271,6 +264,10 @@ struct IFE_EXPORT Annotation {
     uint32_t    width       = 0;
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
+    // Eq Operator required by MSVC for DLL_EXPORT inclusion in unordered_map
+    bool operator == (const Annotation& a) const {
+        return memcmp(this, &a, sizeof(Annotation)) ? false : true;
+    }
 };
 struct IFE_EXPORT AnnotationGroup {
     Offset      offset      = NULL_OFFSET;
