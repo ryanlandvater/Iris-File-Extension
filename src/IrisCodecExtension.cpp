@@ -34,7 +34,6 @@
 // As a result, we will NOT use the singular
 // #include "IrisCodecPriv.hpp"
 // But instead include all required elements manually
-
 #include <bit> // NOTE: Bit requires compiling against C++20
 #include <memory>
 #include <math.h>
@@ -45,7 +44,10 @@
 #include "IrisBuffer.hpp"
 #include "IrisCodecTypes.hpp"
 #include "IrisCodecExtension.hpp"
-#ifdef _MSC_VER 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+#ifdef _MSC_VER
 static_assert(sizeof(short)     == 2);
 static_assert(sizeof(long)      == 4);
 static_assert(sizeof(long long) == 8);
@@ -112,25 +114,25 @@ inline float    F32_CONVERT_NON_IEEE (uint32_t val);
 inline uint32_t F32_CONVERT_NON_IEEE (float val);
 inline double   F64_CONVERT_NON_IEEE (uint64_t val);
 inline uint64_t F64_CONVERT_NON_IEEE (double val);
-inline uint8_t  LOAD_U8      (void* ptr){return *static_cast<uint8_t*>(ptr);}
-inline uint64_t __LE_LOAD_U64(void* ptr){return *static_cast<uint64_t*>(ptr);}
-inline uint64_t __BE_LOAD_U64(void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr));}
-inline uint64_t __LE_LOAD_U40(void* ptr){return *static_cast<uint64_t*>(ptr)&U40_MASK;}
-inline uint64_t __BE_LOAD_U40(void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr))&U40_MASK;}
-inline uint32_t __LE_LOAD_U32(void* ptr){return *static_cast<uint32_t*>(ptr);}
-inline uint32_t __BE_LOAD_U32(void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr));}
-inline uint32_t __LE_LOAD_U24(void* ptr){return *static_cast<uint32_t*>(ptr)&U24_MASK;}
-inline uint32_t __BE_LOAD_U24(void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr))&U40_MASK;}
-inline uint16_t __LE_LOAD_U16(void* ptr){return *static_cast<uint16_t*>(ptr);}
-inline uint16_t __BE_LOAD_U16(void* ptr){return __builtin_bswap16(__LE_LOAD_U16(ptr));}
-inline float __LE_LOAD_F32_IE3(void* ptr){return std::bit_cast<float>(__LE_LOAD_U32(ptr));}
-inline float __BE_LOAD_F32_IE3(void* ptr){return std::bit_cast<float>(__BE_LOAD_U32(ptr));}
-inline float __LE_LOAD_F32_NON(void* ptr){return F32_CONVERT_NON_IEEE(__LE_LOAD_U32(ptr));}
-inline float __BE_LOAD_F32_NON(void* ptr){return F32_CONVERT_NON_IEEE(__BE_LOAD_U32(ptr));}
-inline double __LE_LOAD_F64_IE3(void* ptr){return std::bit_cast<double>(__LE_LOAD_U64(ptr));}
-inline double __BE_LOAD_F64_IE3(void* ptr){return std::bit_cast<double>(__BE_LOAD_U64(ptr));}
-inline double __LE_LOAD_F64_NON(void* ptr){return F64_CONVERT_NON_IEEE(__LE_LOAD_U64(ptr));}
-inline double __BE_LOAD_F64_NON(void* ptr){return F64_CONVERT_NON_IEEE(__BE_LOAD_U64(ptr));}
+inline uint8_t  LOAD_U8      (const void* ptr){return *static_cast<const uint8_t*>(ptr);}
+inline uint64_t __LE_LOAD_U64(const void* ptr){return *static_cast<const uint64_t*>(ptr);}
+inline uint64_t __BE_LOAD_U64(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr));}
+inline uint64_t __LE_LOAD_U40(const void* ptr){return *static_cast<const uint64_t*>(ptr)&U40_MASK;}
+inline uint64_t __BE_LOAD_U40(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr))&U40_MASK;}
+inline uint32_t __LE_LOAD_U32(const void* ptr){return *static_cast<const uint32_t*>(ptr);}
+inline uint32_t __BE_LOAD_U32(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr));}
+inline uint32_t __LE_LOAD_U24(const void* ptr){return *static_cast<const uint32_t*>(ptr)&U24_MASK;}
+inline uint32_t __BE_LOAD_U24(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr))&U40_MASK;}
+inline uint16_t __LE_LOAD_U16(const void* ptr){return *static_cast<const uint16_t*>(ptr);}
+inline uint16_t __BE_LOAD_U16(const void* ptr){return __builtin_bswap16(__LE_LOAD_U16(ptr));}
+inline float __LE_LOAD_F32_IE3(const void* ptr){return std::bit_cast<float>(__LE_LOAD_U32(ptr));}
+inline float __BE_LOAD_F32_IE3(const void* ptr){return std::bit_cast<float>(__BE_LOAD_U32(ptr));}
+inline float __LE_LOAD_F32_NON(const void* ptr){return F32_CONVERT_NON_IEEE(__LE_LOAD_U32(ptr));}
+inline float __BE_LOAD_F32_NON(const void* ptr){return F32_CONVERT_NON_IEEE(__BE_LOAD_U32(ptr));}
+inline double __LE_LOAD_F64_IE3(const void* ptr){return std::bit_cast<double>(__LE_LOAD_U64(ptr));}
+inline double __BE_LOAD_F64_IE3(const void* ptr){return std::bit_cast<double>(__BE_LOAD_U64(ptr));}
+inline double __LE_LOAD_F64_NON(const void* ptr){return F64_CONVERT_NON_IEEE(__LE_LOAD_U64(ptr));}
+inline double __BE_LOAD_F64_NON(const void* ptr){return F64_CONVERT_NON_IEEE(__BE_LOAD_U64(ptr));}
 inline void __LE_STORE_U64(void* ptr, uint64_t v){*static_cast<uint64_t*>(ptr)=v;}
 inline void __BE_STORE_U64(void* ptr, uint64_t v){*static_cast<uint64_t*>(ptr)=__builtin_bswap64(v);}
 inline void __LE_STORE_U40(void* ptr, uint64_t v){memcpy(ptr, &v, 5);}
@@ -149,22 +151,22 @@ inline void __LE_STORE_F64_IE3(void*ptr,double v){__LE_STORE_U64(ptr, std::bit_c
 inline void __BE_STORE_F64_IE3(void*ptr,double v){__BE_STORE_U64(ptr, std::bit_cast<uint64_t>(v));}
 inline void __LE_STORE_F64_NON(void*ptr,double v){__LE_STORE_U64(ptr, F64_CONVERT_NON_IEEE(v));}
 inline void __BE_STORE_F64_NON(void*ptr,double v){__BE_STORE_U64(ptr, F64_CONVERT_NON_IEEE(v));}
-static std::function<float(void*)>         __LE_LOAD_F32   = is_ieee754    ? __LE_LOAD_F32_IE3  : __LE_LOAD_F32_NON;
-static std::function<float(void*)>         __BE_LOAD_F32   = is_ieee754    ? __BE_LOAD_F32_IE3  : __BE_LOAD_F32_NON;
-static std::function<void(void*,float)>    __LE_STORE_F32  = is_ieee754    ? __LE_STORE_F32_IE3 : __LE_STORE_F32_NON;
-static std::function<void(void*,float)>    __BE_STORE_F32  = is_ieee754    ? __BE_STORE_F32_IE3 : __BE_STORE_F32_NON;
-static std::function<uint64_t(void*)>      LOAD_U64        = little_endian ? __LE_LOAD_U64  : __BE_LOAD_U64;
-static std::function<uint64_t(void*)>      LOAD_U40        = little_endian ? __LE_LOAD_U40  : __BE_LOAD_U40;
-static std::function<uint32_t(void*)>      LOAD_U32        = little_endian ? __LE_LOAD_U32  : __BE_LOAD_U32;
-static std::function<uint32_t(void*)>      LOAD_U24        = little_endian ? __LE_LOAD_U24  : __BE_LOAD_U24;
-static std::function<uint16_t(void*)>      LOAD_U16        = little_endian ? __LE_LOAD_U16  : __BE_LOAD_U16;
-static std::function<float(void*)>         LOAD_F32        = little_endian ? __LE_LOAD_F32  : __BE_LOAD_F32;
-static std::function<void(void*,uint64_t)> STORE_U64       = little_endian ? __LE_STORE_U64 : __BE_STORE_U64;
-static std::function<void(void*,uint64_t)> STORE_U40       = little_endian ? __LE_STORE_U40 : __BE_STORE_U40;
-static std::function<void(void*,uint32_t)> STORE_U32       = little_endian ? __LE_STORE_U32 : __BE_STORE_U32;
-static std::function<void(void*,uint32_t)> STORE_U24       = little_endian ? __LE_STORE_U24 : __BE_STORE_U24;
-static std::function<void(void*,uint16_t)> STORE_U16       = little_endian ? __LE_STORE_U16 : __BE_STORE_U16;
-static std::function<void(void*,float)>    STORE_F32       = little_endian ? __LE_STORE_F32 : __BE_STORE_F32;
+static std::function<float(const void*)>    __LE_LOAD_F32   = is_ieee754    ? __LE_LOAD_F32_IE3  : __LE_LOAD_F32_NON;
+static std::function<float(const void*)>    __BE_LOAD_F32   = is_ieee754    ? __BE_LOAD_F32_IE3  : __BE_LOAD_F32_NON;
+static std::function<void(void*,float)>     __LE_STORE_F32  = is_ieee754    ? __LE_STORE_F32_IE3 : __LE_STORE_F32_NON;
+static std::function<void(void*,float)>     __BE_STORE_F32  = is_ieee754    ? __BE_STORE_F32_IE3 : __BE_STORE_F32_NON;
+static std::function<uint64_t(const void*)> LOAD_U64        = little_endian ? __LE_LOAD_U64  : __BE_LOAD_U64;
+static std::function<uint64_t(const void*)> LOAD_U40        = little_endian ? __LE_LOAD_U40  : __BE_LOAD_U40;
+static std::function<uint32_t(const void*)> LOAD_U32        = little_endian ? __LE_LOAD_U32  : __BE_LOAD_U32;
+static std::function<uint32_t(const void*)> LOAD_U24        = little_endian ? __LE_LOAD_U24  : __BE_LOAD_U24;
+static std::function<uint16_t(const void*)> LOAD_U16        = little_endian ? __LE_LOAD_U16  : __BE_LOAD_U16;
+static std::function<float(const void*)>    LOAD_F32        = little_endian ? __LE_LOAD_F32  : __BE_LOAD_F32;
+static std::function<void(void*,uint64_t)>  STORE_U64       = little_endian ? __LE_STORE_U64 : __BE_STORE_U64;
+static std::function<void(void*,uint64_t)>  STORE_U40       = little_endian ? __LE_STORE_U40 : __BE_STORE_U40;
+static std::function<void(void*,uint32_t)>  STORE_U32       = little_endian ? __LE_STORE_U32 : __BE_STORE_U32;
+static std::function<void(void*,uint32_t)>  STORE_U24       = little_endian ? __LE_STORE_U24 : __BE_STORE_U24;
+static std::function<void(void*,uint16_t)>  STORE_U16       = little_endian ? __LE_STORE_U16 : __BE_STORE_U16;
+static std::function<void(void*,float)>     STORE_F32       = little_endian ? __LE_STORE_F32 : __BE_STORE_F32;
 // Convenience functions that will convert from a serialized 16-bit IEEE 754-2008 half-float
 // to whatever internal representation of half precision the system uses
 inline _Float16 F16_CONVERT_NON_IEEE (uint16_t val)
@@ -260,6 +262,8 @@ inline std::string to_hex_string(uint32_t _i)
 }
 namespace IrisCodec {
 constexpr uint32_t IFE_VERSION = IRIS_EXTENSION_MAJOR<<16|IRIS_EXTENSION_MINOR;
+
+#ifndef __EMSCRIPTEN__
 bool is_Iris_Codec_file (BYTE* const __base, size_t __size)
 {
     using namespace Serialization;
@@ -290,8 +294,8 @@ Abstraction::File  abstract_file_structure (BYTE* const __base, size_t __size) {
     using namespace Abstraction;
 
     Abstraction::File abstraction;
+    Iris::Result result;
     auto FILE_HEADER        = Serialization::FILE_HEADER(__size);
-    FILE_HEADER.validate_header                         (__base);
     
     abstraction.header      = FILE_HEADER.read_header   (__base);
     auto TILE_TABLE         = FILE_HEADER.get_tile_table(__base);
@@ -451,6 +455,209 @@ Abstraction::FileMap  generate_file_map (BYTE* const __base, size_t __size) {
     
     return map;
 }
+#elif /* WEB ASSEMBLY */ defined __EMSCRIPTEN__
+constexpr size_t __ptr_size = sizeof(char*);
+struct __Response {
+    const size_t len;
+    const BYTE* const data;
+    explicit __Response (const char* url, const char* src, size_t bytes) :
+    len (__ptr_size+bytes),
+    data([url,src,bytes]()->BYTE*{
+        auto data = (BYTE*)malloc(__ptr_size+bytes);
+        if (!data) throw std::runtime_error
+            ("Failed to allocate memory for data block response");
+        memcpy(data, &url, __ptr_size);
+        memcpy(data + __ptr_size, src, bytes);
+        return data;
+    }()){}
+    ~__Response() {
+        if (data) free (const_cast<BYTE*>(data));
+    }
+    const char* url () const {
+        return *reinterpret_cast<const char * const *>(data);
+    }
+};
+inline const char* REINTERPRET_ARRAY_START (const BYTE* const array_ptr)
+{
+    return *reinterpret_cast<const char* const *>(array_ptr);
+}
+/**
+ * @brief Asynchronously fetches a byte range from a URL using JavaScript's fetch API,
+ * but appears synchronous to the C++ code due to Asyncify.
+ *
+ * This function uses EM_ASYNC_JS to bridge the C++ and JavaScript environments. It
+ * performs a network fetch request for a specific byte range of a file. The function
+ * then copies the fetched data into a newly allocated block of memory on the
+ * WebAssembly heap and returns a pointer to this memory.
+ *
+ * The C++ execution is paused (yielding control to the JavaScript event loop) until
+ * the fetch operation completes.
+ *
+ * @param url_ptr A pointer to a C-style string containing the URL of the file to fetch.
+ * @param range_header_ptr A pointer to a C-style string with the "Range" header
+ * (e.g., "bytes=1000-1023") to specify the iris datablock byte segment to fetch.
+ * @param data_size_ptr A pointer to an integer where the size of the fetched data
+ * (in bytes) will be stored.
+ * @param status_ptr A pointer to an integer where the HTTP status code of the
+ * response (e.g., 200 for OK, 206 for Partial Content) will be stored.
+ * @return A pointer to the newly allocated WebAssembly memory block containing the
+ * fetched data. Returns a null pointer (0) on failure. The caller is
+ * responsible for freeing this memory with `free()` when it's no longer
+ * needed.
+ */
+EM_ASYNC_JS (int, fetch_data_async,
+(const char* url_ptr, const char* range_header_ptr, int* data_size_ptr, int* status_ptr), {
+  const url_js = UTF8ToString(url_ptr);
+  const range_header_js = UTF8ToString(range_header_ptr);
+
+  const request = new Request(url_js, {
+    headers: {'Range': range_header_js}
+  });
+
+  try {
+    const response = await fetch(request);
+
+    // Write the HTTP status code back to the C++ pointer
+    HEAP32[status_ptr >> 2] = response.status;
+
+    // If the response is not ok, handle the error and return
+    if (!response.ok) {
+        HEAP32[data_size_ptr >> 2] = 0;
+        return 0;
+    }
+
+    const buffer = await response.arrayBuffer();
+    const dataSize = buffer.byteLength;
+    const dataPtr = _malloc(dataSize);
+
+    HEAPU8.set(new Uint8Array(buffer), dataPtr);
+
+    // Write the data size back to the C++ pointer
+    HEAP32[data_size_ptr >> 2] = dataSize;
+
+    return dataPtr;
+  } catch (error) {
+    // Handle network errors
+    console.error("Fetch failed:", error);
+    HEAP32[data_size_ptr >> 2] = 0;
+    HEAP32[status_ptr >> 2] = 0; // Use a distinct status for network errors
+    return 0;
+  }
+});
+inline Response FETCH_DATABLOCK (const char* __url, size_t start, size_t len)
+{
+    std::string range_header = "bytes="
+    + std::to_string(start) + "-"
+    + std::to_string(start+len-1);
+    
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+    // EXTERNAL JAVASCRIPT CODE (SEE EM_ASYNC_JS ABOVE)
+    // Execution is paused (yielding control to the JavaScript event loop)
+    // until the fetch operation completes.
+    int data_size = 0;
+    int status_code = 0;
+    char* payload = reinterpret_cast<char*>
+    (fetch_data_async(__url, range_header.c_str(), &data_size, &status_code));
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~//
+    
+    Response response = nullptr;
+    if (payload && status_code == 206) {
+        response = std::make_shared<__Response>
+        (__url, payload, data_size);
+    } else {
+        std::cerr   << "[Error] Failed to fetch datablock "
+                    << "(HTTP status "<< status_code << ")\n";
+    }
+    if (payload) free (payload);
+    return response;
+}
+bool is_Iris_Codec_file (const std::string url, size_t __size)
+{
+    using namespace Serialization;
+    
+    auto response = FETCH_DATABLOCK(url.c_str(), 0, FILE_HEADER::HEADER_SIZE);
+    
+    // There's a great chance that if these pass, it's an Iris file.
+    if (!response) return false;
+    auto __data = response->data + __ptr_size;
+    if (LOAD_U32(__data + FILE_HEADER::MAGIC_BYTES_OFFSET) != MAGIC_BYTES) return false;
+    if (LOAD_U16(__data + FILE_HEADER::RECOVERY) != RECOVER_HEADER) return false;
+    return true;
+}
+Result validate_file_structure(const std::string url, size_t __size) noexcept
+{
+    using namespace Serialization;
+    Result result;
+    
+    auto response = FETCH_DATABLOCK(url.c_str(), 0, FILE_HEADER::HEADER_SIZE);
+    if (!response) return Result
+        (IRIS_FAILURE,
+         "Failed to fetch Iris file header from remote endpoint ("+url+")");
+    const BYTE* __base = response->data;
+    
+    auto __FILE_HEADER  = Serialization::FILE_HEADER    (__size);
+    result = __FILE_HEADER.validate_full                (__base);
+    if (result != IRIS_SUCCESS) return result;
+
+    auto TILE_TABLE = __FILE_HEADER.get_tile_table      (__base);
+    result = TILE_TABLE.validate_full                   (__base);
+    if (result != IRIS_SUCCESS) return result;
+
+    auto METADATA   = __FILE_HEADER.get_metadata        (__base);
+    result = METADATA.validate_full                     (__base);
+    if (result != IRIS_SUCCESS) return result;
+
+    return IRIS_SUCCESS;
+}
+Abstraction::File  abstract_file_structure (const std::string url, size_t __size) {
+    using namespace Abstraction;
+    using namespace Serialization;
+    
+    Abstraction::File abstraction;
+    Iris::Result result;
+    
+    auto response = FETCH_DATABLOCK(url.c_str(), 0, FILE_HEADER::HEADER_SIZE);
+    if (!response) throw std::runtime_error
+        ("Failed to fetch Iris file header from remote endpoint ("+url+")");
+    const BYTE* __base = response->data;
+    
+    auto FILE_HEADER        = Serialization::FILE_HEADER(__size);
+    abstraction.header      = FILE_HEADER.read_header   (__base);
+    auto TILE_TABLE         = FILE_HEADER.get_tile_table(__base);
+    abstraction.tileTable   = TILE_TABLE.read_tile_table(__base);
+    auto METADATA           = FILE_HEADER.get_metadata  (__base);
+    abstraction.metadata    = METADATA.read_metadata    (__base);
+
+    auto& metadata          = abstraction.metadata;
+    if (METADATA.attributes                             (__base))
+    {
+        auto ATTRIBUES      = METADATA.get_attributes   (__base);
+        metadata.attributes = ATTRIBUES.read_attributes (__base);
+    }
+    if (METADATA.image_array                            (__base))
+    {
+        auto IMAGES         = METADATA.get_image_array  (__base);
+        abstraction.images  = IMAGES.read_assoc_images  (__base);
+        for (auto&& image : abstraction.images)
+            metadata.associatedImages.insert(image.first);
+    }
+    if (METADATA.color_profile                          (__base))
+    {
+        auto ICC_PROFILE    = METADATA.get_color_profile(__base);
+        metadata.ICC_profile= ICC_PROFILE.read_profile  (__base);
+    }
+    if (METADATA.annotations                            (__base))
+    {
+        auto ANNOTATIONS    = METADATA.get_annotations  (__base);
+        abstraction.annotations =
+        ANNOTATIONS.read_annotations                    (__base);
+        for (auto&& note : abstraction.annotations)
+            metadata.annotations.insert (note.first);
+    }
+    return abstraction;
+}
+#endif
 namespace Serialization {
 inline bool VALIDATE_ENCODING_TYPE (Encoding encoding, uint32_t __version) {
     switch (encoding) {
@@ -539,6 +746,7 @@ inline bool VALIDATE_ANNOTATION_TYPE (AnnotationTypes type, uint32_t __version)
     
 }
 // MARK: - DATA_BLOCK
+#ifndef __EMSCRIPTEN__
  DATA_BLOCK::DATA_BLOCK (Offset offset, Size file_size, uint32_t IFE_version) :
 __offset    (offset),
 __size      (file_size),
@@ -546,20 +754,37 @@ __version   (IFE_version)
 {
     
 }
+#elif defined __EMSCRIPTEN__
+DATA_BLOCK::DATA_BLOCK (Offset offset, Size file_size, uint32_t IFE_version) :
+__remote    (offset),
+__size      (file_size),
+__version   (IFE_version)
+{
+    
+}
+#endif
  DATA_BLOCK::operator bool() const
 {
     return __offset != NULL_OFFSET && __offset < __size;
 }
-Result  DATA_BLOCK::validate_offset (BYTE *const __base, const char* __type, enum RECOVERY __recovery) const noexcept
+Result  DATA_BLOCK::validate_offset (const BYTE *const __base, const char* __type, enum RECOVERY __recovery) const noexcept
 {
     const auto _type = std::string(__type);
     if (!*this) return Result
         (IRIS_VALIDATION_FAILURE, "Invalid "+_type+" object. The "+_type+" was not created with a valid offset value.");
+#ifndef __EMSCRIPTEN__
     if (LOAD_U64 (__base + __offset + VALIDATION) != __offset) return Result
         (IRIS_VALIDATION_FAILURE, _type+" failed offset validation. The VALIDATION value (" +
          std::to_string(LOAD_U64 (__base + __offset + VALIDATION)) +
          ") is not the offset location ("+
          std::to_string(__offset)+")");
+#elif defined __EMSCRIPTEN__
+    if (LOAD_U64(__base + __offset + VALIDATION) != __remote) return Result
+        (IRIS_VALIDATION_FAILURE, _type+" failed offset validation. The VALIDATION value (" +
+         std::to_string(LOAD_U64 (__base + __offset + VALIDATION)) +
+         ") is not the offset location ("+
+         std::to_string(__remote)+")");
+#endif
     if (LOAD_U16 (__base + __offset + RECOVERY) != __recovery) return Result
         (IRIS_VALIDATION_FAILURE, "RECOVER_"+_type+" ("+
          to_hex_string(__recovery)+
@@ -574,11 +799,14 @@ DATA_BLOCK (HEADER_OFFSET, __file_size, UINT32_MAX)
 {
     
 }
-Size FILE_HEADER::size(BYTE *const __base) const
+Size FILE_HEADER::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     validate_header(__base);
-    uint32_t version =  LOAD_U16(__base + EXTENSION_MAJOR) << 16 |
-                        LOAD_U16(__base + EXTENSION_MINOR);
+    uint32_t version =  LOAD_U16(__base + __offset + EXTENSION_MAJOR) << 16 |
+                        LOAD_U16(__base + __offset + EXTENSION_MINOR);
     Size size = HEADER_V1_0_SIZE;
     if (version > IRIS_EXTENSION_1_0); else return size;
     
@@ -588,19 +816,22 @@ Size FILE_HEADER::size(BYTE *const __base) const
     
     return size;
 }
-Result FILE_HEADER::validate_header(BYTE* __base) const
+Result FILE_HEADER::validate_header(const BYTE* __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     if (!*this) return Result
         (IRIS_VALIDATION_FAILURE,"Invalid file header size. The header must be created with the OS returned file size.");
-    if (LOAD_U32(__base + MAGIC_BYTES_OFFSET) != MAGIC_BYTES) return Result
+    if (LOAD_U32(__base + __offset + MAGIC_BYTES_OFFSET) != MAGIC_BYTES) return Result
         (IRIS_FAILURE,"Iris File Magic Number failed validation");
-    if (LOAD_U16(__base + RECOVERY) != RECOVER_HEADER) return Result
+    if (LOAD_U16(__base + __offset + RECOVERY) != RECOVER_HEADER) return Result
         (IRIS_VALIDATION_FAILURE,"RECOVER_HEADER ("+
          std::to_string(RECOVER_HEADER)+
          ") tag failed validation. The tag value is ("+
          std::to_string(LOAD_U16 (__base + RECOVERY))+")");
     
-    size_t size = LOAD_U64(__base + FILE_SIZE);
+    size_t size = LOAD_U64(__base + __offset + FILE_SIZE);
     if (size != __size) return Result
         (IRIS_VALIDATION_FAILURE,"The internally stored Iris file size (" +
          std::to_string(size) +
@@ -609,8 +840,8 @@ Result FILE_HEADER::validate_header(BYTE* __base) const
          " bytes). This failure requires file recovery.");
     
     Result result;
-    uint16_t major = LOAD_U32(__base + EXTENSION_MAJOR);
-    uint16_t minor = LOAD_U32(__base + EXTENSION_MINOR);
+    uint16_t major = LOAD_U32(__base + __offset + EXTENSION_MAJOR);
+    uint16_t minor = LOAD_U32(__base + __offset + EXTENSION_MINOR);
     if (major > IRIS_EXTENSION_MAJOR || minor > IRIS_EXTENSION_MINOR) {
         result.flag = (ResultFlag) (result.flag | IRIS_WARNING_VALIDATION);
         result.message = "This Iris Extension Version ("+
@@ -627,23 +858,26 @@ Result FILE_HEADER::validate_header(BYTE* __base) const
     
     return IRIS_SUCCESS;
 }
-Result FILE_HEADER::validate_full (BYTE *const __base) const noexcept
+Result FILE_HEADER::validate_full (const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result = validate_header (__base);
     if (result & IRIS_FAILURE) return result;
     else if (result & IRIS_WARNING) printf
         ("Tile table validation WARNING: %s", result.message.c_str());
     
-    uint32_t version =  LOAD_U16(__base + EXTENSION_MAJOR) << 16 |
-                        LOAD_U16(__base + EXTENSION_MINOR);
+    uint32_t version =  LOAD_U16(__base + __offset + EXTENSION_MAJOR) << 16 |
+                        LOAD_U16(__base + __offset + EXTENSION_MINOR);
     
     Offset offset;
-    offset = LOAD_U64(__base + TILE_TABLE_OFFSET);
+    offset = LOAD_U64(__base + __offset + TILE_TABLE_OFFSET);
     auto __TILE_TABLE = TILE_TABLE(offset, __size, version);
     result = __TILE_TABLE.validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
-    offset = offset = LOAD_U64(__base + METADATA_OFFSET);
+    offset = LOAD_U64(__base + __offset + METADATA_OFFSET);
     auto __METADATA = METADATA(offset, __size, version);
     result = __METADATA.validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
@@ -656,17 +890,20 @@ Result FILE_HEADER::validate_full (BYTE *const __base) const noexcept
     
     return result;
 }
-Header FILE_HEADER::read_header(BYTE *const __base) const
+Header FILE_HEADER::read_header(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     Header header;
     Result result = validate_header(__base);
     if (result & IRIS_FAILURE)
         throw std::runtime_error(result.message);
     
-    header.fileSize     = LOAD_U64(__base + FILE_HEADER::FILE_SIZE);
-    header.extVersion   = LOAD_U16(__base + EXTENSION_MAJOR) << 16 |
-                          LOAD_U16(__base + EXTENSION_MINOR);
-    header.revision     = LOAD_U32(__base + FILE_REVISION);
+    header.fileSize     = LOAD_U64(__base + __offset + FILE_HEADER::FILE_SIZE);
+    header.extVersion   = LOAD_U16(__base + __offset + EXTENSION_MAJOR) << 16 |
+                          LOAD_U16(__base + __offset + EXTENSION_MINOR);
+    header.revision     = LOAD_U32(__base + __offset + FILE_REVISION);
     if (header.extVersion > IRIS_EXTENSION_1_0); else return header;
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
@@ -675,13 +912,16 @@ Header FILE_HEADER::read_header(BYTE *const __base) const
     
     return header;
 }
-TILE_TABLE FILE_HEADER::get_tile_table (BYTE* const __base) const
+TILE_TABLE FILE_HEADER::get_tile_table (const BYTE* const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto header       = read_header(__base);
     if (header.extVersion == 0) throw std::runtime_error
         ("Failed to retrieve tile table. Invalid file header");
     const auto __TILE_TABLE = TILE_TABLE
-    (LOAD_U64(__base + TILE_TABLE_OFFSET), __size, header.extVersion);
+    (LOAD_U64(__base + __offset + TILE_TABLE_OFFSET), __size, header.extVersion);
     
     const auto result = __TILE_TABLE.validate_offset(__base);
     if (result & IRIS_FAILURE) throw std::runtime_error
@@ -691,13 +931,16 @@ TILE_TABLE FILE_HEADER::get_tile_table (BYTE* const __base) const
     
     return __TILE_TABLE;
 }
-METADATA FILE_HEADER::get_metadata (BYTE *const __base) const
+METADATA FILE_HEADER::get_metadata (const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<FILE_HEADER&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto header       = read_header(__base);
     if (header.extVersion == 0) throw std::runtime_error
         ("Failed to retrieve clinical metadata. Invalid file header");
     const auto __METADATA   = METADATA
-    (LOAD_U64(__base + METADATA_OFFSET), __size, header.extVersion);
+    (LOAD_U64(__base + __offset + METADATA_OFFSET), __size, header.extVersion);
     
     const auto result = __METADATA.validate_offset(__base);
     if (result & IRIS_FAILURE) throw std::runtime_error
@@ -707,6 +950,16 @@ METADATA FILE_HEADER::get_metadata (BYTE *const __base) const
     
     return __METADATA;
 }
+#ifdef __EMSCRIPTEN__
+void FILE_HEADER::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote,HEADER_SIZE);
+        __offset        = __ptr_size;
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 void STORE_FILE_HEADER (BYTE *const __base, const HeaderCreateInfo &__CI)
 {
     if (!__CI.fileSize) throw std::runtime_error
@@ -743,6 +996,7 @@ void STORE_FILE_HEADER (BYTE *const __base, const HeaderCreateInfo &__CI)
     STORE_U64   (__base + FILE_HEADER::TILE_TABLE_OFFSET,   __CI.tileTableOffset);
     STORE_U64   (__base + FILE_HEADER::METADATA_OFFSET,     __CI.metadataOffset);
 }
+#endif
 
 // MARK: - TILE TABLE
 TILE_TABLE::TILE_TABLE (Offset __TileTable_Offset, Size file_size, uint32_t version) noexcept :
@@ -761,11 +1015,17 @@ Size TILE_TABLE::size() const
     
     return size;
 }
-Result TILE_TABLE::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result TILE_TABLE::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_TABLE&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result TILE_TABLE::validate_full(BYTE *const __base) const noexcept
+Result TILE_TABLE::validate_full(const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_TABLE&>(*this).check_and_fetch_remote(__base);
+#endif
     Result result = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     else if (result & IRIS_WARNING) printf
@@ -794,8 +1054,11 @@ Result TILE_TABLE::validate_full(BYTE *const __base) const noexcept
     
     return IRIS_SUCCESS;
 }
-TileTable TILE_TABLE::read_tile_table(BYTE *const __base) const
+TileTable TILE_TABLE::read_tile_table(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_TABLE&>(*this).check_and_fetch_remote(__base);
+#endif
     TileTable tile_table;
     
     const auto  __ptr           = __base + __offset;
@@ -833,8 +1096,11 @@ TileTable TILE_TABLE::read_tile_table(BYTE *const __base) const
     
     return tile_table;
 }
-TILE_OFFSETS TILE_TABLE::get_tile_offsets(BYTE *const __base) const
+TILE_OFFSETS TILE_TABLE::get_tile_offsets(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_TABLE&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __TILE_OFFSETS = TILE_OFFSETS
     (LOAD_U64(__base + __offset + TILE_OFFSETS_OFFSET), __size, __version);
     
@@ -846,8 +1112,11 @@ TILE_OFFSETS TILE_TABLE::get_tile_offsets(BYTE *const __base) const
     
     return __TILE_OFFSETS;
 }
-LAYER_EXTENTS TILE_TABLE::get_layer_extents(BYTE *const __base) const
+LAYER_EXTENTS TILE_TABLE::get_layer_extents(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_TABLE&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __LAYER_EXTENTS = LAYER_EXTENTS
     (LOAD_U64(__base + __offset + LAYER_EXTENTS_OFFSET), __size, __version);
     
@@ -859,6 +1128,16 @@ LAYER_EXTENTS TILE_TABLE::get_layer_extents(BYTE *const __base) const
     
     return __LAYER_EXTENTS;
 }
+#ifdef __EMSCRIPTEN__
+void TILE_TABLE::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
 {
     if (__CI.tileTableOffset == NULL_OFFSET) throw std::runtime_error
@@ -906,6 +1185,7 @@ void STORE_TILE_TABLE (BYTE *const __base, const TileTableCreateInfo &__CI)
     STORE_U32   (__ptr + TILE_TABLE::Y_EXTENT,              __CI.heightPixels);
     
 }
+#endif
 // MARK: - METADATA
 METADATA::METADATA  (Offset __metadata_offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(__metadata_offset, file_size, version)
@@ -923,11 +1203,17 @@ Size METADATA::size() const
     
     return size;
 }
-Result METADATA::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result METADATA::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result METADATA::validate_full(BYTE *const __base) const noexcept
+Result METADATA::validate_full(const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -968,8 +1254,11 @@ Result METADATA::validate_full(BYTE *const __base) const noexcept
     
     return result;
 }
-Metadata METADATA::read_metadata (BYTE *const __base) const
+Metadata METADATA::read_metadata (const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     Metadata metadata;
     // Validate the offset of this metadata object
     // Return a blank metadata block on failure
@@ -991,12 +1280,18 @@ Metadata METADATA::read_metadata (BYTE *const __base) const
     
     return metadata;
 }
-bool METADATA::attributes(BYTE *const __base) const {
+bool METADATA::attributes(const BYTE *const __base) const {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto offset = LOAD_U64(__base + __offset + ATTRIBUTES_OFFSET);
     return offset != NULL_OFFSET && offset < __size;
 }
-ATTRIBUTES METADATA::get_attributes(BYTE *const __base) const
+ATTRIBUTES METADATA::get_attributes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __ATTRIBUTES = ATTRIBUTES
     (LOAD_U64(__base + __offset + ATTRIBUTES_OFFSET), __size, __version);
     
@@ -1008,12 +1303,18 @@ ATTRIBUTES METADATA::get_attributes(BYTE *const __base) const
     
     return __ATTRIBUTES;
 }
-bool METADATA::image_array(BYTE *const __base) const {
+bool METADATA::image_array(const BYTE *const __base) const {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto offset = LOAD_U64(__base + __offset + IMAGES_OFFSET);
     return offset != NULL_OFFSET && offset < __size;
 }
-IMAGE_ARRAY METADATA::get_image_array(BYTE *const __base) const
+IMAGE_ARRAY METADATA::get_image_array(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __IMAGES = IMAGE_ARRAY
     (LOAD_U64(__base + __offset + IMAGES_OFFSET), __size, __version);
     
@@ -1025,12 +1326,18 @@ IMAGE_ARRAY METADATA::get_image_array(BYTE *const __base) const
     
     return __IMAGES;
 }
-bool METADATA::color_profile(BYTE *const __base) const {
+bool METADATA::color_profile(const BYTE *const __base) const {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto offset = LOAD_U64(__base + __offset + ICC_COLOR_OFFSET);
     return offset != NULL_OFFSET && offset < __size;
 }
-ICC_PROFILE METADATA::get_color_profile(BYTE *const __base) const
+ICC_PROFILE METADATA::get_color_profile(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __ICC = ICC_PROFILE
     (LOAD_U64(__base + __offset + ICC_COLOR_OFFSET), __size, __version);
     
@@ -1042,13 +1349,19 @@ ICC_PROFILE METADATA::get_color_profile(BYTE *const __base) const
     
     return __ICC;
 }
-bool METADATA::annotations(BYTE *const __base) const
+bool METADATA::annotations(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto offset = LOAD_U64(__base + __offset + ANNOTATIONS_OFFSET);
     return offset != NULL_OFFSET && offset < __size;
 }
-ANNOTATIONS METADATA::get_annotations(BYTE *const __base) const
+ANNOTATIONS METADATA::get_annotations(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<METADATA&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __ANNOTATIONS = ANNOTATIONS
     (LOAD_U64(__base + __offset + ANNOTATIONS_OFFSET), __size, __version);
     
@@ -1060,6 +1373,16 @@ ANNOTATIONS METADATA::get_annotations(BYTE *const __base) const
     
     return __ANNOTATIONS;
 }
+#ifdef __EMSCRIPTEN__
+void METADATA::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 void STORE_METADATA (BYTE *const __base, const MetadataCreateInfo &__CI)
 {
     
@@ -1121,6 +1444,7 @@ void STORE_METADATA (BYTE *const __base, const MetadataCreateInfo &__CI)
     STORE_F32   (__ptr + METADATA::MICRONS_PIXEL,       __CI.micronsPerPixel);
     STORE_F32   (__ptr + METADATA::MAGNIFICATION,       __CI.magnification);
 }
+#endif
 
 // MARK: - ATTRIBUTES
 ATTRIBUTES::ATTRIBUTES  (Offset attributes, Size file_size, uint32_t version) noexcept :
@@ -1139,11 +1463,17 @@ Size ATTRIBUTES::size() const
     
     return size;
 }
-Result ATTRIBUTES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ATTRIBUTES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ATTRIBUTES::validate_full(BYTE *const __base) const noexcept
+Result ATTRIBUTES::validate_full(const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -1167,8 +1497,11 @@ Result ATTRIBUTES::validate_full(BYTE *const __base) const noexcept
     
     return result;
 }
-Attributes ATTRIBUTES::read_attributes(BYTE *const __base) const
+Attributes ATTRIBUTES::read_attributes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES&>(*this).check_and_fetch_remote(__base);
+#endif
     Attributes attributes;
     
     const auto  __ptr   = __base + __offset;
@@ -1194,8 +1527,11 @@ Attributes ATTRIBUTES::read_attributes(BYTE *const __base) const
     
     return attributes;
 }
-ATTRIBUTES_SIZES ATTRIBUTES::get_sizes(BYTE *const __base) const
+ATTRIBUTES_SIZES ATTRIBUTES::get_sizes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __ATTRIBUTES_SIZES = ATTRIBUTES_SIZES
     (LOAD_U64(__base + __offset + LENGTHS_OFFSET), __size, __version);
     
@@ -1203,8 +1539,11 @@ ATTRIBUTES_SIZES ATTRIBUTES::get_sizes(BYTE *const __base) const
     if (result & IRIS_FAILURE) throw std::runtime_error(result.message);
     return __ATTRIBUTES_SIZES;
 }
-ATTRIBUTES_BYTES ATTRIBUTES::get_bytes(BYTE *const __base) const
+ATTRIBUTES_BYTES ATTRIBUTES::get_bytes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __ATTRIBUTES_BYTES = ATTRIBUTES_BYTES
     (LOAD_U64(__base + __offset + BYTE_ARRAY_OFFSET), __size, __version);
     
@@ -1212,6 +1551,16 @@ ATTRIBUTES_BYTES ATTRIBUTES::get_bytes(BYTE *const __base) const
     if (result & IRIS_FAILURE) throw std::runtime_error(result.message);
     return __ATTRIBUTES_BYTES;
 }
+#ifdef __EMSCRIPTEN__
+void ATTRIBUTES::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 void STORE_ATTRIBUTES (BYTE *const __base, const AttributesCreateInfo &info)
 {
     if (info.attributesOffset == NULL_OFFSET) throw std::runtime_error
@@ -1249,6 +1598,7 @@ void STORE_ATTRIBUTES (BYTE *const __base, const AttributesCreateInfo &info)
     STORE_U64(__ptr + ATTRIBUTES::LENGTHS_OFFSET,       info.sizes);
     STORE_U64(__ptr + ATTRIBUTES::BYTE_ARRAY_OFFSET,    info.bytes);
 }
+#endif
 
 // MARK: - LAYER EXTENT
 LAYER_EXTENTS::LAYER_EXTENTS (Offset __TileTable_Offset, Size file_size, uint32_t version) noexcept :
@@ -1256,12 +1606,15 @@ DATA_BLOCK(__TileTable_Offset, file_size, version)
 {
     
 }
-Size LAYER_EXTENTS::size (BYTE *const __base) const
+Size LAYER_EXTENTS::size (const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<LAYER_EXTENTS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     auto STEP           = LOAD_U16(__ptr + ENTRY_SIZE);
     auto ENTRIES        = LOAD_U32(__ptr + ENTRY_NUMBER);
-    
+
     Size size = HEADER_V1_0_SIZE + ENTRIES*STEP;
     if (__version > IRIS_EXTENSION_1_0); else return size;
     
@@ -1271,11 +1624,17 @@ Size LAYER_EXTENTS::size (BYTE *const __base) const
     
     return size;
 }
-Result LAYER_EXTENTS::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result LAYER_EXTENTS::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<LAYER_EXTENTS&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result LAYER_EXTENTS::validate_full(BYTE *const __base) const noexcept
+Result LAYER_EXTENTS::validate_full(const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<LAYER_EXTENTS&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result != IRIS_SUCCESS) return result;
     
@@ -1298,7 +1657,7 @@ Result LAYER_EXTENTS::validate_full(BYTE *const __base) const noexcept
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array       = __base + start;
+    const BYTE* __array       = __base + start;
     float prior_scale   = 0.f;
     for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
         if (LOAD_U32(__array + LAYER_EXTENT::X_TILES) < 1) return Result
@@ -1317,8 +1676,11 @@ Result LAYER_EXTENTS::validate_full(BYTE *const __base) const noexcept
     }
     return IRIS_SUCCESS;
 }
-LayerExtents LAYER_EXTENTS::read_layer_extents(BYTE *const __base) const
+LayerExtents LAYER_EXTENTS::read_layer_extents(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<LAYER_EXTENTS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1338,7 +1700,7 @@ LayerExtents LAYER_EXTENTS::read_layer_extents(BYTE *const __base) const
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array       = __base + start;
+    const BYTE* __array       = __base + start;
     LayerExtents extents (ENTRIES);
     for (int LI = 0; LI < ENTRIES; ++LI, __array+=STEP) {
         auto& extent    = extents[LI];
@@ -1360,6 +1722,17 @@ LayerExtents LAYER_EXTENTS::read_layer_extents(BYTE *const __base) const
     
     return extents;
 }
+#ifdef __EMSCRIPTEN__
+void LAYER_EXTENTS::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url, __remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 inline Size STORE_EXTENT (BYTE* const __base, Offset offset, const LayerExtent &extent)
 {
     using __LE = LAYER_EXTENT;
@@ -1389,14 +1762,18 @@ void STORE_EXTENTS(BYTE *const __base, Offset offset, const LayerExtents &extent
         offset += LAYER_EXTENT::SIZE;
     }
 }
+#endif
 // MARK: - TILE OFFSETS
 TILE_OFFSETS::TILE_OFFSETS  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size TILE_OFFSETS::size(BYTE *const __base) const
+Size TILE_OFFSETS::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_OFFSETS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1410,11 +1787,18 @@ Size TILE_OFFSETS::size(BYTE *const __base) const
     
     return size;
 }
-Result TILE_OFFSETS::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result TILE_OFFSETS::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_OFFSETS&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result TILE_OFFSETS::validate_full (BYTE *const __base) const noexcept
-{    auto result    = validate_offset(__base);
+Result TILE_OFFSETS::validate_full (const BYTE *const __base) const noexcept
+{
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_OFFSETS&>(*this).check_and_fetch_remote(__base);
+#endif
+    auto result         = validate_offset(__base);
     if(result & IRIS_FAILURE) return result;
     
     const auto __ptr    = __base + __offset;
@@ -1436,7 +1820,7 @@ Result TILE_OFFSETS::validate_full (BYTE *const __base) const noexcept
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array = __base + start;
+    const BYTE* __array = __base + start;
     for (auto TI = 0; TI < ENTRIES; ++TI, __array+=STEP)
         if (LOAD_U40(__array + TILE_OFFSET::OFFSET) +
             LOAD_U24(__array + TILE_OFFSET::TILE_SIZE) > __size) return Result
@@ -1449,8 +1833,11 @@ Result TILE_OFFSETS::validate_full (BYTE *const __base) const noexcept
     
     return IRIS_SUCCESS;
 }
-void TILE_OFFSETS::read_tile_offsets(BYTE *const __base, TileTable& table) const
+void TILE_OFFSETS::read_tile_offsets(const BYTE *const __base, TileTable& table) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<TILE_OFFSETS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1479,7 +1866,7 @@ void TILE_OFFSETS::read_tile_offsets(BYTE *const __base, TileTable& table) const
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     table.layers = TileTable::Layers (table.extent.layers.size());
     for (int LI = 0; LI < table.layers.size(); ++LI) {
         auto& LE        = table.extent.layers[LI];
@@ -1510,8 +1897,17 @@ void TILE_OFFSETS::read_tile_offsets(BYTE *const __base, TileTable& table) const
     }
     return;
 }
-//TileTable::
-//Layers      read_tile_offsets   (BYTE* const __base, const LayerExtents&) const;
+#ifdef __EMSCRIPTEN__
+void TILE_OFFSETS::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url, __remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_TILE_OFFSETS (const TileTable::Layers &__offsets)
 {
     Size size = TILE_OFFSETS::HEADER_SIZE;
@@ -1538,6 +1934,7 @@ void STORE_TILE_OFFSETS (BYTE* const __base, Offset offset, const TileTable::Lay
             offset += TILE_OFFSET::SIZE;
         }
 }
+#endif
 
 // MARK: - ATTRIBUTES SIZES
 ATTRIBUTES_SIZES::ATTRIBUTES_SIZES  (Offset offset, Size file_size, uint32_t version) noexcept :
@@ -1545,11 +1942,35 @@ DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Result ATTRIBUTES_SIZES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
-}
-Result ATTRIBUTES_SIZES::validate_full(BYTE *const __base, Size& expected_bytes) const noexcept
+Size ATTRIBUTES_SIZES::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
+    const auto __ptr    = __base + __offset;
+    const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
+    const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
+    
+    Size size           = HEADER_V1_0_SIZE + ENTRIES*STEP;
+    if (__version > IRIS_EXTENSION_1_0); else return size;
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    // VERSION CONTROL: VERSION 2 VALIDATIONS ARE ADDED HERE
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
+    
+    return size;
+}
+Result ATTRIBUTES_SIZES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
+}
+Result ATTRIBUTES_SIZES::validate_full(const BYTE *const __base, Size& expected_bytes) const noexcept
+{
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if(result & IRIS_FAILURE) return result;
     
@@ -1571,7 +1992,7 @@ Result ATTRIBUTES_SIZES::validate_full(BYTE *const __base, Size& expected_bytes)
          std::to_string(start + ENTRIES * STEP)+
          " bytes) extends beyond the end of file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     expected_bytes  = 0;
     for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
         expected_bytes += LOAD_U16(__array + ATTRIBUTE_SIZE::KEY_SIZE);
@@ -1586,8 +2007,11 @@ Result ATTRIBUTES_SIZES::validate_full(BYTE *const __base, Size& expected_bytes)
     }
     return IRIS_SUCCESS;
 }
-ATTRIBUTES_SIZES::SizeArray ATTRIBUTES_SIZES::read_sizes(BYTE *const __base) const
+ATTRIBUTES_SIZES::SizeArray ATTRIBUTES_SIZES::read_sizes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1607,7 +2031,7 @@ ATTRIBUTES_SIZES::SizeArray ATTRIBUTES_SIZES::read_sizes(BYTE *const __base) con
          std::to_string(start + ENTRIES * STEP)+
          " bytes) extends beyond the end of file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     for (int EI = 0; EI < ENTRIES; ++EI, __array+=STEP) {
         sizes[EI] = {
             LOAD_U16(__array + ATTRIBUTE_SIZE::KEY_SIZE),
@@ -1623,6 +2047,17 @@ ATTRIBUTES_SIZES::SizeArray ATTRIBUTES_SIZES::read_sizes(BYTE *const __base) con
     }
     return sizes;
 }
+#ifdef __EMSCRIPTEN__
+void ATTRIBUTES_SIZES::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url, __remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_ATTRIBUTES_SIZES (const Attributes& attributes)
 {
     return ATTRIBUTES_SIZES::HEADER_SIZE +
@@ -1670,14 +2105,18 @@ void STORE_ATTRIBUTES_SIZES (BYTE* const __base, Offset offset, const Attributes
         __ptr += ATTRIBUTE_SIZE::SIZE;
     }
 }
+#endif
 // MARK: - ATTRIBUTES BYTES
 ATTRIBUTES_BYTES::ATTRIBUTES_BYTES  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size ATTRIBUTES_BYTES::size(BYTE *const __base) const
+Size ATTRIBUTES_BYTES::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -1690,11 +2129,17 @@ Size ATTRIBUTES_BYTES::size(BYTE *const __base) const
     
     return size;
 }
-Result ATTRIBUTES_BYTES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ATTRIBUTES_BYTES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ATTRIBUTES_BYTES::validate_full(BYTE *const __base, Size expected) const noexcept
+Result ATTRIBUTES_BYTES::validate_full(const BYTE *const __base, Size expected) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if(result & IRIS_FAILURE) return result;
     
@@ -1714,8 +2159,11 @@ Result ATTRIBUTES_BYTES::validate_full(BYTE *const __base, Size expected) const 
     
     return IRIS_SUCCESS;
 }
-void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, Attributes &attributes) const
+void ATTRIBUTES_BYTES::read_bytes(const BYTE *const __base, const SizeArray &sizes, Attributes &attributes) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ATTRIBUTES_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -1746,7 +2194,7 @@ void ATTRIBUTES_BYTES::read_bytes(BYTE *const __base, const SizeArray &sizes, At
          std::to_string(__size)+" bytes.");
     
     attributes.clear();
-    BYTE* __array = __base + start;
+    const BYTE* __array = __base + start;
     for (auto&& size : sizes) {
         Size total_bytes = size.first + size.second;
         attributes[std::string((char*)__array,size.first)] =
@@ -1763,9 +2211,20 @@ Size SIZE_ATTRIBUTES_BYTES (const Attributes& attributes)
         size += attribute.second.size();
     } return size;
 }
+#ifdef __EMSCRIPTEN__
+void ATTRIBUTES_BYTES::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url, __remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 void STORE_ATTRIBUTES_BYTES (BYTE* const __base, Offset offset, const Attributes& attributes)
 {
-#if IrisCodecExtensionValidateEncoding
+    #if IrisCodecExtensionValidateEncoding
     if (offset == NULL_OFFSET) throw std::runtime_error
         ("Failed to store attributes bytes -- NULL_OFFSET provided as location");
     
@@ -1775,7 +2234,7 @@ void STORE_ATTRIBUTES_BYTES (BYTE* const __base, Offset offset, const Attributes
         case METADATA_UNDEFINED:
             throw std::runtime_error("Failed to store attributes sizes -- undefined metadata attribute type");
     }
-#endif
+    #endif
     
     auto __ptr = __base + offset;
     Size size  = 0;
@@ -1801,15 +2260,18 @@ void STORE_ATTRIBUTES_BYTES (BYTE* const __base, Offset offset, const Attributes
          " bytes) exceeds key 32-bit size limit.\n Per the IFE specification Section 2.4.10, The number entry shall encode the total byte size of the annotation byte array and shall not exceed the 32-bit integer max value (4.29 GB).");
     STORE_U32(__base + offset + ATTRIBUTES_BYTES::ENTRY_NUMBER, U32_CAST(size));
 }
-
+#endif
 // MARK: - IMAGES_ARRAY
 IMAGE_ARRAY::IMAGE_ARRAY  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size IMAGE_ARRAY::size(BYTE *const __base) const
+Size IMAGE_ARRAY::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_ARRAY&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1823,11 +2285,17 @@ Size IMAGE_ARRAY::size(BYTE *const __base) const
     
     return size;
 }
-Result IMAGE_ARRAY::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result IMAGE_ARRAY::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_ARRAY&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result IMAGE_ARRAY::validate_full (BYTE *const __base) const noexcept
+Result IMAGE_ARRAY::validate_full (const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_ARRAY&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -1843,7 +2311,7 @@ Result IMAGE_ARRAY::validate_full (BYTE *const __base) const noexcept
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
     VALIDATE_IMAGES:
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
         
         auto __IMAGE_BYTES =
@@ -1871,8 +2339,11 @@ Result IMAGE_ARRAY::validate_full (BYTE *const __base) const noexcept
     }
     return result;
 }
-Abstraction::AssociatedImages IMAGE_ARRAY::read_assoc_images (BYTE *const __base, BYTES_ARRAY* __image_bytes) const
+Abstraction::AssociatedImages IMAGE_ARRAY::read_assoc_images (const BYTE *const __base, BYTES_ARRAY* __image_bytes) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_ARRAY&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -1895,7 +2366,7 @@ Abstraction::AssociatedImages IMAGE_ARRAY::read_assoc_images (BYTE *const __base
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     for (int II = 0; II < ENTRIES; ++II, __array+=STEP) {
         
         auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
@@ -1949,6 +2420,17 @@ Abstraction::AssociatedImages IMAGE_ARRAY::read_assoc_images (BYTE *const __base
     // Return the images
     return images;
 }
+#ifdef __EMSCRIPTEN__
+void IMAGE_ARRAY::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url, __remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_IMAGES_ARRAY (AssociatedImageCreateInfo& info)
 {
     return IMAGE_ARRAY::HEADER_SIZE +
@@ -2003,15 +2485,18 @@ void STORE_IMAGES_ARRAY (BYTE* const __base, const AssociatedImageCreateInfo& in
         __ptr += IMAGE_ENTRY::SIZE;
     }
 }
-
+#endif
 // MARK: - IMAGE_BYTES
 IMAGE_BYTES::IMAGE_BYTES  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size IMAGE_BYTES::size(BYTE *const __base) const
+Size IMAGE_BYTES::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto TITLE    = LOAD_U16(__ptr + TITLE_SIZE);
     const auto BYTES    = LOAD_U32(__ptr + IMAGE_SIZE);
@@ -2025,11 +2510,17 @@ Size IMAGE_BYTES::size(BYTE *const __base) const
     
     return size;
 }
-Result IMAGE_BYTES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result IMAGE_BYTES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result IMAGE_BYTES::validate_full (BYTE *const __base) const noexcept
+Result IMAGE_BYTES::validate_full (const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -2048,8 +2539,11 @@ Result IMAGE_BYTES::validate_full (BYTE *const __base) const noexcept
     
     return result;
 }
-std::string IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::AssociatedImage &image) const
+std::string IMAGE_BYTES::read_image_bytes(const BYTE *const __base, Abstraction::AssociatedImage &image) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<IMAGE_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto TITLE    = LOAD_U16(__ptr + TITLE_SIZE);
     image.byteSize      = LOAD_U32(__ptr + IMAGE_SIZE);
@@ -2062,7 +2556,7 @@ std::string IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::Assoc
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
     
     READ_BYTES:
-    BYTE* __bytes   = __base + start;
+    const BYTE* __bytes   = __base + start;
     auto title      = std::string((char*)__bytes, TITLE);
     image.offset    = start + TITLE;
     if (TITLE == 0 || TITLE > UINT16_MAX) throw std::runtime_error
@@ -2083,6 +2577,17 @@ std::string IMAGE_BYTES::read_image_bytes(BYTE *const __base, Abstraction::Assoc
     
     return title;
 }
+#ifdef __EMSCRIPTEN__
+void IMAGE_BYTES::check_and_fetch_remote(const BYTE *const &base)
+{
+if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_IMAGES_BYTES(const ImageBytesCreateInfo &image)
 {
     return IMAGE_BYTES::HEADER_SIZE +
@@ -2115,15 +2620,18 @@ void STORE_IMAGES_BYTES(BYTE *const __base, const ImageBytesCreateInfo& info)
     std::memcpy(__ptr, info.data, info.dataBytes);
     return;
 }
-
+#endif
 // MARK: - ICC COLOR PROFILE
 ICC_PROFILE::ICC_PROFILE (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size ICC_PROFILE::size(BYTE *const __base) const
+Size ICC_PROFILE::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ICC_PROFILE&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -2136,11 +2644,17 @@ Size ICC_PROFILE::size(BYTE *const __base) const
     
     return size;
 }
-Result ICC_PROFILE::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ICC_PROFILE::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ICC_PROFILE&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ICC_PROFILE::validate_full(BYTE *const __base) const noexcept
+Result ICC_PROFILE::validate_full(const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ICC_PROFILE&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -2161,8 +2675,11 @@ Result ICC_PROFILE::validate_full(BYTE *const __base) const noexcept
          "bytes) extends beyond the end of the file.");
     return result;
 }
-std::string ICC_PROFILE::read_profile (BYTE *const __base) const
+std::string ICC_PROFILE::read_profile (const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ICC_PROFILE&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
 
@@ -2181,9 +2698,20 @@ std::string ICC_PROFILE::read_profile (BYTE *const __base) const
          std::to_string(start + BYTES)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __bytes = __base + start;
+    const BYTE* __bytes = __base + start;
     return std::string((char*)__bytes, BYTES);
 }
+#ifdef __EMSCRIPTEN__
+void ICC_PROFILE::check_and_fetch_remote(const BYTE *const &base)
+{
+if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_ICC_COLOR_PROFILE(const std::string &color_profile)
 {
     return ICC_PROFILE::HEADER_SIZE + color_profile.size();
@@ -2204,14 +2732,18 @@ void STORE_ICC_COLOR_PROFILE(BYTE *const __base, Offset offset, const std::strin
     memcpy(__ptr + ICC_PROFILE::HEADER_SIZE, color_profile.data(), color_profile.size());
     return;
 }
+#endif
 // MARK: - ANNOTATIONS
 ANNOTATIONS::ANNOTATIONS  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size ANNOTATIONS::size(BYTE *const __base) const
+Size ANNOTATIONS::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -2225,11 +2757,17 @@ Size ANNOTATIONS::size(BYTE *const __base) const
     
     return size;
 }
-Result ANNOTATIONS::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ANNOTATIONS::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ANNOTATIONS::validate_full (BYTE *const __base) const noexcept
+Result ANNOTATIONS::validate_full (const BYTE *const __base) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -2268,7 +2806,7 @@ Result ANNOTATIONS::validate_full (BYTE *const __base) const noexcept
          std::to_string(start + ENTRIES*STEP)+
          "bytes) extends beyond the end of the file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
         auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
         if (bytes_offset == NULL_OFFSET) return Result
@@ -2303,8 +2841,11 @@ Result ANNOTATIONS::validate_full (BYTE *const __base) const noexcept
     }
     return result;
 }
-Abstraction::Annotations ANNOTATIONS::read_annotations(BYTE *const __base, BYTES_ARRAY* __bytes_array) const
+Abstraction::Annotations ANNOTATIONS::read_annotations(const BYTE *const __base, BYTES_ARRAY* __bytes_array) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -2318,7 +2859,7 @@ Abstraction::Annotations ANNOTATIONS::read_annotations(BYTE *const __base, BYTES
     
     READ_ANNOTATIONS:
     Abstraction::Annotations annotations;
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     if (start + ENTRIES*STEP > __size)
         throw std::runtime_error
         ("ANNOTATIONS::read_annotations failed -- bytes block ("+
@@ -2377,15 +2918,21 @@ Abstraction::Annotations ANNOTATIONS::read_annotations(BYTE *const __base, BYTES
     
     return annotations;
 }
-bool ANNOTATIONS::groups(BYTE *const __base) const
+bool ANNOTATIONS::groups(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     auto SIZES_OFFSET = LOAD_U64(__base + __offset + GROUP_SIZES_OFFSET);
     auto BYTES_OFFSET = LOAD_U64(__base + __offset + GROUP_BYTES_OFFSET);
     return  SIZES_OFFSET != NULL_OFFSET && SIZES_OFFSET < __size &&
             BYTES_OFFSET != NULL_OFFSET && BYTES_OFFSET < __size;
 }
-ANNOTATION_GROUP_SIZES ANNOTATIONS::get_group_sizes(BYTE *const __base) const
+ANNOTATION_GROUP_SIZES ANNOTATIONS::get_group_sizes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     auto __GROUP_SIZES = ANNOTATION_GROUP_SIZES
     (LOAD_U64(__base + __offset + GROUP_SIZES_OFFSET), __size, __version);
     
@@ -2393,8 +2940,11 @@ ANNOTATION_GROUP_SIZES ANNOTATIONS::get_group_sizes(BYTE *const __base) const
     if (result & IRIS_FAILURE) throw std::runtime_error(result.message);
     return __GROUP_SIZES;
 }
-ANNOTATION_GROUP_BYTES ANNOTATIONS::get_group_bytes(BYTE *const __base) const
+ANNOTATION_GROUP_BYTES ANNOTATIONS::get_group_bytes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATIONS&>(*this).check_and_fetch_remote(__base);
+#endif
     auto offset = LOAD_U64(__base + __offset + GROUP_BYTES_OFFSET);
     if (offset == NULL_OFFSET || offset > __size) throw std::runtime_error
         ("Invalid tile table offset value for ANNOTATION_GROUP_BYTES array.");
@@ -2403,6 +2953,17 @@ ANNOTATION_GROUP_BYTES ANNOTATIONS::get_group_bytes(BYTE *const __base) const
     __BYTES.validate_offset(__base);
     return __BYTES;
 }
+#ifdef __EMSCRIPTEN__
+void ANNOTATIONS::check_and_fetch_remote(const BYTE *const &base)
+{
+if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_ANNOTATION_ARRAY(const AnnotationArrayCreateInfo &info)
 {
     #if IrisCodecExtensionValidateEncoding
@@ -2477,14 +3038,18 @@ void STORE_ANNOTATION_ARRAY(BYTE *const __base, const AnnotationArrayCreateInfo 
     // Store the actual number of entries encoded (excluding those that failed validation).
     STORE_U32(__base + info.offset + ANNOTATIONS::ENTRY_NUMBER, U32_CAST(entries));
 }
+#endif
 // MARK: - ANNOTATION BYTES
 ANNOTATION_BYTES::ANNOTATION_BYTES  (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size ANNOTATION_BYTES::size(BYTE *const __base) const
+Size ANNOTATION_BYTES::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -2497,11 +3062,17 @@ Size ANNOTATION_BYTES::size(BYTE *const __base) const
     
     return size;
 }
-Result ANNOTATION_BYTES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ANNOTATION_BYTES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-void ANNOTATION_BYTES::read_bytes(BYTE *const __base, Annotation &annotation) const
+void ANNOTATION_BYTES::read_bytes(const BYTE *const __base, Annotation &annotation) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr        = __base + __offset;
     annotation.byteSize     = LOAD_U32(__ptr + ENTRY_NUMBER);
 
@@ -2523,6 +3094,17 @@ void ANNOTATION_BYTES::read_bytes(BYTE *const __base, Annotation &annotation) co
     annotation.offset   = start;
     return;
 }
+#ifdef __EMSCRIPTEN__
+void ANNOTATION_BYTES::check_and_fetch_remote(const BYTE *const &base)
+{
+if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#else
 Size SIZE_ANNOTATION_BYTES(const IrisCodec::Annotation &annotation)
 {
     return ANNOTATION_BYTES::HEADER_SIZE + annotation.data->size();
@@ -2558,14 +3140,18 @@ void STORE_ANNOTATION_BYTES(BYTE *const __base, Offset offset, const IrisCodec::
     memcpy(__ptr, bytes->data(), bytes->size());
     return;
 }
+#endif
 // MARK: - ANNOTATION_GROUPS
 ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZES (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK (offset, file_size, version)
 {
     
 }
-Size ANNOTATION_GROUP_SIZES::size (BYTE* const __base) const
+Size ANNOTATION_GROUP_SIZES::size (const BYTE* const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -2579,11 +3165,17 @@ Size ANNOTATION_GROUP_SIZES::size (BYTE* const __base) const
     
     return size;
 }
-Result ANNOTATION_GROUP_SIZES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ANNOTATION_GROUP_SIZES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ANNOTATION_GROUP_SIZES::validate_full (BYTE *const __base, Size& expected_bytes) const noexcept
+Result ANNOTATION_GROUP_SIZES::validate_full (const BYTE *const __base, Size& expected_bytes) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
     auto result         = validate_offset(__base);
     if (result & IRIS_FAILURE) return result;
     
@@ -2605,7 +3197,7 @@ Result ANNOTATION_GROUP_SIZES::validate_full (BYTE *const __base, Size& expected
          std::to_string(start + ENTRIES * STEP)+
          " bytes) extends beyond the end of file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     expected_bytes  = 0;
     for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
         expected_bytes += LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE);
@@ -2621,8 +3213,11 @@ Result ANNOTATION_GROUP_SIZES::validate_full (BYTE *const __base, Size& expected
     }
     return result;
 }
-ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(BYTE *const __base) const
+ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_SIZES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto STEP     = LOAD_U16(__ptr + ENTRY_SIZE);
     const auto ENTRIES  = LOAD_U32(__ptr + ENTRY_NUMBER);
@@ -2642,7 +3237,7 @@ ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(BYTE
          std::to_string(start + ENTRIES * STEP)+
          " bytes) extends beyond the end of file.");
     
-    BYTE* __array   = __base + start;
+    const BYTE* __array   = __base + start;
     for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
         sizes[GI] = {
             LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE),
@@ -2658,14 +3253,28 @@ ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(BYTE
     }
     return sizes;
 }
+#ifdef __EMSCRIPTEN__
+void ANNOTATION_GROUP_SIZES::check_and_fetch_remote(const BYTE *const &base)
+{
+if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#endif
 // MARK: - ANNOTATION_GROUP_BYTES
 ANNOTATION_GROUP_BYTES::ANNOTATION_GROUP_BYTES (Offset offset, Size file_size, uint32_t version) noexcept :
 DATA_BLOCK(offset, file_size, version)
 {
     
 }
-Size ANNOTATION_GROUP_BYTES::size(BYTE *const __base) const
+Size ANNOTATION_GROUP_BYTES::size(const BYTE *const __base) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -2678,11 +3287,17 @@ Size ANNOTATION_GROUP_BYTES::size(BYTE *const __base) const
     
     return size;
 }
-Result ANNOTATION_GROUP_BYTES::validate_offset(BYTE *const base) const noexcept {
-    return DATA_BLOCK::validate_offset(base, type, recovery);
+Result ANNOTATION_GROUP_BYTES::validate_offset(const BYTE *const __base) const noexcept {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
+    return DATA_BLOCK::validate_offset(__base, type, recovery);
 }
-Result ANNOTATION_GROUP_BYTES::validate_full (BYTE *const __base, Size expected_bytes) const noexcept
+Result ANNOTATION_GROUP_BYTES::validate_full (const BYTE *const __base, Size expected_bytes) const noexcept
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     if (BYTES != expected_bytes) return Result
@@ -2699,8 +3314,11 @@ Result ANNOTATION_GROUP_BYTES::validate_full (BYTE *const __base, Size expected_
     
     return IRIS_SUCCESS;
 }
-void ANNOTATION_GROUP_BYTES::read_bytes (BYTE *const __base, const GroupSizes &sizes, Annotations &annotations) const
+void ANNOTATION_GROUP_BYTES::read_bytes (const BYTE *const __base, const GroupSizes &sizes, Annotations &annotations) const
 {
+#ifdef __EMSCRIPTEN__
+    const_cast<ANNOTATION_GROUP_BYTES&>(*this).check_and_fetch_remote(__base);
+#endif
     const auto __ptr    = __base + __offset;
     const auto BYTES    = LOAD_U32(__ptr + ENTRY_NUMBER);
     
@@ -2732,7 +3350,7 @@ void ANNOTATION_GROUP_BYTES::read_bytes (BYTE *const __base, const GroupSizes &s
          " bytes) extends beyond the end of file. Did you validate?");
     annotations.groups.clear();
     
-    BYTE* __array = __base + start;
+    const BYTE* __array = __base + start;
     for (auto&& size : sizes) {
         annotations.groups[std::string((char*)__array,size.first)] =
         Abstraction::AnnotationGroup {
@@ -2750,7 +3368,17 @@ void ANNOTATION_GROUP_BYTES::read_bytes (BYTE *const __base, const GroupSizes &s
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
         
     }
-    
 }
+#ifdef __EMSCRIPTEN__
+void ANNOTATION_GROUP_BYTES::check_and_fetch_remote(const BYTE *const &base)
+{
+    if (!__response) {
+        const char* url = REINTERPRET_ARRAY_START(base);
+        __response      = FETCH_DATABLOCK(url,__remote, HEADER_SIZE);
+        __offset        = __ptr_size;
+        __response      = FETCH_DATABLOCK(url,__remote, size(base));
+    } const_cast<const BYTE*&>(base) = __response->data;
+}
+#endif
 } // END SERIALIZATION
 } // END IRIS CODEC

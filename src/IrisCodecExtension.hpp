@@ -112,14 +112,15 @@ struct ANNOTATION_GROUP_BYTES;
 }
 // These are the light-weight RAM representaitons of the on-disk file:
 namespace Abstraction {
-struct IFE_EXPORT File;
-struct IFE_EXPORT FileMap;
+struct File;
+struct FileMap;
 }
 
 // MARK: - ENTRY METHODS
+#ifndef __EMSCRIPTEN__
 /// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
 bool IFE_EXPORT is_Iris_Codec_file    (BYTE* const __mapped_file_ptr,
-                                        size_t file_size);
+                                       size_t file_size);
 /**
  * @brief Performs deep file validation checks to ensure stuctural offsets are valid. This does NOT perform
  * specification validations.
@@ -156,6 +157,33 @@ Abstraction::File IFE_EXPORT abstract_file_structure (BYTE* const __mapped_file_
 Abstraction::FileMap IFE_EXPORT generate_file_map (BYTE* const __mapped_file_ptr,
                                                    size_t file_size);
 
+#elif /* EMSCRIPTEN WEB ASSEMBLY */ defined __EMSCRIPTEN__
+using Response = std::shared_ptr<struct __Response>;
+/// Perform quick check to see if this file header matches an Iris format. This does NOT validate.
+bool IFE_EXPORT is_Iris_Codec_file    (const std::string url,
+                                       size_t file_size);
+/**
+ * @brief Performs deep file validation checks to ensure stuctural offsets are valid. This does NOT perform
+ * specification validations.
+ *
+ * This performs a tree validation of objects and sub-objects to ensure their offsets properly.
+ */
+Result IFE_EXPORT validate_file_structure (const std::string url,
+                                           size_t file_size) noexcept;
+/**
+ * @brief Abstract the Iris file structure into memory for quick data access. This does NOT validate.
+ *
+ * This is a convenience function that maps the entire file structure into memory using the below
+ * defined obejcts within the IrisCodec::Abstraction namespace. These objects will allow quick lookup
+ * of data. Please note: Abstractions will lift object parameters but not object data (for example,
+ * if an image is abstracted, the encoding algorithm (JPEG/PNG/AVIF), width, height, byte offset location,
+ * and number of bytes will be lifted; however the actual image bytes will remain untouched and must be
+ * separately read. This keeps the abstraction layer quick but removes memory bloat.
+ */
+// START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
+Abstraction::File IFE_EXPORT abstract_file_structure (const std::string url,
+                                                      size_t file_size);
+#endif
 // MARK: - FILE ABSTRACTIONS
 // The file abstractions pull light-weight
 // representations of the on-disk information
@@ -264,10 +292,6 @@ struct IFE_EXPORT Annotation {
     uint32_t    width       = 0;
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
-    // Eq Operator required by MSVC for DLL_EXPORT inclusion in unordered_map
-    bool operator == (const Annotation& a) const {
-        return memcmp(this, &a, sizeof(Annotation)) ? false : true;
-    }
 };
 struct IFE_EXPORT AnnotationGroup {
     Offset      offset      = NULL_OFFSET;
@@ -368,13 +392,18 @@ struct IFE_EXPORT DATA_BLOCK {
         RECOVERY                    = VALIDATION + VALIDATION_S,
         HEADER_SIZE                 = RECOVERY + RECOVERY_S
     };
+#ifdef /* WEB ASSEMBLY */ __EMSCRIPTEN__
+    Offset      __remote            = NULL_OFFSET;
+    Response    __response          = NULL;
+#endif
     Offset      __offset            = NULL_OFFSET;
     Size        __size              = 0;
     uint32_t    __version           = 0;
     operator    bool                () const;
     explicit    DATA_BLOCK          (){};
     explicit    DATA_BLOCK          (Offset, Size file_size, uint32_t IFE_version);
-    Result      validate_offset     (BYTE* const __base, const char*, enum RECOVERY) const noexcept;
+    Result      validate_offset     (const BYTE* const __base, const char*,
+                                     enum RECOVERY) const noexcept;
     Size        validate_bounds     () const noexcept;
 };
 // MARK: - HEADER TYPES
@@ -419,15 +448,19 @@ struct IFE_EXPORT FILE_HEADER : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_header     (BYTE* const __base) const;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    Header      read_header         (BYTE* const __base) const;
-    TILE_TABLE  get_tile_table      (BYTE* const __base) const;
-    METADATA    get_metadata        (BYTE* const __base) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_header     (const BYTE* const __base) const;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    Header      read_header         (const BYTE* const __base) const;
+    TILE_TABLE  get_tile_table      (const BYTE* const __base) const;
+    METADATA    get_metadata        (const BYTE* const __base) const;
     
     explicit FILE_HEADER            (Size file_size) noexcept;
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
+#ifndef __EMSCRIPTEN__
 struct IFE_EXPORT HeaderCreateInfo {
     size_t      fileSize            = 0;
     uint32_t    revision            = 0;
@@ -435,7 +468,7 @@ struct IFE_EXPORT HeaderCreateInfo {
     Offset      metadataOffset      = NULL_OFFSET;
 };
 void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&);
-
+#endif
 // MARK: Tile Table Header
 struct IFE_EXPORT TILE_TABLE : DATA_BLOCK {
     friend FILE_HEADER;
@@ -471,14 +504,18 @@ struct IFE_EXPORT TILE_TABLE : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                () const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    TileTable   read_tile_table     (BYTE* const __base) const;
-    LAYER_EXTENTS get_layer_extents (BYTE* const __base) const;
-    TILE_OFFSETS  get_tile_offsets  (BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    TileTable   read_tile_table     (const BYTE* const __base) const;
+    LAYER_EXTENTS get_layer_extents (const BYTE* const __base) const;
+    TILE_OFFSETS  get_tile_offsets  (const BYTE* const __base) const;
     
 protected:
     explicit    TILE_TABLE          (Offset tile_table_offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT TileTableCreateInfo {
     Offset      tileTableOffset     = NULL_OFFSET;
@@ -533,22 +570,26 @@ struct IFE_EXPORT METADATA : DATA_BLOCK {
     };
     
     Size        size                () const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    Size        get_size            (BYTE* const __base) const;
-    Metadata    read_metadata       (BYTE* const __base) const;
-    bool        attributes          (BYTE* const __base) const;
-    ATTRIBUTES  get_attributes      (BYTE* const __base) const;
-    bool        image_array         (BYTE* const __base) const;
-    IMAGE_ARRAY get_image_array     (BYTE* const __base) const;
-    bool        color_profile       (BYTE* const __base) const;
-    ICC_PROFILE get_color_profile   (BYTE* const __base) const;
-    bool        annotations         (BYTE* const __base) const;
-    ANNOTATIONS get_annotations     (BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    Size        get_size            (const BYTE* const __base) const;
+    Metadata    read_metadata       (const BYTE* const __base) const;
+    bool        attributes          (const BYTE* const __base) const;
+    ATTRIBUTES  get_attributes      (const BYTE* const __base) const;
+    bool        image_array         (const BYTE* const __base) const;
+    IMAGE_ARRAY get_image_array     (const BYTE* const __base) const;
+    bool        color_profile       (const BYTE* const __base) const;
+    ICC_PROFILE get_color_profile   (const BYTE* const __base) const;
+    bool        annotations         (const BYTE* const __base) const;
+    ANNOTATIONS get_annotations     (const BYTE* const __base) const;
     
 protected:
     explicit    METADATA            () = delete;
     explicit    METADATA            (Offset __metadata, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT MetadataCreateInfo {
     Offset      metadataOffset      = NULL_OFFSET;
@@ -591,15 +632,19 @@ struct IFE_EXPORT ATTRIBUTES : DATA_BLOCK {
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
     Size        size                () const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    Attributes  read_attributes     (BYTE* const __base) const;
-    ATTRIBUTES_SIZES get_sizes      (BYTE* const __base) const;
-    ATTRIBUTES_BYTES get_bytes      (BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    Attributes  read_attributes     (const BYTE* const __base) const;
+    ATTRIBUTES_SIZES get_sizes      (const BYTE* const __base) const;
+    ATTRIBUTES_BYTES get_bytes      (const BYTE* const __base) const;
 
 protected:
     explicit    ATTRIBUTES          () = delete;
     explicit    ATTRIBUTES          (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT AttributesCreateInfo {
     Offset      attributesOffset    = NULL_OFFSET;
@@ -652,13 +697,17 @@ struct IFE_EXPORT LAYER_EXTENTS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    LayerExtents read_layer_extents (BYTE* const __base) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    LayerExtents read_layer_extents (const BYTE* const __base) const;
     
 protected:
     explicit LAYER_EXTENTS          (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size IFE_EXPORT SIZE_EXTENTS        (const LayerExtents&);
 void IFE_EXPORT STORE_EXTENTS       (BYTE* const __base, Offset offset, const LayerExtents&);
@@ -702,14 +751,18 @@ struct IFE_EXPORT TILE_OFFSETS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    void        read_tile_offsets   (BYTE* const __base, TileTable&) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    void        read_tile_offsets   (const BYTE* const __base, TileTable&) const;
     
 protected:
     explicit TILE_OFFSETS           () = delete;
     explicit TILE_OFFSETS           (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size IFE_EXPORT SIZE_TILE_OFFSETS   (const TileTable::Layers&);
 void IFE_EXPORT STORE_TILE_OFFSETS  (BYTE* const, Offset, const TileTable::Layers&);
@@ -753,13 +806,18 @@ struct IFE_EXPORT ATTRIBUTES_SIZES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
-    SizeArray   read_sizes          (BYTE* const __base) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base, Size& expected_bytes) const noexcept;
+    SizeArray   read_sizes          (const BYTE* const __base) const;
     
 protected:
     explicit ATTRIBUTES_SIZES       () = delete;
     explicit ATTRIBUTES_SIZES       (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size IFE_EXPORT SIZE_ATTRIBUTES_SIZES   (const Attributes&);
 void IFE_EXPORT STORE_ATTRIBUTES_SIZES  (BYTE* const __base, Offset, const Attributes&);
@@ -787,14 +845,18 @@ struct IFE_EXPORT ATTRIBUTES_BYTES : DATA_BLOCK {
         // -----------------------------------------------------------------------
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base, Size expected_bytes) const noexcept;
-    void        read_bytes          (BYTE* const __base, const SizeArray&, Attributes&) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base, Size expected_bytes) const noexcept;
+    void        read_bytes          (const BYTE* const __base, const SizeArray&, Attributes&) const;
     
 protected:
     explicit ATTRIBUTES_BYTES       () = delete;
     explicit ATTRIBUTES_BYTES       (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size IFE_EXPORT SIZE_ATTRIBUTES_BYTES   (const Attributes&);
 void IFE_EXPORT STORE_ATTRIBUTES_BYTES  (BYTE* const __base, Offset, const Attributes&);
@@ -849,14 +911,18 @@ struct IFE_EXPORT IMAGE_ARRAY : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    Images      read_assoc_images   (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    Images      read_assoc_images   (const BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
 protected:
     explicit    IMAGE_ARRAY         () = delete;
     explicit    IMAGE_ARRAY         (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT AssociatedImageCreateInfo {
     struct IFE_EXPORT Entry {
@@ -894,14 +960,18 @@ struct IFE_EXPORT IMAGE_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    std::string read_image_bytes    (BYTE* const __base, Abstraction::AssociatedImage&) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    std::string read_image_bytes    (const BYTE* const __base, Abstraction::AssociatedImage&) const;
     
 protected:
     explicit    IMAGE_BYTES         () = delete;
     explicit    IMAGE_BYTES         (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT ImageBytesCreateInfo {
     Offset      offset              = NULL_OFFSET;
@@ -934,14 +1004,18 @@ struct IFE_EXPORT ICC_PROFILE : DATA_BLOCK {
         // -----------------------------------------------------------------------
         HEADER_SIZE                 = HEADER_V1_0_SIZE
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    std::string read_profile        (BYTE* const __base) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    std::string read_profile        (const BYTE* const __base) const;
     
 protected:
     explicit ICC_PROFILE      () = delete;
     explicit ICC_PROFILE      (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size SIZE_ICC_COLOR_PROFILE         (const std::string& color_profile);
 void STORE_ICC_COLOR_PROFILE        (BYTE* const __base, Offset, const std::string& color_profile);
@@ -1009,20 +1083,24 @@ struct IFE_EXPORT ANNOTATIONS : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base) const noexcept;
-    Annotations read_annotations    (BYTE* const __base, BYTES_ARRAY* = nullptr) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base) const noexcept;
+    Annotations read_annotations    (const BYTE* const __base, BYTES_ARRAY* = nullptr) const;
     
     
-    bool        groups              (BYTE* const __base) const;
-    GROUP_SIZES get_group_sizes     (BYTE* const __base) const;
-    GROUP_BYTES get_group_bytes     (BYTE* const __base) const;
+    bool        groups              (const BYTE* const __base) const;
+    GROUP_SIZES get_group_sizes     (const BYTE* const __base) const;
+    GROUP_BYTES get_group_bytes     (const BYTE* const __base) const;
 
     
 protected:
     explicit ANNOTATIONS            () = delete;
     explicit ANNOTATIONS            (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT AnnotationArrayCreateInfo {
     using Annotation                = Abstraction::Annotation;
@@ -1044,7 +1122,9 @@ struct IFE_EXPORT AnnotationArrayCreateInfo {
     AnnotationInfos annotations;
 };
 Size IFE_EXPORT SIZE_ANNOTATION_ARRAY   (const AnnotationArrayCreateInfo&);
+#ifndef __EMSCRIPTEN__
 void IFE_EXPORT STORE_ANNOTATION_ARRAY  (BYTE* const __base, const AnnotationArrayCreateInfo&);
+#endif
 
 // MARK: ANNOTATION BYTES
 struct IFE_EXPORT ANNOTATION_BYTES : DATA_BLOCK {
@@ -1069,16 +1149,22 @@ struct IFE_EXPORT ANNOTATION_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    void        read_bytes          (BYTE* const __base, Annotation&) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    void        read_bytes          (const BYTE* const __base, Annotation&) const;
     
 protected:
     explicit ANNOTATION_BYTES       () = delete;
     explicit ANNOTATION_BYTES       (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 Size IFE_EXPORT SIZE_ANNOTATION_BYTES   (const IrisCodec::Annotation&);
+#ifndef __EMSCRIPTEN__
 void IFE_EXPORT STORE_ANNOTATION_BYTES  (BYTE* const __base, Offset, const IrisCodec::Annotation&);
+#endif
 
 // MARK: ANNOTATION GROUPS
 struct IFE_EXPORT ANNOTATION_GROUP_SIZE {
@@ -1121,14 +1207,18 @@ struct IFE_EXPORT ANNOTATION_GROUP_SIZES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base, Size& expected_bytes) const noexcept;
-    GroupSizes  read_group_sizes    (BYTE* const __base) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base, Size& expected_bytes) const noexcept;
+    GroupSizes  read_group_sizes    (const BYTE* const __base) const;
     
 protected:
     explicit ANNOTATION_GROUP_SIZES () = delete;
     explicit ANNOTATION_GROUP_SIZES (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 struct IFE_EXPORT ANNOTATION_GROUP_BYTES : DATA_BLOCK {
     friend ANNOTATIONS;
@@ -1153,16 +1243,22 @@ struct IFE_EXPORT ANNOTATION_GROUP_BYTES : DATA_BLOCK {
         
         HEADER_SIZE                 = HEADER_V1_0_SIZE,
     };
-    Size        size                (BYTE* const __base) const;
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-    Result      validate_full       (BYTE* const __base, Size total_size) const noexcept;
-    void        read_bytes          (BYTE* const __base, const GroupSizes&, Annotations&) const;
+    Size        size                (const BYTE* const __base) const;
+    Result      validate_offset     (const BYTE* const __base) const noexcept;
+    Result      validate_full       (const BYTE* const __base, Size total_size) const noexcept;
+    void        read_bytes          (const BYTE* const __base, const GroupSizes&, Annotations&) const;
     
 protected:
     explicit ANNOTATION_GROUP_BYTES () = delete;
     explicit ANNOTATION_GROUP_BYTES (Offset offset, Size file_size, uint32_t version) noexcept;
+private:
+    #ifdef __EMSCRIPTEN__
+    void check_and_fetch_remote     (const BYTE* const& __base);
+    #endif
 };
 } // END FILE STRUCTURE
+
+
 namespace Abstraction {
 enum IFE_EXPORT MapEntryType {
     MAP_ENTRY_UNDEFINED         = 0,
