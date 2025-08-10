@@ -27,7 +27,6 @@
  * Use of this code constitutes your implicit agreement to these requirements.
  *
  */
-
 // ~~~~~~~~~~~ INDEPENDENT INCLUDES ~~~~~~~~~~~~ //
 // **NOTE:** Unlike most files in the Iris Codec, this is meant
 // to be completely independently implementable by other authors
@@ -46,6 +45,7 @@
 #include "IrisCodecExtension.hpp"
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#include <emscripten/bind.h>
 #endif
 #ifdef _MSC_VER
 static_assert(sizeof(short)     == 2);
@@ -108,6 +108,14 @@ static_assert(__cplusplus >= 202002L, "Enable C++20 or greater in your Make syst
 #define IRIS_EXTENSION_2_0  0x00020000
 constexpr bool little_endian = std::endian::native == std::endian::little;
 constexpr bool is_ieee754    = std::numeric_limits<float>::is_iec559;
+template<typename T>
+inline T load_unaligned (const void* ptr) {
+static_assert(std::is_trivially_copyable_v<T>,"load_unaligned requires trivially copyable type");
+T val; memcpy(&val, ptr, sizeof(T)); return val;}
+template<typename T>
+inline void store_unaligned (void*const ptr, T val) {
+static_assert(std::is_trivially_copyable_v<T>,"store_unaligned requires trivially copyable type");
+memcpy(ptr, &val, sizeof(T));}
 inline _Float16 F16_CONVERT_NON_IEEE (uint32_t val);
 inline uint16_t F16_CONVERT_NON_IEEE (_Float16 val);
 inline float    F32_CONVERT_NON_IEEE (uint32_t val);
@@ -115,15 +123,15 @@ inline uint32_t F32_CONVERT_NON_IEEE (float val);
 inline double   F64_CONVERT_NON_IEEE (uint64_t val);
 inline uint64_t F64_CONVERT_NON_IEEE (double val);
 inline uint8_t  LOAD_U8      (const void* ptr){return *static_cast<const uint8_t*>(ptr);}
-inline uint64_t __LE_LOAD_U64(const void* ptr){return *static_cast<const uint64_t*>(ptr);}
+inline uint64_t __LE_LOAD_U64(const void* ptr){return load_unaligned<uint64_t>(ptr);}
 inline uint64_t __BE_LOAD_U64(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr));}
-inline uint64_t __LE_LOAD_U40(const void* ptr){return *static_cast<const uint64_t*>(ptr)&U40_MASK;}
+inline uint64_t __LE_LOAD_U40(const void* ptr){return load_unaligned<uint64_t>(ptr)&U40_MASK;}
 inline uint64_t __BE_LOAD_U40(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr))&U40_MASK;}
-inline uint32_t __LE_LOAD_U32(const void* ptr){return *static_cast<const uint32_t*>(ptr);}
+inline uint32_t __LE_LOAD_U32(const void* ptr){return load_unaligned<uint32_t>(ptr);}
 inline uint32_t __BE_LOAD_U32(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr));}
-inline uint32_t __LE_LOAD_U24(const void* ptr){return *static_cast<const uint32_t*>(ptr)&U24_MASK;}
+inline uint32_t __LE_LOAD_U24(const void* ptr){return load_unaligned<uint32_t>(ptr)&U24_MASK;}
 inline uint32_t __BE_LOAD_U24(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr))&U40_MASK;}
-inline uint16_t __LE_LOAD_U16(const void* ptr){return *static_cast<const uint16_t*>(ptr);}
+inline uint16_t __LE_LOAD_U16(const void* ptr){return load_unaligned<uint16_t>(ptr);}
 inline uint16_t __BE_LOAD_U16(const void* ptr){return __builtin_bswap16(__LE_LOAD_U16(ptr));}
 inline float __LE_LOAD_F32_IE3(const void* ptr){return std::bit_cast<float>(__LE_LOAD_U32(ptr));}
 inline float __BE_LOAD_F32_IE3(const void* ptr){return std::bit_cast<float>(__BE_LOAD_U32(ptr));}
@@ -133,16 +141,16 @@ inline double __LE_LOAD_F64_IE3(const void* ptr){return std::bit_cast<double>(__
 inline double __BE_LOAD_F64_IE3(const void* ptr){return std::bit_cast<double>(__BE_LOAD_U64(ptr));}
 inline double __LE_LOAD_F64_NON(const void* ptr){return F64_CONVERT_NON_IEEE(__LE_LOAD_U64(ptr));}
 inline double __BE_LOAD_F64_NON(const void* ptr){return F64_CONVERT_NON_IEEE(__BE_LOAD_U64(ptr));}
-inline void __LE_STORE_U64(void* ptr, uint64_t v){*static_cast<uint64_t*>(ptr)=v;}
-inline void __BE_STORE_U64(void* ptr, uint64_t v){*static_cast<uint64_t*>(ptr)=__builtin_bswap64(v);}
+inline void __LE_STORE_U64(void* ptr, uint64_t v){store_unaligned<uint64_t>(ptr,v);}
+inline void __BE_STORE_U64(void* ptr, uint64_t v){store_unaligned<uint64_t>(ptr,__builtin_bswap64(v));}
 inline void __LE_STORE_U40(void* ptr, uint64_t v){memcpy(ptr, &v, 5);}
 inline void __BE_STORE_U40(void* ptr, uint64_t v){auto bs=__builtin_bswap64(v);memcpy(ptr,&bs,5);}
-inline void __LE_STORE_U32(void* ptr, uint32_t v){*static_cast<uint32_t*>(ptr)=v;}
-inline void __BE_STORE_U32(void* ptr, uint32_t v){*static_cast<uint32_t*>(ptr)=__builtin_bswap32(v);}
+inline void __LE_STORE_U32(void* ptr, uint32_t v){store_unaligned<uint32_t>(ptr,v);}
+inline void __BE_STORE_U32(void* ptr, uint32_t v){store_unaligned<uint32_t>(ptr,__builtin_bswap32(v));}
 inline void __LE_STORE_U24(void* ptr, uint32_t v){memcpy(ptr, &v, 3);}
 inline void __BE_STORE_U24(void* ptr, uint32_t v){auto bs=__builtin_bswap32(v);memcpy(ptr,&bs,3);}
-inline void __LE_STORE_U16(void* ptr, uint16_t v){*static_cast<uint16_t*>(ptr)=v;}
-inline void __BE_STORE_U16(void* ptr, uint16_t v){*static_cast<uint16_t*>(ptr)=__builtin_bswap16(v);}
+inline void __LE_STORE_U16(void* ptr, uint16_t v){store_unaligned<uint16_t>(ptr,v);}
+inline void __BE_STORE_U16(void* ptr, uint16_t v){store_unaligned<uint16_t>(ptr,__builtin_bswap16(v));}
 inline void __LE_STORE_F32_IE3(void* ptr,float v){__LE_STORE_U32(ptr, std::bit_cast<uint32_t>(v));}
 inline void __BE_STORE_F32_IE3(void* ptr,float v){__BE_STORE_U32(ptr, std::bit_cast<uint32_t>(v));}
 inline void __LE_STORE_F32_NON(void* ptr,float v){__LE_STORE_U32(ptr, F32_CONVERT_NON_IEEE(v));}
