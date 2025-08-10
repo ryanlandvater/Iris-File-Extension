@@ -121,7 +121,7 @@ set (
     IFE_Targets
     IrisFileExtensionLib
 )
-if(IFE_BUILD_SHARED)
+if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
     add_library(
         IrisFileExtension SHARED 
         $<TARGET_OBJECTS:IrisFileExtensionLib>
@@ -131,7 +131,7 @@ if(IFE_BUILD_SHARED)
         PRIVATE ${IFE_Dependencies}
     )
     set(IFE_Targets ${IFE_Targets} IrisFileExtension)
-endif(IFE_BUILD_SHARED)
+endif(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
 
 if(IFE_BUILD_STATIC)
     add_library(
