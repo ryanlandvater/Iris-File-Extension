@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "IFE_VTables.hpp"
+
 namespace IFE {
 
 namespace {
@@ -57,9 +59,43 @@ BlockHandle Builder::claim_block(RECOVERY_TAG  tag,
 }
 
 BlockHandle Builder::claim_file_header(std::size_t body_bytes) {
-    return claim_block(RECOVERY_TAG::RESOURCE_HEADER,
-                       body_bytes,
-                       IFE_FILE_MAGIC);
+    BlockHandle h = claim_block(RECOVERY_TAG::RESOURCE_HEADER,
+                                body_bytes,
+                                IFE_FILE_MAGIC);
+    // Remember the FILE_HEADER offset so `finalize()` can locate the
+    // FILE_SIZE slot via the codegen vtable. The most recent call wins;
+    // a v1 file has exactly one FILE_HEADER so this is unambiguous in
+    // practice, but the contract is documented in the header.
+    m_file_header_offset = h.offset;
+    return h;
+}
+
+std::uint64_t Builder::finalize() {
+    if (!m_mem) {
+        throw std::logic_error("IFE::Builder::finalize: empty Memory handle");
+    }
+    if (m_file_header_offset == 0) {
+        throw std::logic_error(
+            "IFE::Builder::finalize: no FILE_HEADER claimed "
+            "(call claim_file_header first)");
+    }
+    // Capture the write head once. `Memory::write_head()` is acquire-loaded
+    // and stable while no other thread is calling `claim_*`; per the
+    // docstring `finalize` is the ingestion-thread terminal step.
+    const std::uint64_t size = m_mem.write_head();
+    // FILE_SIZE is an 8-byte field per the codegen vtable. Reuse
+    // `amend_pointer` because its semantics (release-ordered 8-byte atomic
+    // store with bounds check) are exactly what we need here.
+    static_assert(vtables::FILE_HEADER::size::FILE_SIZE == sizeof(std::uint64_t),
+                  "FILE_HEADER::FILE_SIZE must be a 64-bit field");
+    const std::uint64_t file_size_slot =
+        m_file_header_offset + vtables::FILE_HEADER::offset::FILE_SIZE;
+    amend_pointer(file_size_slot, size);
+    // Trim the file to the actually-written extent. No-op for anonymous
+    // arenas; for file-backed arenas this releases the unused tail of the
+    // sparse reservation back to the filesystem.
+    m_mem.truncate_file(static_cast<std::size_t>(size));
+    return size;
 }
 
 void Builder::amend_pointer(std::uint64_t slot_offset,

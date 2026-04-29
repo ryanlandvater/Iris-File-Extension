@@ -152,6 +152,40 @@ public:
     };
 
     /**
+     * @brief Stamp the FILE_HEADER's `FILE_SIZE` slot with the current
+     *        write head and trim the underlying file (file-backed mode) to
+     *        that length. Phase 6a canonical commit point for the Phase 1
+     *        sparse-VMA work.
+     *
+     * The Builder remembers the FILE_HEADER block offset captured by the
+     * most recent `claim_file_header` call. `finalize` locates the
+     * `FILE_SIZE` slot via the codegen vtable
+     * (`vtables::FILE_HEADER::offset::FILE_SIZE`) and writes the current
+     * `write_head()` there using a release-ordered atomic 64-bit store
+     * (same path as `amend_pointer`). It then calls
+     * `Memory::truncate_file(write_head())` — a no-op for anonymous
+     * arenas, an `ftruncate` / `SetEndOfFile` for file-backed arenas.
+     *
+     * Idempotent: calling `finalize` multiple times re-stamps the FILE_SIZE
+     * slot and re-issues the truncate, which is harmless. Calling other
+     * `claim_*` methods after `finalize` is allowed and well-defined; a
+     * subsequent `finalize` will pick up the new write head.
+     *
+     * @return The committed file size (== `write_head()` at call time).
+     *
+     * @throws std::logic_error  if no `claim_file_header` has been issued on
+     *                           this Builder, or this builder is empty.
+     * @throws std::system_error on `ftruncate` / `SetEndOfFile` failure.
+     */
+    std::uint64_t finalize();
+
+    /// Absolute arena offset of the FILE_HEADER block, or 0 if no
+    /// `claim_file_header` has been issued.
+    std::uint64_t file_header_offset() const noexcept {
+        return m_file_header_offset;
+    }
+
+    /**
      * @brief Claim an `IFE_ARRAY` block carrying `count` elements of type T.
      *        Writes the universal preamble, `KIND_AND_STEP`, and `count`;
      *        leaves the body zero-initialised for the caller to fill.
@@ -172,7 +206,12 @@ public:
     ArrayHandle<T> claim_array(std::size_t count);
 
 private:
-    Memory m_mem;
+    Memory        m_mem;
+    /// Absolute arena offset of the FILE_HEADER block, captured by
+    /// `claim_file_header` and consumed by `finalize`. Zero when unset
+    /// (a real FILE_HEADER never lands at offset 0 because the first
+    /// `WRITE_HEAD_BYTES = 16` bytes are reserved for the atomic cursor).
+    std::uint64_t m_file_header_offset = 0;
 };
 
 // =============================================================================

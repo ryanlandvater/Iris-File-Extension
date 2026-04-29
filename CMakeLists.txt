@@ -97,6 +97,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_DataBlock.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Array.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Builder.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Reflective.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Builder.cpp)
 
@@ -136,7 +137,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     # as its BASE_DIRS). They are available to internal targets via the
     # include path appended below; downstream installation is a Phase 4+
     # concern once the substrate is wired into the public surface.
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-5: IFE_Memory, IFE_Types, codegen, DataBlock+Builder, IFE_ARRAY+Span)")
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-6a: IFE_Memory, IFE_Types, codegen, DataBlock+Builder, IFE_ARRAY+Span, Reflective lens+finalize)")
 endif()
 set (
     IFE_IncludeDir
@@ -337,5 +338,21 @@ if(IFE_BUILD_TESTS)
         target_link_libraries(ife_array_tests PRIVATE
                               ${IFE_Dependencies} Threads::Threads)
         add_test(NAME ife_array_tests COMMAND ife_array_tests)
+
+        # Phase 6a — Reflective lens + Builder::finalize. Walks blocks
+        # produced by the Phase 4 universal preamble + Phase 5 IFE_ARRAY
+        # layout, dispatching on the codegen field-key catalog. Includes
+        # a multi-reader stress that must be TSan-clean.
+        add_executable(
+            ife_reflective_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_reflective_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_reflective_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_reflective_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_reflective_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_reflective_tests COMMAND ife_reflective_tests)
     endif()
 endif()
