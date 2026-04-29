@@ -1,6 +1,6 @@
 # IFE 2.x Migration — FastFHIR Substrate
 
-> **Status:** in progress (Phases 1-4 of 6 landed). Targeted version: `2.0.0-alpha`.
+> **Status:** in progress (Phases 1-5 of 6 landed). Targeted version: `2.0.0-alpha`.
 
 The Iris File Extension is migrating from the eager-mapping `Abstraction::File`
 pattern to a lock-free Virtual Memory Arena (VMA) substrate ported from
@@ -34,7 +34,7 @@ affected until they explicitly opt in.
 | 2 | `IFE_FieldKind`, partitioned `RECOVERY_TAG`, `0x8000` array bit, `TypeTraits<T>` | ✅ landed (PR #2) |
 | 3 | `ifc.py` JSON-schema-driven codegen → `IFE_DataTypes.hpp`, `IFE_VTables.hpp`, `IFE_FieldKeys.hpp`, WASM stubs | ✅ landed (PR #3) |
 | 4 | Universal 10-byte `DATA_BLOCK` header, `Builder::amend_pointer` | ✅ landed (this PR) |
-| 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, removal of `std::vector` from read paths | pending |
+| 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, `Span<T>` (removes `std::vector` from substrate read paths) | ✅ landed (this PR) |
 | 6 | `IFE_Builder`, `Reflective::Node`/`Entry`, deprecate `Abstraction::File`, flag default ON | pending |
 
 ## Phase 1 — what landed
@@ -290,9 +290,101 @@ cmake --build build-tsan --target ife_memory_tests
 ./build-tsan/ife_memory_tests
 ```
 
-## Open items blocking later phases
+## Phase 5 — what landed
 
-These items must be resolved before Phases 5-6 can proceed; they are tracked
+Phase 5 introduces a self-describing `IFE_ARRAY` block on top of the
+Phase 4 universal preamble, plus a zero-copy `Span<T>` read path that
+replaces `std::vector<T>` in substrate read code.
+
+### IFE_ARRAY layout
+
+| Offset | Size | Field            | Notes                                              |
+|-------:|-----:|------------------|----------------------------------------------------|
+|      0 |    8 | VALIDATION       | DATA_BLOCK preamble (Phase 4).                     |
+|      8 |    2 | RECOVERY         | An `ARRAY_*` tag (e.g. `ARRAY_UINT64`).            |
+|     10 |    2 | KIND_AND_STEP    | High byte = `IFE::IFE_FieldKind`; low byte = element wire size in bytes (1..255). |
+|     12 |    4 | COUNT            | `uint32_t` element count.                          |
+|     16 |    … | ELEMENTS         | `count * step` contiguous element bytes.           |
+
+Total header = 16 bytes (`IFE::IFE_ARRAY_HEADER_SIZE`). The
+`KIND_AND_STEP` field lets a reader self-validate an array's element
+type against `IFE::TypeTraits<T>` without external schema metadata,
+which also gives the Phase 6 reflective lens a cheap path to walk an
+unknown array.
+
+### Substrate API additions
+
+* `src/IFE_Array.hpp`:
+  * `IFE::IFE_ARRAY_HEADER_SIZE`, `IFE::IFE_ARRAY_KIND_AND_STEP_OFFSET`,
+    `IFE::IFE_ARRAY_COUNT_OFFSET`, `IFE::IFE_ARRAY_MAX_STEP` constants.
+  * `pack_kind_and_step(kind, step)` / `unpack_kind_and_step(u16)` —
+    `constexpr` round-trip helpers; `static_assert`s pin the layout.
+  * **`IFE::Span<T>`** — header-only, non-owning `{ const T*, size_t }`
+    pair with `std::vector`-shaped accessors (`size`, `empty`, `data`,
+    `operator[]`, `at`, `front`, `back`, `begin`/`end`). No allocation,
+    no copying, trivially copyable. This is the canonical replacement
+    for `std::vector<T>` in substrate read paths.
+  * **`IFE::ArrayView<T>`** — read view over an `IFE_ARRAY` block in an
+    arena. Construction validates the universal preamble tag against
+    `TypeTraits<T>::array_tag` and the `KIND_AND_STEP` against
+    `TypeTraits<T>::kind` / `TypeTraits<T>::wire_size`; throws
+    `std::invalid_argument` on mismatch or OOB. Exposes `size()`,
+    `empty()`, `step_bytes()`, `at(i) → T` (memcpy-loaded, always
+    alignment-safe), and `as_span() → Span<T>` (zero-copy fast path
+    that returns a non-empty span only when `sizeof(T) == step` and the
+    body pointer is naturally aligned for `T`).
+
+* `src/IFE_Builder.hpp`:
+  * `Builder::ArrayHandle<T>` — `{ offset, body_offset, body, count,
+    step_bytes }`, with `write(i, v)` writing element `i` via memcpy.
+  * `Builder::claim_array<T>(count) → ArrayHandle<T>` — claims
+    `IFE_ARRAY_HEADER_SIZE + count * TypeTraits<T>::wire_size` via
+    `Memory::claim_space`, writes the universal preamble (with
+    `tag = TypeTraits<T>::array_tag`), `KIND_AND_STEP`, and `count`,
+    then leaves the body for the caller to fill. Lock-free with
+    concurrent claims (the underlying space reservation is the same
+    `fetch_add`). Throws `std::overflow_error` on `count * step`
+    overflow, `std::bad_alloc` on arena exhaustion.
+
+### Naming change: `IFE::Span` → `IFE::Reservation`
+
+The Phase 1 reservation handle returned by `Memory::claim_space` was
+named `IFE::Span` — but with Phase 5 introducing the canonical templated
+`IFE::Span<T>` view, the writable reservation handle is renamed to
+`IFE::Reservation` (same fields: `{offset, size, ptr}`). This is a
+substrate-internal rename only; no on-disk format change, no public ABI
+change for the legacy `IrisCodec::Abstraction::File` API.
+
+### Tests
+
+`tests/ife_array_tests.cpp` (new):
+* `Span<T>` invariants (empty, accessors, iteration, bounds-checked
+  `at`).
+* `KIND_AND_STEP` round-trip with byte layout pin.
+* `Builder::claim_array` round-trip for `uint64_t`, `float`, and
+  `LayerExtentBlock` (the BLOCK datatype) — including `as_span()`
+  zero-copy path.
+* Empty arrays (`count == 0`) round-trip cleanly.
+* `ArrayView<T>` rejects tag mismatch (constructing `ArrayView<float>`
+  over a `uint64_t` array) and step mismatch (corrupted KIND_AND_STEP).
+* OOB construction throws.
+* 16-thread × 64-iteration concurrent `claim_array` race: every array
+  reads back its expected contents; no two arrays share an offset.
+  **TSan-clean.**
+* `count * step` overflow throws `std::overflow_error`.
+
+### CMake
+
+* Substrate-ON exports `IFE_Array.hpp` alongside the Phase 1-4 headers.
+* New `ife_array_tests` ctest entry (links `Threads::Threads`).
+
+### Substrate-OFF dormancy preserved
+
+Substrate-OFF builds remain byte-identical to before this PR.
+
+## Open items blocking Phase 6
+
+These items must be resolved before Phase 6 can proceed; they are tracked
 on the parent migration tracking issue:
 
 1. Pointer to a real FastFHIR repository (`FF_Memory`, `ffc.py`). Phase 1

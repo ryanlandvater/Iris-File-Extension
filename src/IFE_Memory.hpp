@@ -51,8 +51,10 @@ constexpr std::uint64_t STREAM_LOCK_BIT = 1ULL << 63;
 /// Mask for the offset portion of the cursor (low 63 bits).
 constexpr std::uint64_t STREAM_OFFSET_MASK = STREAM_LOCK_BIT - 1ULL;
 
-/// A reserved [offset, offset+size) span returned by `claim_space`.
-struct Span {
+/// A reserved [offset, offset+size) byte run returned by `claim_space`.
+/// (Phase 5 introduced the `IFE::Span<T>` read-side template; this writable
+/// reservation handle is therefore named `Reservation` rather than `Span`.)
+struct Reservation {
     std::uint64_t offset = 0;  ///< Absolute arena offset of the slice's first byte.
     std::size_t   size   = 0;  ///< Length of the slice in bytes.
     std::uint8_t* ptr    = nullptr; ///< Direct pointer into the arena.
@@ -176,7 +178,7 @@ public:
      *         (the cursor is rolled back so subsequent calls remain consistent).
      * @throws std::logic_error if `bytes == 0` or this handle is empty.
      */
-    Span claim_space(std::size_t bytes);
+    Reservation claim_space(std::size_t bytes);
 
     /**
      * @brief Acquire exclusive stream mode. Spins on a CAS that sets bit 63

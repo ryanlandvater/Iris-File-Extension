@@ -43,7 +43,7 @@ BlockHandle Builder::claim_block(RECOVERY_TAG  tag,
     // Underlying claim_space rejects 0-byte requests; we always need at
     // least the preamble so this is fine.
     const std::size_t total = DATA_BLOCK_HEADER_SIZE + body_bytes;
-    Span span = m_mem.claim_space(total);
+    Reservation span = m_mem.claim_space(total);
     // claim_space returns a valid pointer or throws.
     write_header(span.ptr, tag, validation);
 

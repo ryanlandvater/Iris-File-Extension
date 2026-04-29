@@ -95,6 +95,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Types.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_DataBlock.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Array.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Builder.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Builder.cpp)
@@ -135,7 +136,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     # as its BASE_DIRS). They are available to internal targets via the
     # include path appended below; downstream installation is a Phase 4+
     # concern once the substrate is wired into the public surface.
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-4: IFE_Memory, IFE_Types, codegen, DataBlock+Builder)")
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-5: IFE_Memory, IFE_Types, codegen, DataBlock+Builder, IFE_ARRAY+Span)")
 endif()
 set (
     IFE_IncludeDir
@@ -322,5 +323,19 @@ if(IFE_BUILD_TESTS)
         target_link_libraries(ife_datablock_tests PRIVATE
                               ${IFE_Dependencies} Threads::Threads)
         add_test(NAME ife_datablock_tests COMMAND ife_datablock_tests)
+
+        # Phase 5 — IFE_ARRAY block + Span<T> read path. Multi-threaded
+        # array-claim race must be lock-free; TSan-clean.
+        add_executable(
+            ife_array_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_array_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_array_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_array_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_array_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_array_tests COMMAND ife_array_tests)
     endif()
 endif()

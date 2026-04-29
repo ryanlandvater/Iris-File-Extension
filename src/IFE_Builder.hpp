@@ -34,7 +34,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
+#include "IFE_Array.hpp"
 #include "IFE_DataBlock.hpp"
 #include "IFE_Memory.hpp"
 #include "IFE_Types.hpp"
@@ -125,9 +127,96 @@ public:
      */
     std::uint64_t read_pointer(std::uint64_t slot_offset) const;
 
+    // -------------------------------------------------------------------
+    // Phase 5 — IFE_ARRAY block construction
+    // -------------------------------------------------------------------
+
+    /// Writable handle returned by `claim_array<T>`. The caller fills `body`
+    /// with `count` elements (each `TypeTraits<T>::wire_size` bytes wide) in
+    /// any order; the header has already been written by `claim_array`.
+    template <class T>
+    struct ArrayHandle {
+        std::uint64_t  offset      = 0;       ///< Absolute arena offset of the preamble.
+        std::uint64_t  body_offset = 0;       ///< == offset + IFE_ARRAY_HEADER_SIZE.
+        std::uint8_t*  body        = nullptr; ///< First element byte (in-arena).
+        std::size_t    count       = 0;       ///< Element count.
+        std::size_t    step_bytes  = 0;       ///< == TypeTraits<T>::wire_size.
+
+        constexpr bool valid() const noexcept { return body != nullptr; }
+
+        /// Write element `i` from a `T` value via `std::memcpy` so the
+        /// caller never has to think about alignment. `i` must be in range.
+        void write(std::size_t i, const T& v) noexcept {
+            std::memcpy(body + i * step_bytes, &v, step_bytes);
+        }
+    };
+
+    /**
+     * @brief Claim an `IFE_ARRAY` block carrying `count` elements of type T.
+     *        Writes the universal preamble, `KIND_AND_STEP`, and `count`;
+     *        leaves the body zero-initialised for the caller to fill.
+     *
+     * The wire size used per element is `TypeTraits<T>::wire_size`, which
+     * may differ from `sizeof(T)` for narrow on-disk encodings (uint24 etc).
+     * The Phase 5 supported types are the primitives + `LayerExtentBlock`,
+     * for which `sizeof(T) == wire_size`.
+     *
+     * Thread-safe with concurrent `claim_block` / `claim_array` / `claim_space`
+     * calls — the underlying space reservation is a single `fetch_add`.
+     *
+     * @throws std::bad_alloc   if the arena is exhausted.
+     * @throws std::logic_error if this builder is empty.
+     * @throws std::overflow_error if `count * wire_size` would overflow.
+     */
+    template <class T>
+    ArrayHandle<T> claim_array(std::size_t count);
+
 private:
     Memory m_mem;
 };
+
+// =============================================================================
+// claim_array<T> — header-implemented because it's a template
+// =============================================================================
+
+template <class T>
+Builder::ArrayHandle<T> Builder::claim_array(std::size_t count) {
+    if (!m_mem) {
+        throw std::logic_error("IFE::Builder::claim_array: empty Memory handle");
+    }
+    constexpr std::size_t step = TypeTraits<T>::wire_size;
+    static_assert(step <= IFE_ARRAY_MAX_STEP,
+                  "TypeTraits<T>::wire_size exceeds IFE_ARRAY step byte range");
+
+    // Overflow guard: count * step + header must fit in size_t.
+    const std::size_t max_count =
+        (static_cast<std::size_t>(-1) - IFE_ARRAY_HEADER_SIZE) / step;
+    if (count > max_count) {
+        throw std::overflow_error("IFE::Builder::claim_array: count overflow");
+    }
+    const std::size_t total = IFE_ARRAY_HEADER_SIZE + count * step;
+
+    auto reservation = m_mem.claim_space(total);
+    // Universal preamble.
+    write_header(reservation.ptr, TypeTraits<T>::array_tag, /*validation=*/0);
+    // KIND_AND_STEP.
+    const std::uint16_t kas =
+        pack_kind_and_step(TypeTraits<T>::kind, step);
+    std::memcpy(reservation.ptr + IFE_ARRAY_KIND_AND_STEP_OFFSET, &kas,
+                sizeof(kas));
+    // count.
+    const std::uint32_t count32 = static_cast<std::uint32_t>(count);
+    std::memcpy(reservation.ptr + IFE_ARRAY_COUNT_OFFSET, &count32,
+                sizeof(count32));
+
+    ArrayHandle<T> h;
+    h.offset      = reservation.offset;
+    h.body_offset = reservation.offset + IFE_ARRAY_HEADER_SIZE;
+    h.body        = reservation.ptr + IFE_ARRAY_HEADER_SIZE;
+    h.count       = count;
+    h.step_bytes  = step;
+    return h;
+}
 
 }  // namespace IFE
 

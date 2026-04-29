@@ -97,7 +97,7 @@ bool Memory::stream_locked() const noexcept {
     return (m_body->cursor()->load(std::memory_order_acquire) & STREAM_LOCK_BIT) != 0;
 }
 
-Span Memory::claim_space(std::size_t bytes) {
+Reservation Memory::claim_space(std::size_t bytes) {
     if (!m_body) {
         throw std::logic_error("IFE::Memory::claim_space on empty handle");
     }
@@ -138,7 +138,7 @@ Span Memory::claim_space(std::size_t bytes) {
         throw std::bad_alloc{};
     }
 
-    Span s;
+    Reservation s;
     s.offset = base_offset;
     s.size   = bytes;
     s.ptr    = m_body->data() + base_offset;
