@@ -88,6 +88,11 @@ namespace detail {
 /// only on first touch.
 class Body {
 public:
+    /// Tag type selecting the open-existing constructor below. Disambiguates
+    /// the path-taking signatures so callers can't accidentally pick the
+    /// fresh-write factory when they meant to resume an existing file.
+    struct OpenExistingTag {};
+
     /// Construct an anonymous, sparse, writable arena of `capacity` bytes.
     explicit Body(std::size_t capacity);
 
@@ -96,6 +101,17 @@ public:
     /// and the mapping is `MAP_SHARED` so writes flow through the page
     /// cache to disk.
     Body(std::size_t capacity, const std::filesystem::path& path);
+
+    /// Open an existing file-backed arena for read+resume. The file must
+    /// already exist; capacity is taken from the on-disk file size and the
+    /// mapping is `MAP_SHARED` (POSIX) / `MapViewOfFile(...,FILE_MAP_ALL_ACCESS)`
+    /// (Windows). The atomic write-head bytes are NOT zeroed — the persisted
+    /// cursor is read straight from disk, exactly the semantics needed to
+    /// resume a previously finalised arena.
+    ///
+    /// Throws `std::system_error` on I/O failure or `std::invalid_argument`
+    /// if the file is shorter than `WRITE_HEAD_BYTES` (cannot host an arena).
+    Body(const std::filesystem::path& path, OpenExistingTag);
 
     ~Body();
 
@@ -219,10 +235,38 @@ public:
     /// `MapViewOfFile` (Windows) so writes persist to disk through the
     /// kernel page cache without a subsequent `write(2)`. The cursor is
     /// re-seeded at `WRITE_HEAD_BYTES`; this factory always treats the
-    /// mapping as a fresh write-target. A future read-mode factory will
-    /// layer on top.
+    /// mapping as a fresh write-target. See `openFromFile` for the
+    /// read/resume counterpart that resumes the cursor in-place.
     static Memory createFromFile(const std::filesystem::path& path,
                                  std::size_t capacity);
+
+    /**
+     * @brief Open an existing IFE file for read + resume.
+     *
+     * Counterpart to `createFromFile`. The file must exist and:
+     *
+     *   1. Be at least `WRITE_HEAD_BYTES + DATA_BLOCK_HEADER_SIZE` bytes
+     *      long (room for the persisted cursor and a FILE_HEADER preamble).
+     *   2. Carry a valid FILE_HEADER block at byte `WRITE_HEAD_BYTES`
+     *      (validation slot == `IFE_FILE_MAGIC`, recovery tag ==
+     *      `RECOVERY_TAG::RESOURCE_HEADER`).
+     *   3. Have a persisted cursor (bytes [0,8)) consistent with the
+     *      on-disk file size — i.e. the file has been finalised by
+     *      `Builder::finalize()` (or another writer that obeys the same
+     *      contract).
+     *
+     * The mapping is read+writable at the file's existing size; further
+     * `claim_space` calls will fail with `std::bad_alloc` because there is
+     * no spare reservation past the persisted extent. The intended use is
+     * pairing with `IFE::Reflective::Node` for zero-copy reads.
+     *
+     * @throws std::system_error    on `open` / `mmap` / Windows API failure.
+     * @throws std::invalid_argument if the file is too small to host an arena
+     *                               or carries an invalid FILE_HEADER preamble.
+     * @throws std::runtime_error   if the persisted cursor disagrees with
+     *                              the file size (truncated / corrupt file).
+     */
+    static Memory openFromFile(const std::filesystem::path& path);
 
     /// True if the handle owns a body.
     explicit operator bool() const noexcept { return static_cast<bool>(m_body); }

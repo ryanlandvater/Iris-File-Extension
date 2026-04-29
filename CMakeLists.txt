@@ -172,6 +172,15 @@ target_compile_definitions (
     PRIVATE IRIS_EXPORT_API=true #Do not export Iris Core Fn-ality
     PRIVATE IFE_EXPORT_API=true 
 )
+if(IFE_USE_FASTFHIR_SUBSTRATE)
+    # Propagate the substrate flag so the legacy IrisCodecExtension.hpp can
+    # emit `[[deprecated]]` annotations on `Abstraction::File` and the
+    # C-style `STORE_*` helpers, pointing consumers at `IFE::Builder` /
+    # `IFE::Reflective::Node`. Substrate-OFF builds do NOT see the
+    # annotation (so legacy consumers stay quiet during the cutover).
+    target_compile_definitions(IrisFileExtensionLib
+                               PUBLIC IFE_USE_FASTFHIR_SUBSTRATE=1)
+endif()
 set_target_properties(
     IrisFileExtensionLib 
     PROPERTIES CXX_VISIBILITY_PRESET hidden
@@ -266,11 +275,13 @@ if(IFE_BUILD_TESTS)
         ife_memory_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_memory_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+        ${IFE_SOURCE_DIR}/IFE_Builder.cpp
     )
-    target_include_directories(ife_memory_tests PRIVATE ${IFE_SOURCE_DIR})
+    target_include_directories(ife_memory_tests PRIVATE ${IFE_IncludeDir})
     target_compile_features(ife_memory_tests PRIVATE cxx_std_20)
     find_package(Threads REQUIRED)
-    target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
+    target_link_libraries(ife_memory_tests PRIVATE
+                          ${IFE_Dependencies} Threads::Threads)
     add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
 
     # IFE_Types header — substrate type system. Self-contained and

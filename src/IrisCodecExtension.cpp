@@ -38,6 +38,20 @@
 #include <math.h>
 #include <float.h>
 #include <iostream>
+
+// Phase 6b: legacy in-translation-unit calls to deprecated APIs (the
+// `STORE_*` helpers and `Abstraction::File`) are intentional — this file
+// IS the legacy implementation. Suppress the diagnostic so substrate-ON
+// builds don't emit a wall of warnings about the file's own internal
+// calls. External callers still see the [[deprecated]] annotation through
+// the public header.
+#if defined(__GNUC__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+    #pragma warning(push)
+    #pragma warning(disable : 4996)
+#endif
 #include <assert.h>
 #include "IrisTypes.hpp"
 #include "IrisBuffer.hpp"
@@ -3390,3 +3404,9 @@ void ANNOTATION_GROUP_BYTES::check_and_fetch_remote(const BYTE *const &base)
 #endif
 } // END SERIALIZATION
 } // END IRIS CODEC
+
+#if defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+    #pragma warning(pop)
+#endif

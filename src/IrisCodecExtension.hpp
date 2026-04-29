@@ -73,6 +73,32 @@
     #endif
 #endif
 
+// -----------------------------------------------------------------------------
+// IFE_LEGACY_DEPRECATED — Phase 6b deprecation marker.
+//
+// When the FastFHIR substrate is built (`IFE_USE_FASTFHIR_SUBSTRATE=ON`),
+// every legacy API surface that the substrate replaces is annotated with
+// `[[deprecated(...)]]`. Substrate-OFF builds see the macro expand to nothing,
+// so existing consumers that haven't opted in to the new API don't get a wall
+// of warnings during the cutover. The replacement APIs (`IFE::Builder`,
+// `IFE::Reflective::Node`, `IFE::Memory::openFromFile`) are documented in
+// `IFE_Builder.hpp` / `IFE_Reflective.hpp` / `IFE_Memory.hpp` and the
+// migration trajectory is recorded in `MIGRATION.md`.
+//
+// The eventual end-state, per `MIGRATION.md`, is for `IrisCodecExtension.cpp`
+// to be deleted entirely and regenerated from `schema/ife_v1.json` on every
+// build (the same way `IFE_Accessors.hpp` is generated today). Until that
+// happens, the legacy API stays linkable; the `[[deprecated]]` annotation is
+// the only warning.
+// -----------------------------------------------------------------------------
+#if defined(IFE_USE_FASTFHIR_SUBSTRATE)
+    #define IFE_LEGACY_DEPRECATED(replacement)                                 \
+        [[deprecated("IFE 2.x: prefer " replacement                            \
+                     " (FastFHIR substrate); see MIGRATION.md")]]
+#else
+    #define IFE_LEGACY_DEPRECATED(replacement)
+#endif
+
 namespace IrisCodec {
 using namespace Iris;
 constexpr Offset   NULL_OFFSET          = UINT64_MAX;
@@ -140,7 +166,7 @@ Result IFE_EXPORT validate_file_structure (BYTE* const __mapped_file_ptr,
  * separately read. This keeps the abstraction layer quick but removes memory bloat.
  */
 // START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
-Abstraction::File IFE_EXPORT abstract_file_structure (BYTE* const __mapped_file_ptr,
+Abstraction::File IFE_LEGACY_DEPRECATED("IFE::Memory::openFromFile + IFE::Reflective::Node") IFE_EXPORT abstract_file_structure (BYTE* const __mapped_file_ptr,
                                                       size_t file_size);
 /**
  * @brief Generate a file map showing the offset locations of header and array blocks with their respective
@@ -154,7 +180,7 @@ Abstraction::File IFE_EXPORT abstract_file_structure (BYTE* const __mapped_file_
  * easier to simply read them into memory and then rewrite them back to disk following the update.
  */
 // ALWAYS CREATE A FILE MAP BEFORE PERFORMING AN UPDATE TO A FILE
-Abstraction::FileMap IFE_EXPORT generate_file_map (BYTE* const __mapped_file_ptr,
+Abstraction::FileMap IFE_LEGACY_DEPRECATED("IFE::Reflective::Node + IFE_Resources dispatch") IFE_EXPORT generate_file_map (BYTE* const __mapped_file_ptr,
                                                    size_t file_size);
 
 #elif /* EMSCRIPTEN WEB ASSEMBLY */ defined __EMSCRIPTEN__
@@ -181,7 +207,7 @@ Result IFE_EXPORT validate_file_structure (const std::string url,
  * separately read. This keeps the abstraction layer quick but removes memory bloat.
  */
 // START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
-Abstraction::File IFE_EXPORT abstract_file_structure (const std::string url,
+Abstraction::File IFE_LEGACY_DEPRECATED("IFE::Memory::openFromFile + IFE::Reflective::Node") IFE_EXPORT abstract_file_structure (const std::string url,
                                                       size_t file_size);
 #endif
 // MARK: - FILE ABSTRACTIONS
@@ -308,8 +334,15 @@ public std::unordered_map<Annotation::Identifier, Annotation> {
  *
  * This is a low-overhead file abstraction that allows for
  * fast access to the underlying slide data.
+ *
+ * @deprecated (substrate-ON only) Replaced by `IFE::Builder` for write paths
+ * and `IFE::Reflective::Node` (built on `IFE::Memory::openFromFile`) for
+ * read paths. The substrate is the source of truth for the new wire format
+ * defined in `schema/ife_v1.json`. Eventually this struct's enclosing
+ * translation unit (`IrisCodecExtension.cpp`) will be deleted and
+ * regenerated from the schema on every build; see MIGRATION.md.
  */
-struct IFE_EXPORT File {
+struct IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::Reflective::Node") IFE_EXPORT File {
     Header              header;
     TileTable           tileTable;
     AssociatedImages    images;
@@ -467,7 +500,7 @@ struct IFE_EXPORT HeaderCreateInfo {
     Offset      tileTableOffset     = NULL_OFFSET;
     Offset      metadataOffset      = NULL_OFFSET;
 };
-void STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&);
+void IFE_LEGACY_DEPRECATED("IFE::Builder::claim_file_header + IFE::accessors::FILE_HEADER::encode") STORE_FILE_HEADER              (BYTE* const __base, const HeaderCreateInfo&);
 #endif
 // MARK: Tile Table Header
 struct IFE_EXPORT TILE_TABLE : DATA_BLOCK {
@@ -528,7 +561,7 @@ struct IFE_EXPORT TileTableCreateInfo {
     uint32_t    widthPixels         = 0;
     uint32_t    heightPixels        = 0;
 };
-void STORE_TILE_TABLE               (BYTE* const __base, const TileTableCreateInfo&);
+void IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::TILE_TABLE::encode") STORE_TILE_TABLE               (BYTE* const __base, const TileTableCreateInfo&);
 
 // MARK: Metadata Header
 struct IFE_EXPORT METADATA : DATA_BLOCK {
@@ -601,7 +634,7 @@ struct IFE_EXPORT MetadataCreateInfo {
     float       micronsPerPixel     = 0.f;
     float       magnification       = 0.f;
 };
-void IFE_EXPORT STORE_METADATA      (BYTE* const __base, const MetadataCreateInfo&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::METADATA::encode") STORE_METADATA      (BYTE* const __base, const MetadataCreateInfo&);
 
 // MARK: ATTRIBUTES
 struct IFE_EXPORT ATTRIBUTES : DATA_BLOCK {
@@ -653,7 +686,7 @@ struct IFE_EXPORT AttributesCreateInfo {
     Offset      sizes               = NULL_OFFSET;
     Offset      bytes               = NULL_OFFSET;
 };
-void STORE_ATTRIBUTES               (BYTE* const __base, const AttributesCreateInfo&);
+void IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::ATTRIBUTES::encode") STORE_ATTRIBUTES               (BYTE* const __base, const AttributesCreateInfo&);
 
 // MARK: - ARRAY DATA TYPES
 // MARK: LAYER EXTENTS (Slide dimensions)
@@ -710,7 +743,7 @@ private:
     #endif
 };
 Size IFE_EXPORT SIZE_EXTENTS        (const LayerExtents&);
-void IFE_EXPORT STORE_EXTENTS       (BYTE* const __base, Offset offset, const LayerExtents&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder::claim_array<LayerExtentBlock>") STORE_EXTENTS       (BYTE* const __base, Offset offset, const LayerExtents&);
 
 // MARK: Tile Offsets (tile lookup table)
 struct IFE_EXPORT TILE_OFFSET {
@@ -765,7 +798,7 @@ private:
     #endif
 };
 Size IFE_EXPORT SIZE_TILE_OFFSETS   (const TileTable::Layers&);
-void IFE_EXPORT STORE_TILE_OFFSETS  (BYTE* const, Offset, const TileTable::Layers&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::TILE_OFFSET") STORE_TILE_OFFSETS  (BYTE* const, Offset, const TileTable::Layers&);
 
 // MARK: ATTRIBUTES SIZES
 struct IFE_EXPORT ATTRIBUTE_SIZE {
@@ -820,7 +853,7 @@ private:
     #endif
 };
 Size IFE_EXPORT SIZE_ATTRIBUTES_SIZES   (const Attributes&);
-void IFE_EXPORT STORE_ATTRIBUTES_SIZES  (BYTE* const __base, Offset, const Attributes&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::ATTRIBUTE_SIZE") STORE_ATTRIBUTES_SIZES  (BYTE* const __base, Offset, const Attributes&);
 
 // MARK: ATTRIBUTES BYTES
 
@@ -859,7 +892,7 @@ private:
     #endif
 };
 Size IFE_EXPORT SIZE_ATTRIBUTES_BYTES   (const Attributes&);
-void IFE_EXPORT STORE_ATTRIBUTES_BYTES  (BYTE* const __base, Offset, const Attributes&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::Memory write head") STORE_ATTRIBUTES_BYTES  (BYTE* const __base, Offset, const Attributes&);
 
 // MARK: - ASSOCIATED IMAGES
 // MARK: IMAGES ARRAY
@@ -934,7 +967,7 @@ struct IFE_EXPORT AssociatedImageCreateInfo {
     Entries     images;
 };
 Size SIZE_IMAGES_ARRAY              (AssociatedImageCreateInfo&);
-void STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCreateInfo&);
+void IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::IMAGE_ENTRY") STORE_IMAGES_ARRAY             (BYTE* const __base, const AssociatedImageCreateInfo&);
 
 // MARK: IMAGE_BYTES
 struct IFE_EXPORT IMAGE_BYTES : DATA_BLOCK {
@@ -980,7 +1013,7 @@ struct IFE_EXPORT ImageBytesCreateInfo {
     size_t      dataBytes           = 0;
 };
 Size IFE_EXPORT SIZE_IMAGES_BYTES   (const ImageBytesCreateInfo&);
-void IFE_EXPORT STORE_IMAGES_BYTES  (BYTE* const __base, const ImageBytesCreateInfo&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::Memory write head") STORE_IMAGES_BYTES  (BYTE* const __base, const ImageBytesCreateInfo&);
 
 // MARK: - ICC Color Profile
 
@@ -1018,7 +1051,7 @@ private:
     #endif
 };
 Size SIZE_ICC_COLOR_PROFILE         (const std::string& color_profile);
-void STORE_ICC_COLOR_PROFILE        (BYTE* const __base, Offset, const std::string& color_profile);
+void IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::ICC_PROFILE") STORE_ICC_COLOR_PROFILE        (BYTE* const __base, Offset, const std::string& color_profile);
 
 // MARK: - Annotation Arrays
 struct IFE_EXPORT ANNOTATION_ENTRY {
@@ -1123,7 +1156,7 @@ struct IFE_EXPORT AnnotationArrayCreateInfo {
 };
 Size IFE_EXPORT SIZE_ANNOTATION_ARRAY   (const AnnotationArrayCreateInfo&);
 #ifndef __EMSCRIPTEN__
-void IFE_EXPORT STORE_ANNOTATION_ARRAY  (BYTE* const __base, const AnnotationArrayCreateInfo&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::accessors::ANNOTATION_ENTRY") STORE_ANNOTATION_ARRAY  (BYTE* const __base, const AnnotationArrayCreateInfo&);
 #endif
 
 // MARK: ANNOTATION BYTES
@@ -1163,7 +1196,7 @@ private:
 };
 Size IFE_EXPORT SIZE_ANNOTATION_BYTES   (const IrisCodec::Annotation&);
 #ifndef __EMSCRIPTEN__
-void IFE_EXPORT STORE_ANNOTATION_BYTES  (BYTE* const __base, Offset, const IrisCodec::Annotation&);
+void IFE_EXPORT IFE_LEGACY_DEPRECATED("IFE::Builder + IFE::Memory write head") STORE_ANNOTATION_BYTES  (BYTE* const __base, Offset, const IrisCodec::Annotation&);
 #endif
 
 // MARK: ANNOTATION GROUPS

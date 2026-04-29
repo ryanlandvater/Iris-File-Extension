@@ -127,8 +127,8 @@ void test_datatype_round_trips() {
     {
         std::uint8_t buf[::IFE::datatypes::TILE_OFFSET::wire_size] = {};
         ::IFE::datatypes::TILE_OFFSET in{};
-        in.OFFSET    = 0xFEDCBA9876ULL;       // max 40-bit
-        in.TILE_SIZE = 0x00ABCDEFu;           // fits in 24 bits
+        in.OFFSET    = 0xFEDCBA9876ULL;       // representative 40-bit value
+        in.TILE_SIZE = 0x00ABCDEFu;           // representative 24-bit value
         A::TILE_OFFSET::encode(buf, in);
         const auto out = A::TILE_OFFSET::decode(buf);
         IFE_REQUIRE(out.OFFSET    == in.OFFSET);

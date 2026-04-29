@@ -1,6 +1,6 @@
 # IFE 2.x Migration — FastFHIR Substrate
 
-> **Status:** in progress (Phases 1-6a landed; Phase 6b pending blockers). Targeted version: `2.0.0-alpha`.
+> **Status:** in progress (Phases 1-6a landed; Phase 6b partially landed — accessors + read-mode factory + deprecation in this PR; ON-by-default cutover and `IrisCodecExtension.cpp` regeneration remain blocked on the parity corpus). Targeted version: `2.0.0-alpha`.
 
 The Iris File Extension is migrating from the eager-mapping `Abstraction::File`
 pattern to a lock-free Virtual Memory Arena (VMA) substrate ported from
@@ -43,7 +43,8 @@ affected until they explicitly opt in.
 | 4 | Universal 10-byte `DATA_BLOCK` header, `Builder::amend_pointer` | ✅ landed (this PR) |
 | 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, `Span<T>` (removes `std::vector` from substrate read paths) | ✅ landed (this PR) |
 | 6a | `IFE_Reflective::Node`/`Entry` zero-copy lens, `Builder::finalize()` | ✅ landed (this PR) |
-| 6b | Deprecate `Abstraction::File`, flip flag default ON, read-mode `Memory::createFromFile` | pending blockers |
+| 6b (partial) | Codegen `IFE_Accessors.hpp`, `Memory::openFromFile`, `[[deprecated]]` on `Abstraction::File` + `STORE_*` helpers | ✅ landed (this PR) |
+| 6b (cutover) | Flip `IFE_USE_FASTFHIR_SUBSTRATE` default ON; delete `IrisCodecExtension.cpp` and regenerate it from `schema/ife_v1.json` | pending parity corpus |
 
 ## Phase 1 — what landed
 
@@ -570,50 +571,132 @@ What the pass dropped:
 Substrate-OFF builds remain byte-identical. `IrisCodecExtension.{hpp,cpp}`
 is unchanged — it remains the legacy write/read path until Phase 6b.
 
-## Phase 6b — pending
+## Phase 6b — partial: substrate-side cutover landed
 
-Phase 6b is the substrate-OFF→ON cutover **and** the retirement of the
-hand-written serializer in `IrisCodecExtension.cpp` in favour of codegen.
-It removes the dormancy guarantee that has held since Phase 1 and turns
-the substrate into the default write path. It has explicit prerequisites:
+This PR lands the substrate-side work that does **not** require a parity
+corpus or an ABI break, plus the codegen scaffolding that the eventual
+full cutover will compose into a regenerated serializer. The flag default
+stays **OFF**; substrate-OFF builds remain byte-identical to today.
 
-1. **FastFHIR source pointer** (`FF_Memory`, `ffc.py`). Phase 1's lock-free
-   VMA semantics were inferred from the migration spec; Phase 6b's
-   builder/reader cutover should be cross-checked against the upstream
-   reference implementation before becoming the default.
-2. **`Abstraction::File` ABI-break confirmation.** Phase 6b deprecates the
-   legacy `IrisCodec::Abstraction::File` API in favour of `IFE::Builder` +
-   `IFE::Reflective::Node`. Today every consumer of this repository links
-   against that API; the break must be acknowledged by the dependent
-   tree (`Iris-Codec`, etc.) before landing.
-3. **Real-`.iris` parity corpus.** Flipping
-   `IFE_USE_FASTFHIR_SUBSTRATE` default to ON requires byte-exact
-   round-trip parity against a representative set of `.iris` files —
-   the same corpus that gates the eventual deprecation cutover.
-4. **Read-mode `Memory::createFromFile`.** Today the file factory always
-   re-seeds the cursor (treats the mapping as a fresh write target). A
-   read-mode factory that validates the FILE_HEADER preamble and resumes
-   the cursor at the persisted `FILE_SIZE` is the natural pair with
-   `Reflective::Node` once a corpus exists to test against.
+### What landed in this PR
 
-When (1)–(4) are unblocked, Phase 6b will:
+1. **Codegen-emitted `IFE_Accessors.hpp`.** `tools/ifc.py` now emits a
+   sixth header containing:
 
-* Add `Memory::openFromFile(path)` (read-mode factory).
-* **Extend `tools/ifc.py` to emit per-resource serializer source** —
+   * `accessors::detail` packed-LE primitives — `load_uN_le<N>` /
+     `store_uN_le<N>` (alignment-safe `memcpy`), `sign_extend_uN<N>` for
+     `int24` / `int40`, plus per-type `load_uint24` / `load_uint40` /
+     `load_int24` / `load_int40` / `load_float16_raw` / `load_f32` /
+     `load_f64` and their `store_*` counterparts. Call sites never deal
+     with bit shifts or sign extension.
+   * Per-datatype `decode(buf) -> ::IFE::datatypes::<DT>` and
+     `encode(buf, value)` for every entry in `schema.datatypes`
+     (`LAYER_EXTENT`, `TILE_OFFSET` with `uint40`+`uint24`,
+     `ATTRIBUTE_SIZE`, `IMAGE_ENTRY`, `ANNOTATION_ENTRY` with `uint24`
+     plus floats, `ANNOTATION_GROUP_SIZE`).
+   * Per-resource `read_<FIELD>(block_base)` / `write_<FIELD>(block_base,
+     v)` inlines for every field of every resource, plus a generated
+     `Record` POD and `decode(block_base) -> Record` /
+     `encode(block_base, record)` resource-level round-trippers.
+
+   These are the building blocks that a future PR will compose into the
+   full per-resource serializer (the same `read_<RES>` / `write_<RES>`
+   functions called out earlier in this document) — the path to the
+   eventual deletion of `IrisCodecExtension.cpp` and its regeneration
+   from `schema/ife_v1.json` on every build.
+
+2. **`IFE::Memory::openFromFile(path)` read-mode factory.** Counterpart
+   to `createFromFile`. Opens an existing file at its current size, maps
+   it `MAP_SHARED` / `FILE_MAP_ALL_ACCESS`, validates the FILE_HEADER
+   preamble (`IFE_FILE_MAGIC` + `RESOURCE_HEADER` recovery tag), and
+   cross-checks the persisted FILE_SIZE against the on-disk size. The
+   atomic write-head bytes are NOT zeroed, so the cursor resumes
+   exactly where `Builder::finalize()` left it. Pairs end-to-end with
+   `Reflective::Node` for zero-copy reads.
+
+3. **`[[deprecated]]` on the legacy API surface.** `IrisCodec::Abstraction::File`,
+   `abstract_file_structure`, `generate_file_map`, and all 13 `STORE_*`
+   bytes-in helpers now carry an `IFE_LEGACY_DEPRECATED(...)` annotation
+   that expands to `[[deprecated("IFE 2.x: prefer ..." )]]` only when
+   built against `IFE_USE_FASTFHIR_SUBSTRATE=ON`. Substrate-OFF
+   consumers see no deprecation warnings (matching the dormancy
+   guarantee). Every annotation names its substrate replacement (e.g.
+   `STORE_FILE_HEADER` → `IFE::Builder::claim_file_header +
+   IFE::accessors::FILE_HEADER::encode`). The legacy `.cpp` opens with
+   a localised `-Wdeprecated-declarations` suppression so the file's
+   own internal calls don't warn against itself.
+
+4. **Tests.** `tests/ife_accessors_tests.cpp` round-trips every datatype
+   and every fixed-layout resource record through the new accessors,
+   covers the `int24` / `int40` sign-extension boundary, and asserts
+   reflective parity with `IFE::Reflective::Node::field<T>`.
+   `tests/ife_memory_tests.cpp` gains an `openFromFile` round-trip
+   (Builder → finalize → re-open via the new factory → walk with the
+   reflective lens) plus rejection cases for missing / too-small /
+   garbage-magic inputs.
+
+### Why a `IrisCodecExtension.cpp` refactor is *not* in this PR
+
+The original Phase 6b plan called for refactoring the hand-written
+`STORE_*` / `read_*` paths in `IrisCodecExtension.cpp` to call the new
+codegen accessors. **This is not possible without a wire-format break:**
+
+* The substrate's wire format (`schema/ife_v1.json`, surfaced through
+  `IFE_VTables.hpp` and the new `IFE_Accessors.hpp`) is a fresh design.
+  The universal preamble is `VALIDATION` (uint64) at byte 0 + `RECOVERY`
+  (uint16) at byte 8, exactly as documented in [Phase 4 — what landed]
+  (#phase-4--what-landed) and the very first paragraph of this document.
+* The legacy `IrisCodec::Serialization::FILE_HEADER` layout (and every
+  other resource) leads with `MAGIC_BYTES` (uint32) at byte 0 + `RECOVERY`
+  (uint16) at byte 4 — different field, different width, different
+  offset.
+
+Calling the codegen accessors from `IrisCodecExtension.cpp` would
+therefore change the on-disk byte layout of every resource the legacy
+file emits. That is precisely the wire-format cutover gated by
+prerequisite (3) below — it cannot ship without the parity corpus that
+proves byte-exact round-trip across real `.iris` files.
+
+### What still has to happen for full Phase 6b
+
+The remaining steps are the same four that gated Phase 6b before this
+PR landed, with one item retired:
+
+1. **FastFHIR source pointer** (`FF_Memory`, `ffc.py`). Phase 1's
+   lock-free VMA semantics were inferred from the migration spec;
+   the builder/reader cutover should be cross-checked against the
+   upstream reference implementation before becoming the default.
+2. **`Abstraction::File` ABI-break confirmation.** Today every
+   consumer of this repository links against the legacy API; the
+   break must be acknowledged by the dependent tree (`Iris-Codec`,
+   etc.) before the deprecation graduates from a warning to a removal.
+   The `[[deprecated]]` annotations from this PR are the warning step.
+3. **Real-`.iris` parity corpus.** Flipping the substrate default to
+   ON requires byte-exact round-trip parity against a representative
+   set of `.iris` files — the same corpus that gates the eventual
+   wire-format cutover.
+4. ~~**Read-mode `Memory::createFromFile`.**~~ ✅ Landed in this PR
+   as `Memory::openFromFile(path)`.
+
+When (1)–(3) are unblocked, the **final** Phase 6b step is:
+
+* **Delete `IrisCodecExtension.cpp` and regenerate it from the
+  schema on every build.** Extend `tools/ifc.py` to emit
   `IFE_Serializers.hpp` / `.cpp` containing one `read_<RES>` and one
-  `write_<RES>` function per schema resource, generated directly from
-  the same JSON schema that already drives the offset/size vtables.
-  This is the largest net-LOC reduction in the migration: the
-  hand-written `IrisCodecExtension.cpp` serialization (≈3.4k lines of
-  bespoke `STORE_U64` / `LOAD_U32` calls) collapses to a few hundred
-  lines of generated dispatch plus the user-visible `Abstraction::File`
-  shim. Codegen *generating* the serializer is precisely what the
-  schema-driven design was always intended to enable.
-* Mark `IrisCodec::Abstraction::File` and its bytes-in/bytes-out helpers
-  with `[[deprecated]]` and document the `IFE::Builder` / `Reflective::Node`
-  replacement path.
+  `write_<RES>` per schema resource, generated directly from the same
+  JSON schema that already drives the offset/size vtables AND the new
+  per-(resource, field) accessors from this PR. The hand-written
+  `IrisCodecExtension.cpp` (~3.4k lines of bespoke `STORE_U64` /
+  `LOAD_U32` calls) is deleted; the public `Abstraction::File` API
+  becomes a thin shim over the regenerated serializer (or is removed
+  outright once the ABI break is confirmed). This is the largest net-
+  LOC reduction in the migration, and the codegen-emitted accessors
+  from this PR are the foundation it composes from.
+
 * Flip `option(IFE_USE_FASTFHIR_SUBSTRATE … OFF)` to `ON`, behind a
-  feature gate that downstream consumers can flip back during their own
-  cutover.
+  feature gate that downstream consumers can flip back during their
+  own cutover.
+
 * Add a `tests/ife_corpus_parity_tests.cpp` driven by the real-`.iris`
-  corpus, asserting byte-exact round-trip through the new write/read path.
+  corpus, asserting byte-exact round-trip through the regenerated
+  write/read path.

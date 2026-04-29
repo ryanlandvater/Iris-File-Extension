@@ -9,6 +9,9 @@
 #include <system_error>
 #include <thread>
 
+#include "IFE_DataBlock.hpp"
+#include "IFE_VTables.hpp"
+
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
@@ -132,6 +135,60 @@ void* map_file(const std::filesystem::path& path,
     return view;
 }
 
+// Open an existing file at its current size and map it RW. Used by
+// `Body(path, OpenExistingTag)` — the resume path that does NOT zero the
+// arena's first 16 bytes (so the persisted cursor survives the open).
+// `size_out` receives the on-disk file size. Throws on missing file,
+// `INVALID_FILE_SIZE`, or any mapping API failure.
+void* open_existing_file(const std::filesystem::path& path,
+                         void*&                       file_handle_out,
+                         void*&                       section_handle_out,
+                         std::size_t&                 size_out) {
+    const std::string narrow = path.string();
+    HANDLE file = ::CreateFileA(
+        narrow.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        throw_winerror("IFE::Memory::openFromFile: CreateFileA(OPEN_EXISTING) failed");
+    }
+    LARGE_INTEGER fsz{};
+    if (!::GetFileSizeEx(file, &fsz) || fsz.QuadPart <= 0) {
+        const DWORD code = ::GetLastError();
+        ::CloseHandle(file);
+        throw std::system_error(static_cast<int>(code),
+                                std::system_category(),
+                                "IFE::Memory::openFromFile: GetFileSizeEx failed");
+    }
+    const std::size_t capacity = static_cast<std::size_t>(fsz.QuadPart);
+    HANDLE section = ::CreateFileMappingA(
+        file, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+    if (section == nullptr) {
+        const DWORD code = ::GetLastError();
+        ::CloseHandle(file);
+        throw std::system_error(static_cast<int>(code),
+                                std::system_category(),
+                                "IFE::Memory::openFromFile: CreateFileMappingA failed");
+    }
+    void* view = ::MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, capacity);
+    if (view == nullptr) {
+        const DWORD code = ::GetLastError();
+        ::CloseHandle(section);
+        ::CloseHandle(file);
+        throw std::system_error(static_cast<int>(code),
+                                std::system_category(),
+                                "IFE::Memory::openFromFile: MapViewOfFile failed");
+    }
+    file_handle_out    = file;
+    section_handle_out = section;
+    size_out           = capacity;
+    return view;
+}
+
 #else // POSIX
 
 [[noreturn]] void throw_errno(const char* what) {
@@ -178,6 +235,44 @@ void* map_file(const std::filesystem::path& path,
     return p;
 }
 
+// Open an existing file, fstat it for size, and map it RW at exactly that
+// size. Used by `Body(path, OpenExistingTag)`. Does NOT truncate or zero
+// any bytes — the persisted cursor in the first 8 bytes is left intact so
+// `Memory::openFromFile` can resume the arena.
+void* open_existing_file(const std::filesystem::path& path,
+                         int&                         fd_out,
+                         std::size_t&                 size_out) {
+    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        throw_errno("IFE::Memory::openFromFile: open() failed");
+    }
+    struct stat st{};
+    if (::fstat(fd, &st) != 0) {
+        const int code = errno;
+        ::close(fd);
+        throw std::system_error(code, std::generic_category(),
+                                "IFE::Memory::openFromFile: fstat() failed");
+    }
+    if (st.st_size <= 0) {
+        ::close(fd);
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: file is empty");
+    }
+    const std::size_t capacity = static_cast<std::size_t>(st.st_size);
+    void* p = ::mmap(nullptr, capacity,
+                     PROT_READ | PROT_WRITE,
+                     MAP_SHARED, fd, 0);
+    if (p == MAP_FAILED) {
+        const int code = errno;
+        ::close(fd);
+        throw std::system_error(code, std::generic_category(),
+                                "IFE::Memory::openFromFile: mmap(MAP_SHARED) failed");
+    }
+    fd_out   = fd;
+    size_out = capacity;
+    return p;
+}
+
 #endif // _WIN32
 
 } // namespace
@@ -207,6 +302,30 @@ Body::Body(std::size_t capacity, const std::filesystem::path& path)
     m_arena = static_cast<std::uint8_t*>(map_file(path, capacity, m_os_fd));
 #endif
     seed_cursor();
+}
+
+Body::Body(const std::filesystem::path& path, OpenExistingTag) {
+    // Open an existing file at its current size and map it RW. The
+    // persisted cursor at bytes [0,8) is left intact (no `seed_cursor`),
+    // so `Memory::openFromFile` can validate the FILE_HEADER preamble
+    // against the in-place data.
+#ifdef _WIN32
+    std::size_t cap = 0;
+    m_arena = static_cast<std::uint8_t*>(
+        open_existing_file(path, m_file_handle, m_os_handle, cap));
+    m_capacity = cap;
+#else
+    std::size_t cap = 0;
+    m_arena = static_cast<std::uint8_t*>(
+        open_existing_file(path, m_os_fd, cap));
+    m_capacity = cap;
+#endif
+    if (m_capacity < WRITE_HEAD_BYTES) {
+        // Caller (`openFromFile`) re-checks this with a more specific
+        // message, but be defensive in the constructor as well.
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: file shorter than WRITE_HEAD_BYTES");
+    }
 }
 
 void Body::seed_cursor() {
@@ -334,6 +453,63 @@ Memory Memory::create(std::size_t capacity) {
 Memory Memory::createFromFile(const std::filesystem::path& path,
                               std::size_t                  capacity) {
     return Memory{std::make_shared<detail::Body>(capacity, path)};
+}
+
+Memory Memory::openFromFile(const std::filesystem::path& path) {
+    auto body = std::make_shared<detail::Body>(path,
+                                               detail::Body::OpenExistingTag{});
+    // The file must hold the cursor + a FILE_HEADER preamble at the
+    // canonical offset. (`Body` already verified WRITE_HEAD_BYTES; we
+    // re-check here with a more specific message and the additional
+    // FILE_HEADER size requirement.)
+    const std::size_t cap = body->capacity();
+    if (cap < WRITE_HEAD_BYTES + DATA_BLOCK_HEADER_SIZE) {
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: file too small to host an arena "
+            "(cursor + FILE_HEADER preamble do not fit)");
+    }
+    const std::uint8_t* arena = body->data();
+    // Validate the FILE_HEADER preamble. The block lives at byte
+    // WRITE_HEAD_BYTES (offset 16 — the first 16 bytes are the cursor +
+    // reserved slot, exactly as `Builder::claim_file_header` lays it out).
+    const std::uint8_t* hdr = arena + WRITE_HEAD_BYTES;
+    if (!is_file_magic(hdr)) {
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: missing IFE_FILE_MAGIC at FILE_HEADER "
+            "offset (file is not an IFE arena, or has been corrupted)");
+    }
+    const auto h = read_header(hdr);
+    if (h.tag() != RECOVERY_TAG::RESOURCE_HEADER) {
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: FILE_HEADER preamble carries an "
+            "unexpected recovery tag (expected RESOURCE_HEADER)");
+    }
+    // Cross-check the persisted FILE_SIZE against the actual file size.
+    // `Builder::finalize()` stamps both (and truncates the file to that
+    // length) so a well-formed arena round-trips this comparison exactly.
+    static_assert(vtables::FILE_HEADER::size::FILE_SIZE ==
+                  sizeof(std::uint64_t),
+                  "FILE_HEADER::FILE_SIZE must be 64-bit");
+    if (cap < WRITE_HEAD_BYTES + vtables::FILE_HEADER::offset::FILE_SIZE +
+              sizeof(std::uint64_t)) {
+        throw std::invalid_argument(
+            "IFE::Memory::openFromFile: file shorter than FILE_HEADER body "
+            "(cannot read FILE_SIZE)");
+    }
+    std::uint64_t persisted_size = 0;
+    std::memcpy(&persisted_size,
+                hdr + vtables::FILE_HEADER::offset::FILE_SIZE,
+                sizeof(persisted_size));
+    if (persisted_size != cap) {
+        throw std::runtime_error(
+            "IFE::Memory::openFromFile: FILE_HEADER FILE_SIZE disagrees with "
+            "on-disk file size (truncated, partial write, or pre-finalize "
+            "arena)");
+    }
+    // The persisted cursor at bytes [0,8) is left in place — `Body`
+    // skipped `seed_cursor` for OpenExistingTag, so a subsequent
+    // `Memory::write_head()` reads the value the writer last committed.
+    return Memory{std::move(body)};
 }
 
 void Memory::truncate_file(std::size_t size) {
