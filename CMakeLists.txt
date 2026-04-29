@@ -8,6 +8,14 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Always emit position-independent code. The IrisFileExtensionLib OBJECT
+# library is linked into both the static and shared library targets, so its
+# objects must be PIC even when consumers only build the static archive
+# (otherwise the shared-library link fails on platforms that require PIC,
+# e.g. x86_64 Linux). Setting it globally also covers the test executables
+# and any future targets.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
     if (NOT EXISTS ${IFE_core_header})
@@ -85,8 +93,9 @@ set (
 )
 if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Types.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phase 1: IFE_Memory)")
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-2: IFE_Memory, IFE_Types)")
 endif()
 set (
     IFE_IncludeDir
@@ -216,4 +225,16 @@ if(IFE_BUILD_TESTS)
     find_package(Threads REQUIRED)
     target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
     add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
+
+    # Phase 2 — IFE_Types header. Pulls in IrisCodecExtension.hpp for the
+    # legacy<->tag round-trip pinning, so it needs the same include paths
+    # (IrisHeaders + IFE source) as the main library.
+    add_executable(
+        ife_types_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_types_tests.cpp
+    )
+    target_include_directories(ife_types_tests PRIVATE ${IFE_IncludeDir})
+    target_compile_features(ife_types_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_types_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_types_tests COMMAND ife_types_tests)
 endif()
