@@ -1,6 +1,6 @@
 # IFE 2.x Migration — FastFHIR Substrate
 
-> **Status:** in progress (Phases 1-5 of 6 landed). Targeted version: `2.0.0-alpha`.
+> **Status:** in progress (Phases 1-6a landed; Phase 6b pending blockers). Targeted version: `2.0.0-alpha`.
 
 The Iris File Extension is migrating from the eager-mapping `Abstraction::File`
 pattern to a lock-free Virtual Memory Arena (VMA) substrate ported from
