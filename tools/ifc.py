@@ -2,8 +2,8 @@
 """ifc.py — Iris File Compiler.
 
 Schema-driven codegen for the Iris File Extension. Reads a JSON description
-of the IFE binary container format and emits five C++ headers consumed by
-the FastFHIR substrate (Phase 3 of the substrate migration):
+of the IFE binary container format and emits six C++ headers consumed by
+the FastFHIR substrate (Phase 3+ of the substrate migration):
 
     IFE_DataTypes.hpp        POD reflective structs for sub-block datatypes.
     IFE_VTables.hpp          Per-resource constexpr field offsets / sizes /
@@ -15,6 +15,13 @@ the FastFHIR substrate (Phase 3 of the substrate migration):
                              one table lookup instead of two N-way switches.
     IFE_FieldKeys_wasm.hpp   __EMSCRIPTEN__-gated extern "C" reflection
                              surface (stubs; wired in later phases).
+    IFE_Accessors.hpp        Phase 6b — named per-(resource, field)
+                             read_*/write_* inline functions plus per-
+                             datatype encode_*/decode_* helpers, including
+                             uint24/uint40 packed-LE specializations. The
+                             foundation for the eventual full per-resource
+                             serializer that will replace the hand-written
+                             IrisCodecExtension.cpp on regeneration.
 
 Stdlib-only — no jinja2 dependency. `--check` mode is for CI: regenerate
 to a temp directory and diff against the on-disk files; non-zero exit if
@@ -371,6 +378,306 @@ def gen_field_keys_wasm(schema: Dict[str, Any], schema_label: str) -> str:
 
 
 # -----------------------------------------------------------------------------
+# IFE_Accessors.hpp — Phase 6b named per-(resource, field) read/write helpers.
+#
+# Two layers of generated helpers:
+#
+#   1. Per-datatype `decode_<DT>(buf) -> DT` and `encode_<DT>(buf, value)` for
+#      every entry in `schema.datatypes`. These do alignment-safe memcpy loads
+#      and stores against the wire layout, including narrow-packed
+#      uint24/uint40/int24/int40 fields (read from N bytes, widened to the
+#      natural C++ integer type with the schema-declared signedness).
+#
+#   2. Per-resource `read_<FIELD>(block_base) -> T` and `write_<FIELD>(
+#      block_base, T)` for every field of every resource. `block_base` is a
+#      pointer to the first byte of the universal preamble; the field offset
+#      from `IFE_VTables.hpp` is added internally so call sites never deal
+#      with offsets directly. Resource-level `encode(buf, ...)` /
+#      `decode(buf) -> Record` round-trippers are also emitted, taking
+#      every field as a parameter / returning a generated POD record.
+#
+# Together these are the building blocks that future phases will compose into
+# the full schema-regenerated `IrisCodecExtension.cpp` replacement (per the
+# trajectory documented in MIGRATION.md). They are independent of the legacy
+# wire format: the schema defines the substrate's on-disk layout; once the
+# legacy layout is captured in the schema (or the wire format is unified)
+# these accessors become the only serializer.
+# -----------------------------------------------------------------------------
+
+# Maps schema type -> (load_expr_template, store_expr_template, cpp_record_type,
+# wire_size, signed). Templates expand `{p}` to the byte pointer and `{v}` to
+# the value being stored.
+#
+# Standard widths use plain `std::memcpy` against the natural C++ integer.
+# Narrow widths (uint24/uint40 and signed counterparts) are packed little-
+# endian: read N bytes, widen, optionally sign-extend; store low N bytes of
+# the value.
+
+
+def _accessor_helpers() -> str:
+    """Inline namespace `accessors::detail` with the packed-LE primitives that
+    the per-field accessors call. Hand-written to keep the templates simple."""
+    return r"""
+namespace detail {
+
+// Alignment-safe little-endian load of `N` bytes into a uint64_t accumulator.
+template <std::size_t N>
+inline std::uint64_t load_uN_le(const std::uint8_t* p) noexcept {
+    static_assert(N >= 1 && N <= 8, "load_uN_le: N must be 1..8");
+    std::uint64_t v = 0;
+    std::memcpy(&v, p, N);
+    return v;
+}
+
+// Alignment-safe little-endian store of the low `N` bytes of `v` to `p`.
+template <std::size_t N>
+inline void store_uN_le(std::uint8_t* p, std::uint64_t v) noexcept {
+    static_assert(N >= 1 && N <= 8, "store_uN_le: N must be 1..8");
+    std::memcpy(p, &v, N);
+}
+
+// Sign-extend an `N`-byte two's-complement integer that lives in the low bits
+// of a uint64 to a full int64. Used for int24 / int40.
+template <std::size_t N>
+inline std::int64_t sign_extend_uN(std::uint64_t v) noexcept {
+    static_assert(N >= 1 && N <= 8, "sign_extend_uN: N must be 1..8");
+    constexpr std::uint64_t sign_bit = 1ULL << (N * 8 - 1);
+    constexpr std::uint64_t mask     = (N == 8) ? ~0ULL : ((1ULL << (N * 8)) - 1ULL);
+    v &= mask;
+    if (v & sign_bit) {
+        v |= ~mask;
+    }
+    return static_cast<std::int64_t>(v);
+}
+
+// Packed-LE load helpers for the narrow-width types in the schema. Names match
+// the schema `type` strings so codegen can emit a uniform call.
+inline std::uint32_t load_uint24(const std::uint8_t* p) noexcept {
+    return static_cast<std::uint32_t>(load_uN_le<3>(p));
+}
+inline std::uint64_t load_uint40(const std::uint8_t* p) noexcept {
+    return load_uN_le<5>(p);
+}
+inline std::int32_t load_int24(const std::uint8_t* p) noexcept {
+    return static_cast<std::int32_t>(sign_extend_uN<3>(load_uN_le<3>(p)));
+}
+inline std::int64_t load_int40(const std::uint8_t* p) noexcept {
+    return sign_extend_uN<5>(load_uN_le<5>(p));
+}
+// float16 is passed through as its raw 16-bit storage; the caller is responsible
+// for any IEEE-half decode (or platform-specific NON_IEEE handling, mirroring the
+// legacy IrisCodecExtension.cpp F16_CONVERT_NON_IEEE path).
+inline std::uint16_t load_float16_raw(const std::uint8_t* p) noexcept {
+    std::uint16_t v = 0;
+    std::memcpy(&v, p, sizeof(v));
+    return v;
+}
+
+inline void store_uint24(std::uint8_t* p, std::uint32_t v) noexcept {
+    store_uN_le<3>(p, v);
+}
+inline void store_uint40(std::uint8_t* p, std::uint64_t v) noexcept {
+    store_uN_le<5>(p, v);
+}
+inline void store_int24(std::uint8_t* p, std::int32_t v) noexcept {
+    store_uN_le<3>(p, static_cast<std::uint64_t>(static_cast<std::uint32_t>(v)));
+}
+inline void store_int40(std::uint8_t* p, std::int64_t v) noexcept {
+    store_uN_le<5>(p, static_cast<std::uint64_t>(v));
+}
+inline void store_float16_raw(std::uint8_t* p, std::uint16_t v) noexcept {
+    std::memcpy(p, &v, sizeof(v));
+}
+
+inline float load_f32(const std::uint8_t* p) noexcept {
+    float v; std::memcpy(&v, p, sizeof(v)); return v;
+}
+inline void store_f32(std::uint8_t* p, float v) noexcept {
+    std::memcpy(p, &v, sizeof(v));
+}
+inline double load_f64(const std::uint8_t* p) noexcept {
+    double v; std::memcpy(&v, p, sizeof(v)); return v;
+}
+inline void store_f64(std::uint8_t* p, double v) noexcept {
+    std::memcpy(p, &v, sizeof(v));
+}
+
+}  // namespace detail
+"""
+
+
+# Per-type read/write expression generators. Returns a (load_expr, store_expr)
+# pair where `{p}` is the byte pointer placeholder and `{v}` is the value.
+def _accessor_exprs(type_name: str) -> Dict[str, str]:
+    info = type_info(type_name)
+    cpp = info["cpp"]
+    size = info["size"]
+    if type_name in ("uint24", "uint40", "int24", "int40"):
+        return {
+            "cpp":   cpp,
+            "load":  f"::IFE::accessors::detail::load_{type_name}({{p}})",
+            "store": f"::IFE::accessors::detail::store_{type_name}({{p}}, {{v}})",
+        }
+    if type_name == "float16":
+        return {
+            "cpp":   "std::uint16_t",
+            "load":  "::IFE::accessors::detail::load_float16_raw({p})",
+            "store": "::IFE::accessors::detail::store_float16_raw({p}, {v})",
+        }
+    # Standard width: alignment-safe memcpy via load_uN_le / store_uN_le with
+    # a reinterpret to the natural C++ type. Using the helpers keeps the
+    # generated body uniform and means a future endianness change only has
+    # to touch detail::.
+    if cpp == "float":
+        return {
+            "cpp":   cpp,
+            "load":  "::IFE::accessors::detail::load_f32({p})",
+            "store": "::IFE::accessors::detail::store_f32({p}, {v})",
+        }
+    if cpp == "double":
+        return {
+            "cpp":   cpp,
+            "load":  "::IFE::accessors::detail::load_f64({p})",
+            "store": "::IFE::accessors::detail::store_f64({p}, {v})",
+        }
+    # Integer widths.
+    return {
+        "cpp":   cpp,
+        "load":  f"static_cast<{cpp}>(::IFE::accessors::detail::load_uN_le<{size}>({{p}}))",
+        "store": (f"::IFE::accessors::detail::store_uN_le<{size}>({{p}}, "
+                   f"static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<{cpp}>>({{v}})))"),
+    }
+
+
+def gen_accessors(schema: Dict[str, Any], schema_label: str) -> str:
+    out: List[str] = []
+    out.append(GENERATED_BANNER.format(schema=schema_label))
+    out.append("#ifndef IFE_Accessors_hpp")
+    out.append("#define IFE_Accessors_hpp")
+    out.append("")
+    out.append("#include <cstddef>")
+    out.append("#include <cstdint>")
+    out.append("#include <cstring>")
+    out.append("#include <type_traits>")
+    out.append("")
+    out.append('#include "IFE_DataTypes.hpp"')
+    out.append('#include "IFE_VTables.hpp"')
+    out.append("")
+    out.append("// =============================================================================")
+    out.append("// IFE::accessors — named per-(resource, field) read/write helpers.")
+    out.append("//")
+    out.append("// Every helper takes a `block_base` pointer to the first byte of the")
+    out.append("// universal DATA_BLOCK preamble. The codegen vtable supplies the field's")
+    out.append("// offset within the block. Loads are alignment-safe (memcpy) and the")
+    out.append("// uint24/uint40/int24/int40 narrow-packed widths use the explicit packed-LE")
+    out.append("// primitives in `accessors::detail` so call sites never deal with bit")
+    out.append("// shifts or sign-extension. Per-datatype encode_/decode_ helpers operate")
+    out.append("// on a buffer pointer directly (no preamble) and are the building blocks")
+    out.append("// for IFE_ARRAY element encoding.")
+    out.append("// =============================================================================")
+    out.append("")
+    out.append("namespace IFE {")
+    out.append("namespace accessors {")
+    out.append(_accessor_helpers().rstrip("\n"))
+    out.append("")
+
+    # ---- Per-datatype encode/decode -----------------------------------------
+    out.append("// ---- Datatype encode / decode ------------------------------------------")
+    for dt in schema["datatypes"]:
+        nm = dt["name"]
+        out.append(f"namespace {nm} {{")
+        # Field accessors against the datatype's own bytes.
+        offset = 0
+        out.append("    namespace offset {")
+        for field in dt["fields"]:
+            sz = type_info(field["type"])["size"]
+            out.append(f"        inline constexpr std::size_t {field['name']:<14} = {offset};")
+            offset += sz
+        out.append("    }")
+        out.append(f"    inline constexpr std::size_t wire_size = "
+                   f"::IFE::datatypes::{nm}::wire_size;")
+        # decode_<DT>(const u8*) -> ::IFE::datatypes::<DT>
+        out.append(f"    inline ::IFE::datatypes::{nm} decode(const std::uint8_t* p) noexcept {{")
+        out.append(f"        ::IFE::datatypes::{nm} v{{}};")
+        for field in dt["fields"]:
+            exprs = _accessor_exprs(field["type"])
+            load = exprs["load"].replace("{p}", f"p + offset::{field['name']}")
+            out.append(f"        v.{field['name']} = {load};")
+        out.append("        return v;")
+        out.append("    }")
+        # encode_<DT>(u8*, const DT&)
+        out.append(f"    inline void encode(std::uint8_t* p, "
+                   f"const ::IFE::datatypes::{nm}& v) noexcept {{")
+        for field in dt["fields"]:
+            exprs = _accessor_exprs(field["type"])
+            store = (exprs["store"]
+                     .replace("{p}", f"p + offset::{field['name']}")
+                     .replace("{v}", f"v.{field['name']}"))
+            out.append(f"        {store};")
+        out.append("    }")
+        out.append(f"}}  // namespace {nm}")
+        out.append("")
+
+    # ---- Per-resource field accessors + record encode/decode ---------------
+    out.append("// ---- Resource field accessors ------------------------------------------")
+    for res in schema["resources"]:
+        nm = res["name"]
+        out.append(f"namespace {nm} {{")
+        # Generated record POD: one C++ field per schema field, widened to the
+        # natural C++ type (so uint24 becomes uint32_t in memory, etc.).
+        out.append("    // POD record carrying every field of this resource at its widened")
+        out.append("    // C++ type. Returned by `decode(block_base)` and accepted by")
+        out.append("    // `encode(block_base, record)`. Field order matches the schema.")
+        out.append("    struct Record {")
+        for field in res["fields"]:
+            exprs = _accessor_exprs(field["type"])
+            out.append(f"        {exprs['cpp']:<13} {field['name']}{{}};")
+        out.append("    };")
+        out.append("")
+        # Per-field read/write inlines.
+        for field in res["fields"]:
+            fnm = field["name"]
+            tnm = field["type"]
+            exprs = _accessor_exprs(tnm)
+            # read_<FIELD>(block_base)
+            load = exprs["load"].replace(
+                "{p}", f"block_base + ::IFE::vtables::{nm}::offset::{fnm}")
+            out.append(f"    inline {exprs['cpp']} read_{fnm}"
+                       f"(const std::uint8_t* block_base) noexcept {{")
+            out.append(f"        return {load};")
+            out.append("    }")
+            # write_<FIELD>(block_base, value)
+            store = exprs["store"].replace(
+                "{p}", f"block_base + ::IFE::vtables::{nm}::offset::{fnm}"
+            ).replace("{v}", "value")
+            out.append(f"    inline void write_{fnm}"
+                       f"(std::uint8_t* block_base, {exprs['cpp']} value) noexcept {{")
+            out.append(f"        {store};")
+            out.append("    }")
+        out.append("")
+        # decode(block_base) -> Record
+        out.append("    inline Record decode(const std::uint8_t* block_base) noexcept {")
+        out.append("        Record r{};")
+        for field in res["fields"]:
+            out.append(f"        r.{field['name']} = read_{field['name']}(block_base);")
+        out.append("        return r;")
+        out.append("    }")
+        # encode(block_base, record)
+        out.append("    inline void encode(std::uint8_t* block_base, const Record& r) noexcept {")
+        for field in res["fields"]:
+            out.append(f"        write_{field['name']}(block_base, r.{field['name']});")
+        out.append("    }")
+        out.append(f"}}  // namespace {nm}")
+        out.append("")
+    out.append("}  // namespace accessors")
+    out.append("}  // namespace IFE")
+    out.append("")
+    out.append("#endif  // IFE_Accessors_hpp")
+    out.append("")
+    return "\n".join(out)
+
+
+# -----------------------------------------------------------------------------
 # Driver
 # -----------------------------------------------------------------------------
 GENERATORS = {
@@ -379,6 +686,7 @@ GENERATORS = {
     "IFE_FieldKeys.hpp":      gen_field_keys,
     "IFE_Resources.hpp":      gen_resources,
     "IFE_FieldKeys_wasm.hpp": gen_field_keys_wasm,
+    "IFE_Accessors.hpp":      gen_accessors,
 }
 
 

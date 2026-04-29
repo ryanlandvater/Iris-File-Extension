@@ -116,6 +116,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
         ${IFE_GENERATED_DIR}/IFE_FieldKeys.hpp
         ${IFE_GENERATED_DIR}/IFE_Resources.hpp
         ${IFE_GENERATED_DIR}/IFE_FieldKeys_wasm.hpp
+        ${IFE_GENERATED_DIR}/IFE_Accessors.hpp
     )
     file(MAKE_DIRECTORY ${IFE_GENERATED_DIR})
     execute_process(
@@ -355,5 +356,23 @@ if(IFE_BUILD_TESTS)
         target_link_libraries(ife_reflective_tests PRIVATE
                               ${IFE_Dependencies} Threads::Threads)
         add_test(NAME ife_reflective_tests COMMAND ife_reflective_tests)
+
+        # Phase 6b — codegen-emitted IFE_Accessors.hpp. Round-trips every
+        # fixed-layout resource record and every datatype (including the
+        # uint24/uint40 narrow-packed widths) and asserts reflective parity
+        # against `Reflective::Node::field<T>`. The accessors are the
+        # foundation for the eventual full schema-regenerated serializer
+        # that will replace IrisCodecExtension.cpp.
+        add_executable(
+            ife_accessors_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_accessors_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_accessors_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_accessors_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_accessors_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_accessors_tests COMMAND ife_accessors_tests)
     endif()
 endif()
