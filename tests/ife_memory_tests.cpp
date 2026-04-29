@@ -5,13 +5,19 @@
  * Self-contained (no external test framework) so CI doesn't need extra deps.
  * Run with `ctest` or directly; non-zero exit on failure.
  */
+#include "IFE_Builder.hpp"
+#include "IFE_DataBlock.hpp"
 #include "IFE_Memory.hpp"
+#include "IFE_Reflective.hpp"
+#include "IFE_VTables.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <thread>
 #include <vector>
@@ -177,6 +183,185 @@ void test_invalid_capacity() {
     IFE_CHECK(threw);
 }
 
+void test_file_backed_persistence() {
+    // Pick a temp path under the build/test working directory. Using
+    // `temp_directory_path()` keeps this portable; the file is removed at
+    // the end (on success and on the error paths via the RAII guard below).
+    namespace fs = std::filesystem;
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("ife_memory_filebacked_" +
+         std::to_string(static_cast<unsigned long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())) +
+         ".bin");
+
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove(p, ec); }
+    } cleanup{tmp};
+
+    constexpr std::size_t kCapacity = 64 * 1024; // 64 KiB sparse reservation
+    constexpr char        kSentinel[] = "IFE-FILEBACKED-OK";
+    constexpr std::size_t kSentinelLen = sizeof(kSentinel) - 1;
+
+    std::uint64_t expected_offset = 0;
+    {
+        auto mem = IFE::Memory::createFromFile(tmp, kCapacity);
+        IFE_CHECK(mem.capacity() == kCapacity);
+
+        auto s = mem.claim_space(kSentinelLen);
+        IFE_CHECK(s.valid());
+        IFE_CHECK(s.offset == IFE::WRITE_HEAD_BYTES);
+        std::memcpy(s.ptr, kSentinel, kSentinelLen);
+        expected_offset = s.offset;
+
+        // Trim the sparse reservation back to the actually-written size.
+        mem.truncate_file(mem.write_head());
+        // Drop the Memory handle: unmap + close fd; the page cache flushes
+        // on close, so the file content is observable via std::ifstream.
+    }
+
+    std::error_code ec;
+    const auto sz = fs::file_size(tmp, ec);
+    IFE_CHECK(!ec);
+    // After truncate_file(write_head()), the file should be exactly the
+    // written extent (sentinel offset + sentinel length).
+    IFE_CHECK(sz == expected_offset + kSentinelLen);
+
+    std::ifstream in(tmp, std::ios::binary);
+    IFE_CHECK(in.good());
+    in.seekg(static_cast<std::streamoff>(expected_offset));
+    char buf[kSentinelLen + 1] = {};
+    in.read(buf, static_cast<std::streamsize>(kSentinelLen));
+    IFE_CHECK(static_cast<std::size_t>(in.gcount()) == kSentinelLen);
+    IFE_CHECK(std::memcmp(buf, kSentinel, kSentinelLen) == 0);
+}
+
+// ---------------------------------------------------------------------------
+// openFromFile — Phase 6b read-mode factory round-trip.
+//
+// Build a finalised arena via `Builder` + `claim_file_header` + `finalize`,
+// then re-open it with `openFromFile` and verify that:
+//   - the persisted cursor (bytes [0,8)) survives the re-open and matches
+//     `Builder::finalize()`'s return value (== file size),
+//   - the FILE_HEADER preamble validates (`IFE_FILE_MAGIC` + RESOURCE_HEADER),
+//   - `Reflective::Node` walks the resumed arena and returns the same
+//     FILE_SIZE the writer stamped — i.e. the read-mode factory pairs
+//     end-to-end with the reflective lens.
+// ---------------------------------------------------------------------------
+void test_open_from_file_round_trip() {
+    namespace fs = std::filesystem;
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("ife_memory_openfrom_" +
+         std::to_string(static_cast<unsigned long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())) +
+         ".bin");
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove(p, ec); }
+    } cleanup{tmp};
+
+    // Sparse reservation: the page count we trim down via `finalize` is
+    // small (FILE_HEADER body + universal preamble + 16 bytes of cursor /
+    // reserved). 1 MiB is more than enough.
+    constexpr std::size_t kReservation = 1 * 1024 * 1024;
+
+    std::uint64_t finalised_size = 0;
+    {
+        auto mem = IFE::Memory::createFromFile(tmp, kReservation);
+        IFE::Builder b{mem};
+        const std::size_t body_bytes =
+            IFE::vtables::FILE_HEADER::header_size -
+            IFE::DATA_BLOCK_HEADER_SIZE;
+        auto hdr = b.claim_file_header(body_bytes);
+        IFE_CHECK(hdr.valid());
+        // finalize stamps FILE_SIZE and truncates the file. We only need
+        // the FILE_HEADER for the read-mode test; everything else stays zero.
+        finalised_size = b.finalize();
+        // finalize == write_head; FILE_HEADER lives at WRITE_HEAD_BYTES so
+        // the file size is at least WRITE_HEAD_BYTES + FILE_HEADER body.
+        IFE_CHECK(finalised_size ==
+                  IFE::WRITE_HEAD_BYTES +
+                      IFE::vtables::FILE_HEADER::header_size);
+    }
+
+    // Re-open via the new read-mode factory.
+    auto mem = IFE::Memory::openFromFile(tmp);
+    IFE_CHECK(static_cast<bool>(mem));
+    IFE_CHECK(mem.capacity() == finalised_size);
+    // Persisted cursor survived the re-open.
+    IFE_CHECK(mem.write_head() == finalised_size);
+    // FILE_HEADER preamble at the canonical offset.
+    IFE_CHECK(IFE::is_file_magic(mem.data() + IFE::WRITE_HEAD_BYTES));
+
+    // Reflective parity — the lens reads the same FILE_SIZE the writer
+    // stamped.
+    IFE::Reflective::Node node(mem.view(),
+                               static_cast<std::uint64_t>(IFE::WRITE_HEAD_BYTES));
+    IFE_CHECK(node.recovery_tag() == IFE::RECOVERY_TAG::RESOURCE_HEADER);
+    IFE_CHECK(node.validation()   == IFE::IFE_FILE_MAGIC);
+    IFE_CHECK(node.field<std::uint64_t>("FILE_SIZE") == finalised_size);
+}
+
+// `openFromFile` rejects malformed inputs:
+//   - missing file -> system_error,
+//   - file too small (< WRITE_HEAD_BYTES) -> invalid_argument,
+//   - file with garbage at the FILE_HEADER offset -> invalid_argument
+//     (no IFE_FILE_MAGIC).
+void test_open_from_file_rejects_invalid() {
+    namespace fs = std::filesystem;
+    const fs::path missing =
+        fs::temp_directory_path() /
+        "ife_memory_openfrom_does_not_exist.bin";
+    std::error_code rm_ec; fs::remove(missing, rm_ec);
+    bool threw = false;
+    try { (void)IFE::Memory::openFromFile(missing); }
+    catch (const std::system_error&) { threw = true; }
+    IFE_CHECK(threw);
+
+    // Too-small file: write 8 bytes, try to open. WRITE_HEAD_BYTES is 16
+    // so this must be rejected.
+    const fs::path tiny =
+        fs::temp_directory_path() /
+        ("ife_memory_openfrom_tiny_" +
+         std::to_string(static_cast<unsigned long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())) +
+         ".bin");
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove(p, ec); }
+    } cleanup_tiny{tiny};
+    {
+        std::ofstream o(tiny, std::ios::binary);
+        const char zeros[8] = {};
+        o.write(zeros, 8);
+    }
+    threw = false;
+    try { (void)IFE::Memory::openFromFile(tiny); }
+    catch (const std::invalid_argument&) { threw = true; }
+    IFE_CHECK(threw);
+
+    // Garbage file: 64 bytes of 0xFF — passes the size gate but the
+    // FILE_HEADER preamble fails the magic check (0xFFFF... != IFE_FILE_MAGIC).
+    const fs::path garbage =
+        fs::temp_directory_path() /
+        ("ife_memory_openfrom_garbage_" +
+         std::to_string(static_cast<unsigned long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())) +
+         ".bin");
+    Cleanup cleanup_garbage{garbage};
+    {
+        std::ofstream o(garbage, std::ios::binary);
+        std::vector<char> bytes(64, static_cast<char>(0xFF));
+        o.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    threw = false;
+    try { (void)IFE::Memory::openFromFile(garbage); }
+    catch (const std::invalid_argument&) { threw = true; }
+    IFE_CHECK(threw);
+}
+
 } // namespace
 
 int main() {
@@ -187,6 +372,9 @@ int main() {
     test_stream_lock_exclusion();
     test_view_lifetime();
     test_invalid_capacity();
+    test_file_backed_persistence();
+    test_open_from_file_round_trip();
+    test_open_from_file_rejects_invalid();
 
     if (g_failures == 0) {
         std::printf("ife_memory_tests: ALL PASS\n");

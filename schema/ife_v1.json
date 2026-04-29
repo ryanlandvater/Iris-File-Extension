@@ -1,0 +1,237 @@
+{
+  "_comment": [
+    "IFE schema — single source of truth for tools/ifc.py.",
+    "The substrate's wire format is defined here; codegen output is its",
+    "own authority and is sanity-checked by tests/ife_codegen_tests.cpp."
+  ],
+  "version_major": 1,
+  "version_minor": 0,
+  "datatypes": [
+    {
+      "name": "LAYER_EXTENT",
+      "fields": [
+        {"name": "X_TILES", "type": "uint32"},
+        {"name": "Y_TILES", "type": "uint32"},
+        {"name": "SCALE",   "type": "float32"}
+      ]
+    },
+    {
+      "name": "TILE_OFFSET",
+      "fields": [
+        {"name": "OFFSET",    "type": "uint40"},
+        {"name": "TILE_SIZE", "type": "uint24"}
+      ]
+    },
+    {
+      "name": "ATTRIBUTE_SIZE",
+      "fields": [
+        {"name": "KEY_SIZE",   "type": "uint16"},
+        {"name": "VALUE_SIZE", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "IMAGE_ENTRY",
+      "fields": [
+        {"name": "BYTES_OFFSET", "type": "uint64"},
+        {"name": "WIDTH",        "type": "uint32"},
+        {"name": "HEIGHT",       "type": "uint32"},
+        {"name": "ENCODING",     "type": "uint8"},
+        {"name": "FORMAT",       "type": "uint8"},
+        {"name": "ORIENTATION",  "type": "uint16"}
+      ]
+    },
+    {
+      "name": "ANNOTATION_ENTRY",
+      "fields": [
+        {"name": "IDENTIFIER",   "type": "uint24"},
+        {"name": "BYTES_OFFSET", "type": "uint64"},
+        {"name": "FORMAT",       "type": "uint8"},
+        {"name": "X_LOCATION",   "type": "float32"},
+        {"name": "Y_LOCATION",   "type": "float32"},
+        {"name": "X_SIZE",       "type": "float32"},
+        {"name": "Y_SIZE",       "type": "float32"},
+        {"name": "WIDTH",        "type": "uint32"},
+        {"name": "HEIGHT",       "type": "uint32"},
+        {"name": "PARENT",       "type": "uint24"}
+      ]
+    },
+    {
+      "name": "ANNOTATION_GROUP_SIZE",
+      "fields": [
+        {"name": "LABEL_SIZE",     "type": "uint16"},
+        {"name": "ENTRIES_NUMBER", "type": "uint32"}
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "name": "FILE_HEADER",
+      "recovery_tag": "RESOURCE_HEADER",
+      "_note": "Like every other block, FILE_HEADER leads with the universal 10-byte preamble: VALIDATION (u64) + RECOVERY (u16). The validation slot for the file's first block carries IFE_FILE_MAGIC, a u64 zero-extension of the legacy MAGIC_BYTES so identity probes that read the first 4 bytes still see 'Iris'.",
+      "fields": [
+        {"name": "VALIDATION",         "type": "uint64"},
+        {"name": "RECOVERY",           "type": "uint16"},
+        {"name": "EXTENSION_MAJOR",    "type": "uint16"},
+        {"name": "EXTENSION_MINOR",    "type": "uint16"},
+        {"name": "FILE_REVISION",      "type": "uint32"},
+        {"name": "FILE_SIZE",          "type": "uint64"},
+        {"name": "TILE_TABLE_OFFSET",  "type": "uint64"},
+        {"name": "METADATA_OFFSET",    "type": "uint64"}
+      ]
+    },
+    {
+      "name": "TILE_TABLE",
+      "recovery_tag": "RESOURCE_TILE_TABLE",
+      "fields": [
+        {"name": "VALIDATION",            "type": "uint64"},
+        {"name": "RECOVERY",              "type": "uint16"},
+        {"name": "ENCODING",              "type": "uint8"},
+        {"name": "FORMAT",                "type": "uint8"},
+        {"name": "CIPHER_OFFSET",         "type": "uint64"},
+        {"name": "TILE_OFFSETS_OFFSET",   "type": "uint64"},
+        {"name": "LAYER_EXTENTS_OFFSET",  "type": "uint64"},
+        {"name": "X_EXTENT",              "type": "uint32"},
+        {"name": "Y_EXTENT",              "type": "uint32"}
+      ]
+    },
+    {
+      "name": "METADATA",
+      "recovery_tag": "RESOURCE_METADATA",
+      "fields": [
+        {"name": "VALIDATION",          "type": "uint64"},
+        {"name": "RECOVERY",            "type": "uint16"},
+        {"name": "CODEC_MAJOR",         "type": "uint16"},
+        {"name": "CODEC_MINOR",         "type": "uint16"},
+        {"name": "CODEC_BUILD",         "type": "uint16"},
+        {"name": "ATTRIBUTES_OFFSET",   "type": "uint64"},
+        {"name": "IMAGES_OFFSET",       "type": "uint64"},
+        {"name": "ICC_COLOR_OFFSET",    "type": "uint64"},
+        {"name": "ANNOTATIONS_OFFSET",  "type": "uint64"},
+        {"name": "MICRONS_PIXEL",       "type": "float32"},
+        {"name": "MAGNIFICATION",       "type": "float32"}
+      ]
+    },
+    {
+      "name": "ATTRIBUTES",
+      "recovery_tag": "RESOURCE_ATTRIBUTES",
+      "fields": [
+        {"name": "VALIDATION",         "type": "uint64"},
+        {"name": "RECOVERY",           "type": "uint16"},
+        {"name": "FORMAT",             "type": "uint8"},
+        {"name": "VERSION",            "type": "uint16"},
+        {"name": "LENGTHS_OFFSET",     "type": "uint64"},
+        {"name": "BYTE_ARRAY_OFFSET",  "type": "uint64"}
+      ]
+    },
+    {
+      "name": "LAYER_EXTENTS",
+      "recovery_tag": "RESOURCE_LAYER_EXTENTS",
+      "_note": "Generic ARRAY container; payload is LAYER_EXTENT[ENTRY_NUMBER].",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_SIZE",   "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "TILE_OFFSETS",
+      "recovery_tag": "RESOURCE_TILE_OFFSETS",
+      "_note": "Payload is TILE_OFFSET[ENTRY_NUMBER]. Legacy declares ENTRY_SIZE/ENTRY_NUMBER as int16/int32 but byte sizes are identical to uint16/uint32.",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_SIZE",   "type": "int16"},
+        {"name": "ENTRY_NUMBER", "type": "int32"}
+      ]
+    },
+    {
+      "name": "ATTRIBUTES_SIZES",
+      "recovery_tag": "RESOURCE_ATTRIBUTES_SIZES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_SIZE",   "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "ATTRIBUTES_BYTES",
+      "recovery_tag": "RESOURCE_ATTRIBUTES_BYTES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "int32"}
+      ]
+    },
+    {
+      "name": "IMAGE_ARRAY",
+      "recovery_tag": "RESOURCE_ASSOCIATED_IMAGES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_SIZE",   "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "IMAGE_BYTES",
+      "recovery_tag": "RESOURCE_ASSOCIATED_IMAGE_BYTES",
+      "fields": [
+        {"name": "VALIDATION", "type": "uint64"},
+        {"name": "RECOVERY",   "type": "uint16"},
+        {"name": "TITLE_SIZE", "type": "uint16"},
+        {"name": "IMAGE_SIZE", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "ICC_PROFILE",
+      "recovery_tag": "RESOURCE_ICC_PROFILE",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "int32"}
+      ]
+    },
+    {
+      "name": "ANNOTATIONS",
+      "recovery_tag": "RESOURCE_ANNOTATIONS",
+      "fields": [
+        {"name": "VALIDATION",          "type": "uint64"},
+        {"name": "RECOVERY",            "type": "uint16"},
+        {"name": "ENTRY_SIZE",          "type": "uint16"},
+        {"name": "ENTRY_NUMBER",        "type": "uint32"},
+        {"name": "GROUP_SIZES_OFFSET",  "type": "uint64"},
+        {"name": "GROUP_BYTES_OFFSET",  "type": "uint64"}
+      ]
+    },
+    {
+      "name": "ANNOTATION_BYTES",
+      "recovery_tag": "RESOURCE_ANNOTATION_BYTES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "ANNOTATION_GROUP_SIZES",
+      "recovery_tag": "RESOURCE_ANNOTATION_GROUP_SIZES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_SIZE",   "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    },
+    {
+      "name": "ANNOTATION_GROUP_BYTES",
+      "recovery_tag": "RESOURCE_ANNOTATION_GROUP_BYTES",
+      "fields": [
+        {"name": "VALIDATION",   "type": "uint64"},
+        {"name": "RECOVERY",     "type": "uint16"},
+        {"name": "ENTRY_NUMBER", "type": "uint32"}
+      ]
+    }
+  ]
+}

@@ -8,6 +8,14 @@ include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Always emit position-independent code. The IrisFileExtensionLib OBJECT
+# library is linked into both the static and shared library targets, so its
+# objects must be PIC even when consumers only build the static archive
+# (otherwise the shared-library link fails on platforms that require PIC,
+# e.g. x86_64 Linux). Setting it globally also covers the test executables
+# and any future targets.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 function(IFE_get_version)
     set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
     if (NOT EXISTS ${IFE_core_header})
@@ -85,14 +93,62 @@ set (
 )
 if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Types.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_DataBlock.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Array.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Builder.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Reflective.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phase 1: IFE_Memory)")
+    list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Builder.cpp)
+
+    # Phase 3 — schema-driven codegen (tools/ifc.py). Generates
+    # IFE_DataTypes.hpp / IFE_VTables.hpp / IFE_FieldKeys.hpp /
+    # IFE_FieldKeys_wasm.hpp from schema/ife_v1.json into the build tree.
+    # Re-runs at configure time whenever the schema or the codegen script
+    # changes (CONFIGURE_DEPENDS).
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(IFE_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated/IFE)
+    set(IFE_SCHEMA        ${PROJECT_SOURCE_DIR}/schema/ife_v1.json)
+    set(IFE_CODEGEN       ${PROJECT_SOURCE_DIR}/tools/ifc.py)
+    set(IFE_GENERATED_HEADERS
+        ${IFE_GENERATED_DIR}/IFE_DataTypes.hpp
+        ${IFE_GENERATED_DIR}/IFE_VTables.hpp
+        ${IFE_GENERATED_DIR}/IFE_FieldKeys.hpp
+        ${IFE_GENERATED_DIR}/IFE_Resources.hpp
+        ${IFE_GENERATED_DIR}/IFE_FieldKeys_wasm.hpp
+        ${IFE_GENERATED_DIR}/IFE_Accessors.hpp
+    )
+    file(MAKE_DIRECTORY ${IFE_GENERATED_DIR})
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${IFE_CODEGEN}
+                --schema  ${IFE_SCHEMA}
+                --out-dir ${IFE_GENERATED_DIR}
+        RESULT_VARIABLE IFE_CODEGEN_RESULT
+        OUTPUT_VARIABLE IFE_CODEGEN_STDOUT
+        ERROR_VARIABLE  IFE_CODEGEN_STDERR
+    )
+    if(NOT IFE_CODEGEN_RESULT EQUAL 0)
+        message(FATAL_ERROR
+                "ifc.py codegen failed (exit ${IFE_CODEGEN_RESULT}):\n"
+                "${IFE_CODEGEN_STDOUT}\n${IFE_CODEGEN_STDERR}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 ${IFE_SCHEMA} ${IFE_CODEGEN})
+    # Generated headers live under the build tree, not the source tree, so
+    # they are NOT added to the install FILE_SET (which uses ${IFE_SOURCE_DIR}
+    # as its BASE_DIRS). They are available to internal targets via the
+    # include path appended below; downstream installation is a Phase 4+
+    # concern once the substrate is wired into the public surface.
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-6a: IFE_Memory, IFE_Types, codegen, DataBlock+Builder, IFE_ARRAY+Span, Reflective lens+finalize)")
 endif()
 set (
     IFE_IncludeDir
     ${irisheaders_SOURCE_DIR}/priv
     ${IFE_SOURCE_DIR}
 )
+if(IFE_USE_FASTFHIR_SUBSTRATE)
+    list(APPEND IFE_IncludeDir ${IFE_GENERATED_DIR})
+endif()
 set (
     IFE_Dependencies
     IrisHeaders
@@ -116,6 +172,15 @@ target_compile_definitions (
     PRIVATE IRIS_EXPORT_API=true #Do not export Iris Core Fn-ality
     PRIVATE IFE_EXPORT_API=true 
 )
+if(IFE_USE_FASTFHIR_SUBSTRATE)
+    # Propagate the substrate flag so the legacy IrisCodecExtension.hpp can
+    # emit `[[deprecated]]` annotations on `Abstraction::File` and the
+    # C-style `STORE_*` helpers, pointing consumers at `IFE::Builder` /
+    # `IFE::Reflective::Node`. Substrate-OFF builds do NOT see the
+    # annotation (so legacy consumers stay quiet during the cutover).
+    target_compile_definitions(IrisFileExtensionLib
+                               PUBLIC IFE_USE_FASTFHIR_SUBSTRATE=1)
+endif()
 set_target_properties(
     IrisFileExtensionLib 
     PROPERTIES CXX_VISIBILITY_PRESET hidden
@@ -210,10 +275,115 @@ if(IFE_BUILD_TESTS)
         ife_memory_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_memory_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+        ${IFE_SOURCE_DIR}/IFE_Builder.cpp
     )
-    target_include_directories(ife_memory_tests PRIVATE ${IFE_SOURCE_DIR})
+    target_include_directories(ife_memory_tests PRIVATE ${IFE_IncludeDir})
     target_compile_features(ife_memory_tests PRIVATE cxx_std_20)
     find_package(Threads REQUIRED)
-    target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
+    target_link_libraries(ife_memory_tests PRIVATE
+                          ${IFE_Dependencies} Threads::Threads)
     add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
+
+    # IFE_Types header — substrate type system. Self-contained and
+    # independent of the legacy IrisCodec headers; included here in the
+    # main test set since other substrate tests pull it in transitively.
+    add_executable(
+        ife_types_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_types_tests.cpp
+    )
+    target_include_directories(ife_types_tests PRIVATE ${IFE_IncludeDir})
+    target_compile_features(ife_types_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_types_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_types_tests COMMAND ife_types_tests)
+
+    # Codegen sanity test. Verifies the generated headers are internally
+    # consistent (schema version, FILE_HEADER preamble layout, monotonic
+    # field offsets, dispatch table round-trip). The codegen output IS
+    # the source of truth — there is no longer a parity check against the
+    # legacy IrisCodec::Serialization enums.
+    if(IFE_USE_FASTFHIR_SUBSTRATE)
+        add_executable(
+            ife_codegen_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_codegen_tests.cpp
+        )
+        target_include_directories(ife_codegen_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_codegen_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_codegen_tests PRIVATE ${IFE_Dependencies})
+        add_test(NAME ife_codegen_tests COMMAND ife_codegen_tests)
+
+        # Schema-vs-codegen-output --check: re-runs ifc.py in --check mode
+        # so CI catches any drift between the schema and the generated
+        # headers in the build tree (e.g. stale build dir).
+        add_test(
+            NAME ife_codegen_check
+            COMMAND ${Python3_EXECUTABLE} ${IFE_CODEGEN}
+                    --schema  ${IFE_SCHEMA}
+                    --out-dir ${IFE_GENERATED_DIR}
+                    --check
+        )
+
+        # Phase 4 — universal DATA_BLOCK header + Builder + amend_pointer
+        # tests. Includes a multi-threaded amend_pointer race that must be
+        # lock-free; TSan-clean.
+        add_executable(
+            ife_datablock_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_datablock_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_datablock_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_datablock_tests PRIVATE cxx_std_20)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ife_datablock_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_datablock_tests COMMAND ife_datablock_tests)
+
+        # Phase 5 — IFE_ARRAY block + Span<T> read path. Multi-threaded
+        # array-claim race must be lock-free; TSan-clean.
+        add_executable(
+            ife_array_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_array_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_array_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_array_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_array_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_array_tests COMMAND ife_array_tests)
+
+        # Phase 6a — Reflective lens + Builder::finalize. Walks blocks
+        # produced by the Phase 4 universal preamble + Phase 5 IFE_ARRAY
+        # layout, dispatching on the codegen field-key catalog. Includes
+        # a multi-reader stress that must be TSan-clean.
+        add_executable(
+            ife_reflective_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_reflective_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_reflective_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_reflective_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_reflective_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_reflective_tests COMMAND ife_reflective_tests)
+
+        # Phase 6b — codegen-emitted IFE_Accessors.hpp. Round-trips every
+        # fixed-layout resource record and every datatype (including the
+        # uint24/uint40 narrow-packed widths) and asserts reflective parity
+        # against `Reflective::Node::field<T>`. The accessors are the
+        # foundation for the eventual full schema-regenerated serializer
+        # that will replace IrisCodecExtension.cpp.
+        add_executable(
+            ife_accessors_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_accessors_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_accessors_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_accessors_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_accessors_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_accessors_tests COMMAND ife_accessors_tests)
+    endif()
 endif()
