@@ -12,6 +12,16 @@
  *   - Handle/Body split: `Memory` is a thin handle around a
  *     `std::shared_ptr<Body>`. The `Body` owns the byte arena and the
  *     64-bit atomic write-head.
+ *   - **Storage substrate is a sparse OS mapping**, not a heap arena. On
+ *     POSIX the arena is `mmap(MAP_PRIVATE|MAP_ANONYMOUS)` for in-memory
+ *     mode and `open` + `ftruncate` + `mmap(MAP_SHARED)` for file-backed
+ *     mode. On Windows it is `CreateFileMappingA(INVALID_HANDLE_VALUE)` +
+ *     `MapViewOfFile` for in-memory mode and `CreateFileA` +
+ *     `FSCTL_SET_SPARSE` + `CreateFileMappingA(hFile)` + `MapViewOfFile`
+ *     for file-backed mode. Capacity is the *reserved* virtual size; the
+ *     kernel commits physical pages on first touch, so a 4 GiB reservation
+ *     costs ~0 RSS until written. File-backed mappings persist via the
+ *     page cache (zero-copy: no `write(2)` after the fact).
  *   - The first 16 bytes of the arena are reserved for the atomic write-head.
  *     Bytes [0,8) hold a plain `uint64_t` accessed exclusively through
  *     `std::atomic_ref<uint64_t>` (the project rule is to never alias raw
@@ -36,6 +46,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 
@@ -69,9 +80,23 @@ namespace detail {
 
 /// Body owns the arena allocation and the atomic cursor. Held via shared_ptr
 /// so async I/O can pin it through `Memory::View`.
+///
+/// The arena is backed by a sparse OS mapping (anonymous mmap / Windows
+/// page-file backed mapping) by default, or by a sparse file mapping when
+/// constructed with a path. Heap allocation is intentionally not used: a
+/// large `capacity` is a *reservation* and physical pages are committed
+/// only on first touch.
 class Body {
 public:
-    Body(std::size_t capacity);
+    /// Construct an anonymous, sparse, writable arena of `capacity` bytes.
+    explicit Body(std::size_t capacity);
+
+    /// Construct a file-backed, sparse, writable arena of `capacity` bytes
+    /// mapped over `path`. The file is created (or extended) to `capacity`
+    /// and the mapping is `MAP_SHARED` so writes flow through the page
+    /// cache to disk.
+    Body(std::size_t capacity, const std::filesystem::path& path);
+
     ~Body();
 
     Body(const Body&)            = delete;
@@ -82,6 +107,14 @@ public:
     std::uint8_t*       data() noexcept       { return m_arena; }
     const std::uint8_t* data() const noexcept { return m_arena; }
     std::size_t         capacity() const noexcept { return m_capacity; }
+
+    /// True if the arena is mapped over a file (file-backed mode).
+    bool file_backed() const noexcept;
+
+    /// Truncate the underlying file to `size` bytes. No-op for anonymous
+    /// arenas. Used at finalize to trim the sparse reservation back to the
+    /// actually-written extent.
+    void truncate_file(std::size_t size);
 
     /// Pointer to the plain `uint64_t` storage for the cursor at offset 0
     /// of the arena. All atomic access goes through a `std::atomic_ref<u64>`
@@ -98,8 +131,23 @@ public:
     }
 
 private:
+    /// Common initialization: zero the reserved write-head bytes and seed
+    /// the cursor at `WRITE_HEAD_BYTES`. Called from both constructors after
+    /// the OS mapping has been established.
+    void seed_cursor();
+
     std::uint8_t* m_arena    = nullptr;
     std::size_t   m_capacity = 0;
+#ifdef _WIN32
+    // Windows: section handle (always set) and optional file handle (only
+    // for file-backed mode). `void*` keeps <windows.h> out of this header.
+    void* m_os_handle   = nullptr; // HANDLE for the section
+    void* m_file_handle = nullptr; // HANDLE for the file (INVALID_HANDLE_VALUE if anonymous)
+#else
+    // POSIX: file descriptor (-1 for anonymous). The mapping is unmapped
+    // via `munmap` regardless; `m_os_fd` is closed only when set.
+    int m_os_fd = -1;
+#endif
 };
 
 } // namespace detail
@@ -158,9 +206,23 @@ public:
     /// Construct an empty handle. Use `Memory::create(capacity)` for a real arena.
     Memory() = default;
 
-    /// Allocate a new arena of `capacity` bytes. `capacity` must be at least
-    /// `WRITE_HEAD_BYTES`. The first 16 bytes are zeroed (cursor = 0).
+    /// Allocate a new anonymous, sparse arena of `capacity` bytes. `capacity`
+    /// must be at least `WRITE_HEAD_BYTES`. The first 16 bytes are zeroed
+    /// (cursor = WRITE_HEAD_BYTES). Backed by `mmap(MAP_PRIVATE|MAP_ANONYMOUS)`
+    /// on POSIX or `CreateFileMappingA(INVALID_HANDLE_VALUE)` + `MapViewOfFile`
+    /// on Windows; physical pages are committed lazily on first touch.
     static Memory create(std::size_t capacity);
+
+    /// Allocate a new file-backed, sparse arena of `capacity` bytes mapped
+    /// over `path`. The file is created (or truncated to `capacity`) and
+    /// mapped `MAP_SHARED` (POSIX) / via `CreateFileMappingA(hFile)` +
+    /// `MapViewOfFile` (Windows) so writes persist to disk through the
+    /// kernel page cache without a subsequent `write(2)`. The cursor is
+    /// re-seeded at `WRITE_HEAD_BYTES`; this factory always treats the
+    /// mapping as a fresh write-target. A future read-mode factory will
+    /// layer on top.
+    static Memory createFromFile(const std::filesystem::path& path,
+                                 std::size_t capacity);
 
     /// True if the handle owns a body.
     explicit operator bool() const noexcept { return static_cast<bool>(m_body); }
@@ -194,6 +256,13 @@ public:
      *        without disturbing the offset bits.
      */
     StreamHead acquire_stream();
+
+    /// Truncate the underlying file to `size` bytes. No-op for anonymous
+    /// arenas. Use at finalize to trim the sparse reservation back to the
+    /// actually-written extent (typically `write_head()`).
+    /// @throws std::logic_error if this handle is empty.
+    /// @throws std::system_error on `ftruncate`/`SetEndOfFile` failure.
+    void truncate_file(std::size_t size);
 
     /**
      * @brief A non-owning lifetime extension for the body. Holds the

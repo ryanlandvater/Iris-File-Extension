@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <thread>
 #include <vector>
@@ -177,6 +179,60 @@ void test_invalid_capacity() {
     IFE_CHECK(threw);
 }
 
+void test_file_backed_persistence() {
+    // Pick a temp path under the build/test working directory. Using
+    // `temp_directory_path()` keeps this portable; the file is removed at
+    // the end (on success and on the error paths via the RAII guard below).
+    namespace fs = std::filesystem;
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("ife_memory_filebacked_" +
+         std::to_string(static_cast<unsigned long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())) +
+         ".bin");
+
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove(p, ec); }
+    } cleanup{tmp};
+
+    constexpr std::size_t kCapacity = 64 * 1024; // 64 KiB sparse reservation
+    constexpr char        kSentinel[] = "IFE-FILEBACKED-OK";
+    constexpr std::size_t kSentinelLen = sizeof(kSentinel) - 1;
+
+    std::uint64_t expected_offset = 0;
+    {
+        auto mem = IFE::Memory::createFromFile(tmp, kCapacity);
+        IFE_CHECK(mem.capacity() == kCapacity);
+
+        auto s = mem.claim_space(kSentinelLen);
+        IFE_CHECK(s.valid());
+        IFE_CHECK(s.offset == IFE::WRITE_HEAD_BYTES);
+        std::memcpy(s.ptr, kSentinel, kSentinelLen);
+        expected_offset = s.offset;
+
+        // Trim the sparse reservation back to the actually-written size.
+        mem.truncate_file(mem.write_head());
+        // Drop the Memory handle: unmap + close fd; the page cache flushes
+        // on close, so the file content is observable via std::ifstream.
+    }
+
+    std::error_code ec;
+    const auto sz = fs::file_size(tmp, ec);
+    IFE_CHECK(!ec);
+    // After truncate_file(write_head()), the file should be exactly the
+    // written extent (sentinel offset + sentinel length).
+    IFE_CHECK(sz == expected_offset + kSentinelLen);
+
+    std::ifstream in(tmp, std::ios::binary);
+    IFE_CHECK(in.good());
+    in.seekg(static_cast<std::streamoff>(expected_offset));
+    char buf[kSentinelLen + 1] = {};
+    in.read(buf, static_cast<std::streamsize>(kSentinelLen));
+    IFE_CHECK(static_cast<std::size_t>(in.gcount()) == kSentinelLen);
+    IFE_CHECK(std::memcmp(buf, kSentinel, kSentinelLen) == 0);
+}
+
 } // namespace
 
 int main() {
@@ -187,6 +243,7 @@ int main() {
     test_stream_lock_exclusion();
     test_view_lifetime();
     test_invalid_capacity();
+    test_file_backed_persistence();
 
     if (g_failures == 0) {
         std::printf("ife_memory_tests: ALL PASS\n");

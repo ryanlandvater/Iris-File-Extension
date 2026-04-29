@@ -53,6 +53,57 @@ affected until they explicitly opt in.
   (multi-thread `claim_space`, stream-lock exclusion, view lifetime,
   exhaustion, error paths). TSan-clean with `-fsanitize=thread`.
 
+### Phase 1 follow-up — sparse-VMA storage substrate
+
+Phase 1 originally shipped with a heap-backed `detail::Body`
+(`::operator new` with aligned allocation). This was a placeholder so the
+Handle/Body + lock-free cursor protocol could land without OS-mapping
+plumbing. The substrate has since been switched to the same sparse VMA
+that backs `FF_Memory_t` in FastFHIR:
+
+* **POSIX**: anonymous mode is `mmap(MAP_PRIVATE | MAP_ANONYMOUS)`;
+  file-backed mode is `open(O_RDWR | O_CREAT)` + `ftruncate(capacity)` +
+  `mmap(MAP_SHARED, fd, 0)`.
+* **Windows**: anonymous mode is `CreateFileMappingA(INVALID_HANDLE_VALUE,
+  …, PAGE_READWRITE)` + `MapViewOfFile`; file-backed mode is `CreateFileA`
+  + `FSCTL_SET_SPARSE` + `CreateFileMappingA(hFile, …)` + `MapViewOfFile`.
+* `Body` carries OS handles (`int m_os_fd` on POSIX; `void* m_os_handle,
+  m_file_handle` on Windows) and `munmap`/`UnmapViewOfFile` + `close`/
+  `CloseHandle` in the destructor. Mirroring FastFHIR, named SHM segments
+  would deliberately not be `shm_unlink`'d so a restarting service can
+  re-attach.
+* Existing `Memory::create(capacity)` signature is preserved — it now
+  returns an anonymous, sparse arena (kernel commits pages on first touch,
+  so a 4 GiB reservation costs ~0 RSS until written).
+* New `Memory::createFromFile(path, capacity)` factory mirrors FastFHIR.
+  The encoded IFE container *is* the file: writes flow through the page
+  cache, no `write(2)` after the fact.
+* New `Memory::truncate_file(size)` is a no-op on anonymous arenas and
+  calls `ftruncate` / `SetEndOfFile` on file-backed arenas. Used at
+  finalize to trim the sparse reservation back to the actually-written
+  extent (typically `write_head()`).
+* Heap-allocator alignment scaffolding (the
+  `max(alignof(uint64_t), atomic_ref::required_alignment)` formula and
+  its `static_assert`s) was dropped: `mmap` and `MapViewOfFile` return at
+  minimum page-aligned pointers, which trivially satisfies any conforming
+  `atomic_ref<uint64_t>::required_alignment`. A single
+  `static_assert(std::atomic_ref<uint64_t>::required_alignment <= 4096)`
+  documents the assumption.
+* `tests/ife_memory_tests.cpp` adds `test_file_backed_persistence`, which
+  proves zero-copy persistence: `createFromFile(tmp, cap)` →
+  `claim_space` → write sentinel → drop the `Memory` handle → reopen the
+  path with `std::ifstream` and verify the sentinel bytes at the expected
+  offset.
+
+**Deferred follow-ups** (intentionally not in this change):
+* Named POSIX SHM (`shm_open` + `ftruncate` + `mmap(MAP_SHARED)`) and the
+  matching `Memory::create(capacity, std::string shm_name)` overload.
+  Older glibc requires `-lrt`, so this is held back until there is an
+  internal consumer.
+* Read-mode `createFromFile` (validate the on-disk header and resume the
+  cursor instead of re-seeding it) — lands with the Phase 6
+  `Reflective::Node` recovery path.
+
 ## Phase 2 — what landed
 
 * `src/IFE_Types.hpp` — header-only type system in a new `IFE` namespace.
