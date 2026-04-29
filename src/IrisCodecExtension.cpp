@@ -185,7 +185,7 @@ inline _Float16 F16_CONVERT_NON_IEEE (uint16_t val)
 }
 inline uint16_t F16_CONVERT_NON_IEEE (_Float16 val)
 {
-    if (val == 0.f)         return 0;
+    if (val == 0u)          return 0;
     if (isinf(val))         return 0x7C00;
     if (isnan(val))         return 0x7E00;
     uint32_t    neg         = val < 0 ? F16_NEG : 0;
@@ -205,7 +205,7 @@ inline float F32_CONVERT_NON_IEEE (uint32_t val)
 // a non-iec559 system uses to a serialized IEEE 754 compliant bit sequence
 inline uint32_t F32_CONVERT_NON_IEEE (float val)
 {
-    if (val == 0.f)         return 0;
+    if (val == 0u)          return 0;
     if (isinf(val))         return 0x7F800000;
     if (isnan(val))         return 0x7FC00000;
     uint32_t    neg         = val < 0 ? F32_NEG : 0;
@@ -225,7 +225,7 @@ inline double F64_CONVERT_NON_IEEE (uint64_t val)
 // a non-iec559 system uses to a serialized IEEE 754 compliant bit sequence
 inline uint64_t F64_CONVERT_NON_IEEE (double val)
 {
-    if (val == 0.f)         return 0.;
+    if (val == 0u)          return 0;
     if (isinf(val))         return 0x7FF8000000000000;
     if (isnan(val))         return 0x7FFC000000000000;
     uint64_t    neg         = val < 0 ? F64_NEG : 0;
