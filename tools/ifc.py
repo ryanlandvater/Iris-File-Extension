@@ -123,9 +123,9 @@ def validate_schema(schema: Dict[str, Any]) -> None:
 # pinned because narrow on-disk encodings (uint24/uint40) widen to natural
 # C++ types in memory — the struct is for reflection, not for direct mmap.
 # -----------------------------------------------------------------------------
-def gen_data_types(schema: Dict[str, Any]) -> str:
+def gen_data_types(schema: Dict[str, Any], schema_label: str) -> str:
     out: List[str] = []
-    out.append(GENERATED_BANNER.format(schema="schema/ife_v1.json"))
+    out.append(GENERATED_BANNER.format(schema=schema_label))
     out.append("#ifndef IFE_DataTypes_hpp")
     out.append("#define IFE_DataTypes_hpp")
     out.append("")
@@ -158,9 +158,9 @@ def gen_data_types(schema: Dict[str, Any]) -> str:
 # in IrisCodecExtension.hpp. Same numeric values; cross-checked by
 # tests/ife_codegen_tests.cpp via `static_assert`.
 # -----------------------------------------------------------------------------
-def gen_vtables(schema: Dict[str, Any]) -> str:
+def gen_vtables(schema: Dict[str, Any], schema_label: str) -> str:
     out: List[str] = []
-    out.append(GENERATED_BANNER.format(schema="schema/ife_v1.json"))
+    out.append(GENERATED_BANNER.format(schema=schema_label))
     out.append("#ifndef IFE_VTables_hpp")
     out.append("#define IFE_VTables_hpp")
     out.append("")
@@ -214,9 +214,9 @@ def gen_vtables(schema: Dict[str, Any]) -> str:
 # -----------------------------------------------------------------------------
 # IFE_FieldKeys.hpp — reflective `FieldKey` arrays per resource.
 # -----------------------------------------------------------------------------
-def gen_field_keys(schema: Dict[str, Any]) -> str:
+def gen_field_keys(schema: Dict[str, Any], schema_label: str) -> str:
     out: List[str] = []
-    out.append(GENERATED_BANNER.format(schema="schema/ife_v1.json"))
+    out.append(GENERATED_BANNER.format(schema=schema_label))
     out.append("#ifndef IFE_FieldKeys_hpp")
     out.append("#define IFE_FieldKeys_hpp")
     out.append("")
@@ -275,9 +275,9 @@ def gen_field_keys(schema: Dict[str, Any]) -> str:
 # this header now is to keep the JS-visible surface in lockstep with the
 # schema instead of hand-maintaining it in two places.
 # -----------------------------------------------------------------------------
-def gen_field_keys_wasm(schema: Dict[str, Any]) -> str:
+def gen_field_keys_wasm(schema: Dict[str, Any], schema_label: str) -> str:
     out: List[str] = []
-    out.append(GENERATED_BANNER.format(schema="schema/ife_v1.json"))
+    out.append(GENERATED_BANNER.format(schema=schema_label))
     out.append("#ifndef IFE_FieldKeys_wasm_hpp")
     out.append("#define IFE_FieldKeys_wasm_hpp")
     out.append("")
@@ -316,12 +316,13 @@ GENERATORS = {
 }
 
 
-def write_outputs(schema: Dict[str, Any], out_dir: Path) -> List[Path]:
+def write_outputs(schema: Dict[str, Any], out_dir: Path,
+                  schema_label: str) -> List[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     for filename, fn in GENERATORS.items():
         path = out_dir / filename
-        path.write_text(fn(schema), encoding="utf-8")
+        path.write_text(fn(schema, schema_label), encoding="utf-8")
         written.append(path)
     return written
 
@@ -338,11 +339,14 @@ def main(argv: List[str]) -> int:
 
     schema = json.loads(args.schema.read_text(encoding="utf-8"))
     validate_schema(schema)
+    # Use just the basename in the generated banner so the comment is stable
+    # across different absolute build-tree paths.
+    schema_label = args.schema.name
 
     if args.check:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            write_outputs(schema, tmp_path)
+            write_outputs(schema, tmp_path, schema_label)
             mismatches: List[str] = []
             for filename in GENERATORS:
                 expected = tmp_path / filename
@@ -363,7 +367,7 @@ def main(argv: List[str]) -> int:
                 return 1
             return 0
 
-    written = write_outputs(schema, args.out_dir)
+    written = write_outputs(schema, args.out_dir, schema_label)
     for path in written:
         print(f"ifc.py: wrote {path}")
     return 0

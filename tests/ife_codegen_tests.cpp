@@ -51,23 +51,25 @@ namespace GK = ::IFE::field_keys;
                   "recovery tag drift: " #RES)
 
 // ---- FILE_HEADER ----
-IFE_CHECK_OFFSET(FILE_HEADER, MAGIC_BYTES_OFFSET);
-IFE_CHECK_OFFSET(FILE_HEADER, RECOVERY);
-IFE_CHECK_OFFSET(FILE_HEADER, FILE_SIZE);
-IFE_CHECK_OFFSET(FILE_HEADER, EXTENSION_MAJOR);
-IFE_CHECK_OFFSET(FILE_HEADER, EXTENSION_MINOR);
-IFE_CHECK_OFFSET(FILE_HEADER, FILE_REVISION);
-IFE_CHECK_OFFSET(FILE_HEADER, TILE_TABLE_OFFSET);
-IFE_CHECK_OFFSET(FILE_HEADER, METADATA_OFFSET);
-IFE_CHECK_SIZE  (FILE_HEADER, MAGIC_BYTES_OFFSET);
-IFE_CHECK_SIZE  (FILE_HEADER, RECOVERY);
-IFE_CHECK_SIZE  (FILE_HEADER, FILE_SIZE);
-IFE_CHECK_SIZE  (FILE_HEADER, EXTENSION_MAJOR);
-IFE_CHECK_SIZE  (FILE_HEADER, EXTENSION_MINOR);
-IFE_CHECK_SIZE  (FILE_HEADER, FILE_REVISION);
-IFE_CHECK_SIZE  (FILE_HEADER, TILE_TABLE_OFFSET);
-IFE_CHECK_SIZE  (FILE_HEADER, METADATA_OFFSET);
-IFE_CHECK_HEADER_SIZE(FILE_HEADER);
+//
+// Phase 4 layout adjustment: FILE_HEADER now leads with the same universal
+// 10-byte preamble as every other block — `VALIDATION (u64) + RECOVERY
+// (u16)` — instead of the legacy `MAGIC_BYTES_OFFSET (u32) + RECOVERY (u16)`
+// 6-byte preamble. The validation slot for the file's first block carries
+// `IFE::IFE_FILE_MAGIC`, a u64 zero-extension of the legacy 32-bit
+// `MAGIC_BYTES`, so existing magic probes that read the first 4 bytes still
+// see the same value. The legacy v1 `IrisCodec::Serialization::FILE_HEADER`
+// offset/size constants no longer match this layout, so they are not
+// parity-checked here — the layout is self-checked by the asserts below.
+static_assert(G::FILE_HEADER::offset::VALIDATION       == 0,
+              "FILE_HEADER must lead with VALIDATION at offset 0");
+static_assert(G::FILE_HEADER::size::VALIDATION         == 8,
+              "FILE_HEADER VALIDATION must be uint64");
+static_assert(G::FILE_HEADER::offset::RECOVERY         == 8,
+              "FILE_HEADER RECOVERY must immediately follow VALIDATION");
+static_assert(G::FILE_HEADER::size::RECOVERY           == 2,
+              "FILE_HEADER RECOVERY must be uint16");
+// The recovery tag value itself is unchanged from v1.
 IFE_CHECK_RECOVERY(FILE_HEADER);
 
 // ---- TILE_TABLE ----
@@ -226,11 +228,11 @@ static_assert(sizeof(GD::LAYER_EXTENT) == GD::LAYER_EXTENT::wire_size,
 // -----------------------------------------------------------------------------
 static_assert(GK::FILE_HEADER::fields.size() == 8,
               "FILE_HEADER FieldKey table size drift");
-static_assert(GK::FILE_HEADER::fields[0].name == "MAGIC_BYTES_OFFSET");
-static_assert(GK::FILE_HEADER::fields[0].offset == G::FILE_HEADER::offset::MAGIC_BYTES_OFFSET);
-static_assert(GK::FILE_HEADER::fields[0].size   == G::FILE_HEADER::size::MAGIC_BYTES_OFFSET);
+static_assert(GK::FILE_HEADER::fields[0].name == "VALIDATION");
+static_assert(GK::FILE_HEADER::fields[0].offset == G::FILE_HEADER::offset::VALIDATION);
+static_assert(GK::FILE_HEADER::fields[0].size   == G::FILE_HEADER::size::VALIDATION);
 static_assert(GK::FILE_HEADER::fields[0].kind   == ::IFE::IFE_FieldKind::SCALAR);
-static_assert(GK::FILE_HEADER::fields[0].scalar_tag == ::IFE::RECOVERY_TAG::SCALAR_UINT32);
+static_assert(GK::FILE_HEADER::fields[0].scalar_tag == ::IFE::RECOVERY_TAG::SCALAR_UINT64);
 
 // -----------------------------------------------------------------------------
 // Schema version pinning. The codegen embeds the schema version as

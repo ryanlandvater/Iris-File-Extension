@@ -1,6 +1,6 @@
 # IFE 2.x Migration — FastFHIR Substrate
 
-> **Status:** in progress (Phases 1-3 of 6 landed). Targeted version: `2.0.0-alpha`.
+> **Status:** in progress (Phases 1-4 of 6 landed). Targeted version: `2.0.0-alpha`.
 
 The Iris File Extension is migrating from the eager-mapping `Abstraction::File`
 pattern to a lock-free Virtual Memory Arena (VMA) substrate ported from
@@ -32,8 +32,8 @@ affected until they explicitly opt in.
 |------:|-------|--------|
 | 1 | Lock-free VMA: `IFE_Memory`, `claim_space`, `StreamHead`, `Memory::View` | ✅ landed (PR #1) |
 | 2 | `IFE_FieldKind`, partitioned `RECOVERY_TAG`, `0x8000` array bit, `TypeTraits<T>` | ✅ landed (PR #2) |
-| 3 | `ifc.py` JSON-schema-driven codegen → `IFE_DataTypes.hpp`, `IFE_VTables.hpp`, `IFE_FieldKeys.hpp`, WASM stubs | ✅ landed (this PR) |
-| 4 | Universal 10-byte `DATA_BLOCK` header, `Builder::amend_pointer` (**v2 on-disk break**) | pending |
+| 3 | `ifc.py` JSON-schema-driven codegen → `IFE_DataTypes.hpp`, `IFE_VTables.hpp`, `IFE_FieldKeys.hpp`, WASM stubs | ✅ landed (PR #3) |
+| 4 | Universal 10-byte `DATA_BLOCK` header, `Builder::amend_pointer` | ✅ landed (this PR) |
 | 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, removal of `std::vector` from read paths | pending |
 | 6 | `IFE_Builder`, `Reflective::Node`/`Entry`, deprecate `Abstraction::File`, flag default ON | pending |
 
@@ -169,6 +169,106 @@ time**. Substrate-OFF builds remain Python-free.
   flips the relationship: the schema becomes authoritative and the
   legacy enums get removed.
 
+## Phase 4 — what landed
+
+Phase 4 introduces the substrate-side block builder and the universal
+10-byte `DATA_BLOCK` header that every IFE block leads with. The schema
+remains the authoritative source from Phase 3 onward.
+
+### Universal preamble
+
+In v1 every block other than `FILE_HEADER` already led with a uniform
+`VALIDATION (uint64) + RECOVERY (uint16)` 10-byte preamble. `FILE_HEADER`
+was the lone anomaly — it led with `MAGIC_BYTES_OFFSET (uint32) +
+RECOVERY (uint16)`, a 6-byte preamble. Phase 4 folds it into the
+universal shape:
+
+| Offset | Size | Field             | Notes                                               |
+|-------:|-----:|-------------------|-----------------------------------------------------|
+|      0 |    8 | VALIDATION        | Holds `IFE_FILE_MAGIC` for the first block.         |
+|      8 |    2 | RECOVERY          | `RESOURCE_HEADER`.                                  |
+|     10 |    2 | EXTENSION_MAJOR   |                                                     |
+|     12 |    2 | EXTENSION_MINOR   |                                                     |
+|     14 |    4 | FILE_REVISION     |                                                     |
+|     18 |    8 | FILE_SIZE         |                                                     |
+|     26 |    8 | TILE_TABLE_OFFSET |                                                     |
+|     34 |    8 | METADATA_OFFSET   |                                                     |
+
+`IFE_FILE_MAGIC` is a 64-bit zero-extension of the legacy 32-bit
+`MAGIC_BYTES = 0x49726973`, so any code that probes the first 4 bytes of
+an `.iris` file via `LOAD_U32` continues to recognise the magic
+unchanged. Every other resource is unchanged — they already conformed
+to the universal preamble. The `tests/ife_codegen_tests.cpp` legacy
+parity asserts therefore still pass for every resource other than
+`FILE_HEADER`, whose layout asserts have been updated to reference the
+universal preamble (the recovery-tag value itself is unchanged).
+
+### Substrate API additions
+
+* `src/IFE_DataBlock.hpp` — universal 10-byte block header type:
+  * `IFE::DATA_BLOCK_HEADER_SIZE`, `IFE::DATA_BLOCK_VALIDATION_OFFSET`,
+    `IFE::DATA_BLOCK_RECOVERY_OFFSET`.
+  * `IFE::IFE_FILE_MAGIC` constant (`static_assert`-pinned to match the
+    legacy `MAGIC_BYTES` in its low 32 bits and to match the legacy
+    `IrisCodec::Serialization::DATA_BLOCK::HEADER_SIZE` for its size).
+  * `IFE::DataBlockHeader` POD + `read_header(buf)` / `write_header(buf,
+    tag, validation)` / `validate_at(view, offset, expected_tag)` /
+    `is_file_magic(buf)` helpers.
+
+* `src/IFE_Builder.hpp` / `src/IFE_Builder.cpp` — Builder skeleton:
+  * `IFE::Builder(IFE::Memory)` / `Builder::create(capacity)` factory.
+  * `BlockHandle claim_block(tag, body_bytes, validation = 0)` — claims
+    `10 + body_bytes` via `Memory::claim_space` and writes the universal
+    preamble. Returns `{offset, body_offset, body, body_size, tag}`.
+  * `BlockHandle claim_file_header(body_bytes)` — convenience wrapper
+    that pre-fills `validation = IFE_FILE_MAGIC` and `tag =
+    RESOURCE_HEADER`.
+  * `void amend_pointer(slot_offset, child_offset)` — release-ordered
+    atomic 64-bit store into a previously-claimed parent slot. This is
+    the lock-free forward-pointer fixup; concurrent readers either see
+    zero (slot unset) or the valid child offset.
+  * `uint64_t read_pointer(slot_offset)` — acquire-ordered counterpart
+    used by tests (production code reads via the reflective lens added
+    in Phase 6).
+  * Bounds-checked: `amend_pointer` / `read_pointer` throw
+    `std::out_of_range` if the slot would extend past the arena.
+
+### Tests
+
+* `tests/ife_datablock_tests.cpp` (new):
+  * Universal-preamble round-trip.
+  * `IFE_FILE_MAGIC` low half == legacy `MAGIC_BYTES`; arena bytes
+    spell `'sirI'` (legacy magic, little-endian) followed by zeros.
+  * `Builder::claim_block` lays out a valid preamble at the offset
+    returned by `claim_space`; body pointer matches the in-arena
+    address; arena cursor advances correctly.
+  * `Builder::claim_file_header` carries the file magic and is
+    recognised by `is_file_magic` and `validate_at`.
+  * Lock-free 32-thread × 256-iteration `amend_pointer` race: every slot
+    ends with the expected child offset, no two children land at the
+    same offset. **TSan-clean.**
+  * Bounds and empty-handle error paths.
+
+* `tests/ife_codegen_tests.cpp` (updated): the FILE_HEADER legacy
+  offset/size parity asserts are replaced with self-consistency asserts
+  against the universal preamble (`offset::VALIDATION == 0`, size==8,
+  `RECOVERY` at offset 8). Every other resource's parity asserts are
+  unchanged.
+
+### CMake
+
+* `IFE_USE_FASTFHIR_SUBSTRATE=ON` now exports `IFE_DataBlock.hpp` /
+  `IFE_Builder.hpp` and compiles `IFE_Builder.cpp`.
+* New `ife_datablock_tests` ctest entry; links `Threads::Threads` for
+  the multi-thread amend race.
+
+### Substrate-OFF dormancy preserved
+
+Substrate-OFF builds are **byte-identical** to before this PR — none of
+the new headers or sources are compiled, no Python is invoked, and the
+legacy `IrisCodec::Abstraction::File` write path still produces the same
+on-disk bytes as before.
+
 ## Building with the substrate
 
 ```bash
@@ -192,14 +292,10 @@ cmake --build build-tsan --target ife_memory_tests
 
 ## Open items blocking later phases
 
-These items must be resolved before Phases 2-6 can proceed; they are tracked
+These items must be resolved before Phases 5-6 can proceed; they are tracked
 on the parent migration tracking issue:
 
 1. Pointer to a real FastFHIR repository (`FF_Memory`, `ffc.py`). Phase 1
    inferred semantics from the migration spec; later phases need the source.
-2. Confirmation that the v2 on-disk break in Phase 4 is in scope (legacy v1
-   files will not be readable by the new substrate; a separate read-only
-   compatibility shim is *not* in scope unless explicitly requested).
-3. Confirmation of `Abstraction::File` ABI break in Phase 6.
-4. Whether `jinja2` is acceptable for `ifc.py` templating (Phase 3).
-5. A small corpus of real `.iris` files for round-trip parity tests.
+2. Confirmation of `Abstraction::File` ABI break in Phase 6.
+3. A small corpus of real `.iris` files for round-trip parity tests.

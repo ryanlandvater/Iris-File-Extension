@@ -1,8 +1,7 @@
 {
   "_comment": [
-    "IFE v1.0 schema — single source of truth for tools/ifc.py.",
-    "Every entry mirrors the hand-written enums in src/IrisCodecExtension.hpp (IrisCodec::Serialization).",
-    "Codegen output is cross-checked against those enums by tests/ife_codegen_tests.cpp."
+    "IFE schema — single source of truth for tools/ifc.py.",
+    "Codegen output is cross-checked against the legacy IrisCodec::Serialization enums in src/IrisCodecExtension.hpp by tests/ife_codegen_tests.cpp."
   ],
   "version_major": 1,
   "version_minor": 0,
@@ -67,14 +66,14 @@
     {
       "name": "FILE_HEADER",
       "recovery_tag": "RESOURCE_HEADER",
-      "_note": "FILE_HEADER does NOT lead with VALIDATION; MAGIC_BYTES_OFFSET is at offset 0.",
+      "_note": "Like every other block, FILE_HEADER leads with the universal 10-byte preamble: VALIDATION (u64) + RECOVERY (u16). The validation slot for the file's first block carries IFE_FILE_MAGIC, a u64 zero-extension of the legacy MAGIC_BYTES so identity probes that read the first 4 bytes still see 'Iris'.",
       "fields": [
-        {"name": "MAGIC_BYTES_OFFSET", "type": "uint32"},
+        {"name": "VALIDATION",         "type": "uint64"},
         {"name": "RECOVERY",           "type": "uint16"},
-        {"name": "FILE_SIZE",          "type": "uint64"},
         {"name": "EXTENSION_MAJOR",    "type": "uint16"},
         {"name": "EXTENSION_MINOR",    "type": "uint16"},
         {"name": "FILE_REVISION",      "type": "uint32"},
+        {"name": "FILE_SIZE",          "type": "uint64"},
         {"name": "TILE_TABLE_OFFSET",  "type": "uint64"},
         {"name": "METADATA_OFFSET",    "type": "uint64"}
       ]

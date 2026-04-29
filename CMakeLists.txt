@@ -94,7 +94,10 @@ set (
 if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Types.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_DataBlock.hpp)
+    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Builder.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
+    list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Builder.cpp)
 
     # Phase 3 — schema-driven codegen (tools/ifc.py). Generates
     # IFE_DataTypes.hpp / IFE_VTables.hpp / IFE_FieldKeys.hpp /
@@ -132,7 +135,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     # as its BASE_DIRS). They are available to internal targets via the
     # include path appended below; downstream installation is a Phase 4+
     # concern once the substrate is wired into the public surface.
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-3: IFE_Memory, IFE_Types, codegen)")
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-4: IFE_Memory, IFE_Types, codegen, DataBlock+Builder)")
 endif()
 set (
     IFE_IncludeDir
@@ -303,5 +306,21 @@ if(IFE_BUILD_TESTS)
                     --out-dir ${IFE_GENERATED_DIR}
                     --check
         )
+
+        # Phase 4 — universal DATA_BLOCK header + Builder + amend_pointer
+        # tests. Includes a multi-threaded amend_pointer race that must be
+        # lock-free; TSan-clean.
+        add_executable(
+            ife_datablock_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_datablock_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+            ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        )
+        target_include_directories(ife_datablock_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_datablock_tests PRIVATE cxx_std_20)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ife_datablock_tests PRIVATE
+                              ${IFE_Dependencies} Threads::Threads)
+        add_test(NAME ife_datablock_tests COMMAND ife_datablock_tests)
     endif()
 endif()
