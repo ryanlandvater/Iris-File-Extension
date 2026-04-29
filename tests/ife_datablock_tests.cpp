@@ -1,10 +1,10 @@
 /**
  * @file ife_datablock_tests.cpp
- * @brief Phase 4 tests: universal DATA_BLOCK header, Builder, amend_pointer.
+ * @brief Tests: universal DATA_BLOCK header, Builder, amend_pointer.
  *
  * Covers:
  *  - Round-trip read/write of the universal 10-byte preamble.
- *  - `IFE_FILE_MAGIC` low 32 bits == legacy `MAGIC_BYTES` (`'Iris'`).
+ *  - `IFE_FILE_MAGIC` byte layout (`'I','r','i','s'` little-endian).
  *  - `Builder::claim_block` lays out a valid universal preamble at the
  *    arena offset returned by `claim_space`.
  *  - `Builder::claim_file_header` carries `IFE_FILE_MAGIC` and the
@@ -19,7 +19,6 @@
 #include "IFE_DataBlock.hpp"
 #include "IFE_Memory.hpp"
 #include "IFE_Types.hpp"
-#include "IrisFileExtension.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -54,12 +53,11 @@ int test_header_roundtrip() {
     return 0;
 }
 
-int test_file_magic_matches_legacy() {
+int test_file_magic() {
     // Compile-time pin (also enforced inside IFE_DataBlock.hpp), repeated
     // here as a runtime check so the test binary fails loudly if a future
     // edit accidentally drops the static_assert.
-    IFE_REQUIRE((IFE::IFE_FILE_MAGIC & 0xFFFFFFFFu) ==
-                static_cast<std::uint32_t>(MAGIC_BYTES));
+    IFE_REQUIRE((IFE::IFE_FILE_MAGIC & 0xFFFFFFFFu) == 0x49726973u);
     // ASCII spelling of the magic in arena (little-endian) order. The 32-bit
     // hex literal `0x49726973` reads as 'I','r','i','s' (left-to-right hex
     // nibble pairs), but on little-endian targets memcpy stores the
@@ -73,8 +71,8 @@ int test_file_magic_matches_legacy() {
     IFE_REQUIRE(buf[1] == 'i');
     IFE_REQUIRE(buf[2] == 'r');
     IFE_REQUIRE(buf[3] == 'I');
-    // High half is zero (no extra distinguisher; the magic is just a
-    // u64 zero-extension of the legacy 32-bit value).
+    // High half is zero (the magic is just a 32-bit ASCII tag in the
+    // low half of the 64-bit validation slot).
     IFE_REQUIRE(buf[4] == 0);
     IFE_REQUIRE(buf[5] == 0);
     IFE_REQUIRE(buf[6] == 0);
@@ -241,7 +239,7 @@ int test_empty_builder_throws() {
 int main() {
     int rc = 0;
     rc |= test_header_roundtrip();
-    rc |= test_file_magic_matches_legacy();
+    rc |= test_file_magic();
     rc |= test_builder_claim_block_layout();
     rc |= test_builder_file_header();
     rc |= test_amend_pointer_basic();

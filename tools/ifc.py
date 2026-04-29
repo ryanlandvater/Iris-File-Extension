@@ -2,18 +2,19 @@
 """ifc.py — Iris File Compiler.
 
 Schema-driven codegen for the Iris File Extension. Reads a JSON description
-of the IFE binary container format and emits four C++ headers consumed by
+of the IFE binary container format and emits five C++ headers consumed by
 the FastFHIR substrate (Phase 3 of the substrate migration):
 
     IFE_DataTypes.hpp        POD reflective structs for sub-block datatypes.
     IFE_VTables.hpp          Per-resource constexpr field offsets / sizes /
-                             header_size / recovery_tag (replaces the
-                             hand-written `enum vtable_offsets` blocks in
-                             IrisCodecExtension.hpp).
+                             header_size / recovery_tag.
     IFE_FieldKeys.hpp        constexpr std::array<FieldKey, N> per resource
-                             for the Phase 6 reflective reader.
+                             for the reflective reader.
+    IFE_Resources.hpp        Single-table dispatch (`ResourceInfo[]` indexed
+                             by recovery tag) so the reflective lens needs
+                             one table lookup instead of two N-way switches.
     IFE_FieldKeys_wasm.hpp   __EMSCRIPTEN__-gated extern "C" reflection
-                             surface (stubs; Phase 6 wires the real impl).
+                             surface (stubs; wired in later phases).
 
 Stdlib-only — no jinja2 dependency. `--check` mode is for CI: regenerate
 to a temp directory and diff against the on-disk files; non-zero exit if
@@ -269,6 +270,70 @@ def gen_field_keys(schema: Dict[str, Any], schema_label: str) -> str:
 
 
 # -----------------------------------------------------------------------------
+# IFE_Resources.hpp — single dispatch table indexed by RECOVERY_TAG.
+#
+# Replaces the hand-written N-way switches in IFE_Reflective.hpp that mapped
+# (recovery_tag) -> (field_keys span, body_size_hint). With this table the
+# reflective lens does one linear scan over a small constexpr array;
+# adding a new resource is a pure schema change with zero C++ edits.
+# -----------------------------------------------------------------------------
+def gen_resources(schema: Dict[str, Any], schema_label: str) -> str:
+    out: List[str] = []
+    out.append(GENERATED_BANNER.format(schema=schema_label))
+    out.append("#ifndef IFE_Resources_hpp")
+    out.append("#define IFE_Resources_hpp")
+    out.append("")
+    out.append("#include <cstddef>")
+    out.append("#include <string_view>")
+    out.append("")
+    out.append('#include "IFE_FieldKeys.hpp"')
+    out.append('#include "IFE_Types.hpp"')
+    out.append('#include "IFE_VTables.hpp"')
+    out.append("")
+    out.append("namespace IFE { namespace resources {")
+    out.append("")
+    out.append("// One reflective record per resource: the tag, its name (string_view")
+    out.append("// into a generated literal), the codegen header_size, a pointer to")
+    out.append("// the FieldKey array, and its element count. The reflective lens does")
+    out.append("// a linear scan over `table` and dispatches off the resulting record.")
+    out.append("struct ResourceInfo {")
+    out.append("    RECOVERY_TAG     tag;")
+    out.append("    std::string_view name;")
+    out.append("    std::size_t      header_size;     // includes universal preamble")
+    out.append("    const FieldKey*  fields;")
+    out.append("    std::size_t      field_count;")
+    out.append("};")
+    out.append("")
+    n = len(schema["resources"])
+    out.append(f"inline constexpr std::size_t table_size = {n};")
+    out.append(f"inline constexpr ResourceInfo table[{n}] = {{")
+    for res in schema["resources"]:
+        nm = res["name"]
+        fc = len(res["fields"])
+        out.append(
+            f'    {{RECOVERY_TAG::{res["recovery_tag"]}, "{nm}", '
+            f"vtables::{nm}::header_size, "
+            f"field_keys::{nm}::fields.data(), {fc}}},"
+        )
+    out.append("};")
+    out.append("")
+    out.append("// Linear lookup; the table holds at most a few dozen entries so an")
+    out.append("// indexed scan is faster than a hashmap and trivially constexpr.")
+    out.append("inline constexpr const ResourceInfo* lookup(RECOVERY_TAG t) noexcept {")
+    out.append("    for (std::size_t i = 0; i < table_size; ++i) {")
+    out.append("        if (table[i].tag == t) return &table[i];")
+    out.append("    }")
+    out.append("    return nullptr;")
+    out.append("}")
+    out.append("")
+    out.append("}}  // namespace IFE::resources")
+    out.append("")
+    out.append("#endif  // IFE_Resources_hpp")
+    out.append("")
+    return "\n".join(out)
+
+
+# -----------------------------------------------------------------------------
 # IFE_FieldKeys_wasm.hpp — __EMSCRIPTEN__ extern "C" reflection surface.
 #
 # Stubs only; Phase 6 wires real implementations. The point of generating
@@ -312,6 +377,7 @@ GENERATORS = {
     "IFE_DataTypes.hpp":      gen_data_types,
     "IFE_VTables.hpp":        gen_vtables,
     "IFE_FieldKeys.hpp":      gen_field_keys,
+    "IFE_Resources.hpp":      gen_resources,
     "IFE_FieldKeys_wasm.hpp": gen_field_keys_wasm,
 }
 

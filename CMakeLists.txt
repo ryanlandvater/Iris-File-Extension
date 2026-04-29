@@ -114,6 +114,7 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
         ${IFE_GENERATED_DIR}/IFE_DataTypes.hpp
         ${IFE_GENERATED_DIR}/IFE_VTables.hpp
         ${IFE_GENERATED_DIR}/IFE_FieldKeys.hpp
+        ${IFE_GENERATED_DIR}/IFE_Resources.hpp
         ${IFE_GENERATED_DIR}/IFE_FieldKeys_wasm.hpp
     )
     file(MAKE_DIRECTORY ${IFE_GENERATED_DIR})
@@ -271,9 +272,9 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
     add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
 
-    # Phase 2 — IFE_Types header. Pulls in IrisCodecExtension.hpp for the
-    # legacy<->tag round-trip pinning, so it needs the same include paths
-    # (IrisHeaders + IFE source) as the main library.
+    # IFE_Types header — substrate type system. Self-contained and
+    # independent of the legacy IrisCodec headers; included here in the
+    # main test set since other substrate tests pull it in transitively.
     add_executable(
         ife_types_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_types_tests.cpp
@@ -283,11 +284,11 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_types_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_types_tests COMMAND ife_types_tests)
 
-    # Phase 3 — codegen parity test. Cross-checks every generated vtable
-    # offset/size/header_size and every generated recovery_tag against the
-    # legacy IrisCodec::Serialization enums via static_assert. Only built
-    # when IFE_USE_FASTFHIR_SUBSTRATE=ON because the generated headers do
-    # not exist otherwise.
+    # Codegen sanity test. Verifies the generated headers are internally
+    # consistent (schema version, FILE_HEADER preamble layout, monotonic
+    # field offsets, dispatch table round-trip). The codegen output IS
+    # the source of truth — there is no longer a parity check against the
+    # legacy IrisCodec::Serialization enums.
     if(IFE_USE_FASTFHIR_SUBSTRATE)
         add_executable(
             ife_codegen_tests

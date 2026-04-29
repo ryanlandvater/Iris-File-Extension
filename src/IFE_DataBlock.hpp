@@ -1,7 +1,6 @@
 /**
  * @file IFE_DataBlock.hpp
  * @brief Universal 10-byte DATA_BLOCK header for the IFE wire format.
- *        Phase 4 of the FastFHIR substrate migration.
  *
  * Every block in the IFE wire format leads with a uniform 10-byte preamble:
  *
@@ -13,9 +12,8 @@
  *                     from `IFE_Types.hpp` (e.g. `RESOURCE_HEADER`,
  *                     `RESOURCE_TILE_TABLE`, ...).
  *
- * `IFE_FILE_MAGIC` is a 64-bit zero-extension of the legacy 32-bit
- * `MAGIC_BYTES = 0x49726973` ('Iris'), so existing magic-detection code that
- * probes the first 4 bytes via `LOAD_U32` continues to work unchanged.
+ * `IFE_FILE_MAGIC` packs the four ASCII bytes `'I','r','i','s'` into the
+ * first 32 bits of the validation slot (zero-extended to 64 bits).
  *
  * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
  *
@@ -34,8 +32,7 @@
 namespace IFE {
 
 /// Wire size of the universal DATA_BLOCK preamble (8-byte validation +
-/// 2-byte recovery tag). Pinned by `static_assert` against the legacy
-/// `IrisCodec::Serialization::DATA_BLOCK::HEADER_SIZE`.
+/// 2-byte recovery tag).
 inline constexpr std::size_t DATA_BLOCK_HEADER_SIZE = 10;
 
 /// Byte offsets of the two fields inside the universal preamble.
@@ -43,18 +40,19 @@ inline constexpr std::size_t DATA_BLOCK_VALIDATION_OFFSET   = 0;
 inline constexpr std::size_t DATA_BLOCK_RECOVERY_OFFSET     = 8;
 
 /// File identification magic stored in the FILE_HEADER's `validation` slot.
-/// Zero-extension of the legacy 32-bit `MAGIC_BYTES = 0x49726973` ('Iris'),
-/// so a `LOAD_U32` at file offset 0 still produces the legacy magic.
+/// 64-bit zero-extension of the four ASCII bytes `'I','r','i','s'` packed
+/// little-endian (so a `LOAD_U32` at file offset 0 reads `0x49726973`).
 inline constexpr std::uint64_t IFE_FILE_MAGIC =
     static_cast<std::uint64_t>(0x49726973u);
 
-// Pin the universal-preamble size and the legacy-compatible low half of the
-// magic at compile time so a future schema edit cannot silently break either.
+// Pin the universal-preamble size and the magic's intended bit layout at
+// compile time so a future schema edit cannot silently break either.
 static_assert(DATA_BLOCK_HEADER_SIZE ==
-                  ::IrisCodec::Serialization::DATA_BLOCK::HEADER_SIZE,
-              "Universal DATA_BLOCK header size diverged from legacy DATA_BLOCK::HEADER_SIZE");
+                  DATA_BLOCK_VALIDATION_OFFSET + sizeof(std::uint64_t) +
+                  sizeof(std::uint16_t),
+              "DATA_BLOCK_HEADER_SIZE inconsistent with field layout");
 static_assert((IFE_FILE_MAGIC & 0xFFFFFFFFu) == 0x49726973u,
-              "Low 32 bits of IFE_FILE_MAGIC must equal the legacy MAGIC_BYTES");
+              "Low 32 bits of IFE_FILE_MAGIC must spell 'Iris'");
 
 /// POD view of a universal block header. Returned by `read_header`.
 struct DataBlockHeader {

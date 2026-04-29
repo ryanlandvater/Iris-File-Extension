@@ -10,10 +10,17 @@ FastFHIR. Goals:
 * Lock-free concurrent block ingestion (`claim_space` via `fetch_add`).
 * Schema-driven codegen (`ifc.py`) replacing hand-written byte-offset enums.
 * A universal 10-byte `DATA_BLOCK` header for all blocks on disk.
+* **Fresh design**, not a bridge: the substrate is its own format, pinned
+  by its own `static_assert`s. The cleanup pass landed alongside Phase 6a
+  removed every `IrisCodec::Serialization::*` reference from the substrate
+  headers (`legacy_to_tag` / `tag_to_legacy`, the `IFE_ROUND_TRIP` macro,
+  the wire-size and header-size parity asserts, and the
+  `IrisFileExtension.hpp` includes from `IFE_Types.hpp` / the substrate
+  test set). See [Cleanup pass](#cleanup-pass--what-dropped) below.
 
 The migration is staged across **six sequential PRs**. Each PR is independently
 reviewable, buildable, and testable. The legacy `IrisCodecExtension.{hpp,cpp}`
-API continues to build and behave unchanged until **Phase 6**.
+API continues to build and behave unchanged until **Phase 6b**.
 
 ## Feature flag
 
@@ -109,57 +116,41 @@ that backs `FF_Memory_t` in FastFHIR:
 
 * `src/IFE_Types.hpp` — header-only type system in a new `IFE` namespace.
   * `enum class IFE_FieldKind { SCALAR, ARRAY, BLOCK, CHOICE, STRING }` —
-    the tag carried by every `Reflective::Entry` in Phase 6.
+    the tag carried by every `Reflective::Entry`.
   * Partition constants: `RECOVERY_PARTITION_PRIMITIVE` (`0x01xx`),
     `RECOVERY_PARTITION_DATATYPE` (`0x02xx`),
     `RECOVERY_PARTITION_RESOURCE` (`0x03xx`), and the array bit
     `RECOVERY_ARRAY_BIT = 0x8000` with the `IsArrayTag(uint16_t)` predicate.
-  * `enum class RECOVERY_TAG : uint16_t` covering every legacy
-    `IrisCodec::Serialization` resource (HEADER, TILE_TABLE, METADATA,
-    ATTRIBUTES, LAYER_EXTENTS, TILE_OFFSETS, ATTRIBUTES_SIZES,
-    ATTRIBUTES_BYTES, ASSOCIATED_IMAGES, ASSOCIATED_IMAGE_BYTES,
-    ICC_PROFILE, ANNOTATIONS, ANNOTATION_BYTES, ANNOTATION_GROUP_SIZES,
-    ANNOTATION_GROUP_BYTES, CIPHER, UNDEFINED) plus primitive scalars
-    (`uint8/16/32/64`, `int8/16/32/64`, `float`, `double`) and the
-    `LAYER_EXTENT` BLOCK datatype. Every ARRAY variant is pre-OR'd with
-    `0x8000`.
+  * `enum class RECOVERY_TAG : uint16_t` covering every v1 resource
+    (HEADER, TILE_TABLE, METADATA, ATTRIBUTES, LAYER_EXTENTS,
+    TILE_OFFSETS, ATTRIBUTES_SIZES, ATTRIBUTES_BYTES, ASSOCIATED_IMAGES,
+    ASSOCIATED_IMAGE_BYTES, ICC_PROFILE, ANNOTATIONS, ANNOTATION_BYTES,
+    ANNOTATION_GROUP_SIZES, ANNOTATION_GROUP_BYTES, CIPHER, UNDEFINED)
+    plus primitive scalars (`uint8/16/32/64`, `int8/16/32/64`, `float`,
+    `double`) and the `LAYER_EXTENT` BLOCK datatype. Every ARRAY variant
+    is pre-OR'd with `0x8000`.
   * `static_assert`s pin every tag to its expected partition and numeric
     value, so a future schema edit cannot silently re-number a tag.
   * `template<class T> struct TypeTraits` specializations for the primitives
     the codebase actually serializes today, plus `LayerExtentBlock` as the
-    first BLOCK datatype. Wire sizes are pinned against the legacy
-    `IrisCodec::TYPE_SIZES` and `LAYER_EXTENT::SIZE` so they cannot drift
-    from the on-disk encoder.
-  * `constexpr legacy_to_tag(IrisCodec::RECOVERY)` /
-    `tag_to_legacy(RECOVERY_TAG)` bridge the v1 wire format and the new
-    partitioned tag space. Every legacy resource is round-trip closed by
-    `static_assert`.
-* `tests/ife_types_tests.cpp` — table-driven runtime tests for the
-  legacy<->tag mapping, partition helpers, and `TypeTraits` specializations.
-  Most invariants are already pinned at compile time inside `IFE_Types.hpp`.
-
-### Soft-deprecation deviation
-
-The migration plan called for marking `enum IrisCodec::RECOVERY` itself
-`[[deprecated]]`. Doing so would emit a warning at every existing
-`RECOVERY recovery = RECOVER_*;` field declaration in
-`IrisCodecExtension.hpp`, polluting non-substrate downstream builds (notably
-the Iris-Codec Community Module). PR #1 explicitly preserved binary parity
-for those builds. The deprecation is therefore documented in `IFE_Types.hpp`
-and here only; a hard `[[deprecated]]` is staged for Phase 6 when the flag
-default flips and legacy callers are already migrating.
+    first BLOCK datatype. Wire sizes are pinned against `sizeof(T)` and
+    against the summed schema field widths — the substrate is its own
+    source of truth for the on-disk encoding.
+* `tests/ife_types_tests.cpp` — runtime checks for the partition helpers
+  and `TypeTraits` specializations. Most invariants are already pinned at
+  compile time inside `IFE_Types.hpp`.
 
 ### Dormant by design
 
 Phase 1 introduces **no on-disk format change** and **no public ABI change**.
 The new headers are only compiled when `IFE_USE_FASTFHIR_SUBSTRATE=ON`, and
-even then they are not yet wired into `Abstraction::File` or
-`validate_file_structure`. Wiring happens in Phase 4. Phases 2-3 likewise add
-only header-only metadata (Phase 2) and build-tree-only generated headers
-(Phase 3) — `IFE_Types.hpp` is exported alongside `IFE_Memory.hpp` when the
-substrate flag is ON, and both legacy `IrisCodec::Serialization::RECOVERY` /
-`IrisCodec::Serialization` block layouts continue to define the v1 wire
-format until Phase 4.
+even then they are not wired into `Abstraction::File` or
+`validate_file_structure`. Wiring happens in Phase 6b. Phases 2-3 likewise
+add only header-only metadata (Phase 2) and build-tree-only generated
+headers (Phase 3) — `IFE_Types.hpp` is exported alongside `IFE_Memory.hpp`
+when the substrate flag is ON; the legacy `IrisCodec::Serialization` block
+layouts continue to define the v1 wire format separately until Phase 6b
+flips the default.
 
 ## Phase 3 — what landed
 
@@ -171,7 +162,7 @@ format until Phase 4.
   every sub-block datatype (LAYER_EXTENT, TILE_OFFSET, ATTRIBUTE_SIZE,
   IMAGE_ENTRY, ANNOTATION_ENTRY, ANNOTATION_GROUP_SIZE).
 * `tools/ifc.py` — Python 3 stdlib-only codegen (no jinja2 dependency).
-  Reads the schema and emits four C++ headers into the build tree.
+  Reads the schema and emits five C++ headers into the build tree.
   Includes a `--check` mode for CI: regenerates to a temp dir and diffs
   against the build-tree files; non-zero exit on drift.
 * Generated headers (in `${CMAKE_BINARY_DIR}/generated/IFE/`):
@@ -185,22 +176,31 @@ format until Phase 4.
     with `constexpr` field offsets, field sizes, `header_size`, and a
     `recovery_tag` constant. Replaces the hand-written
     `enum vtable_offsets` / `enum vtable_sizes` blocks in
-    `IrisCodecExtension.hpp`.
+    `IrisCodecExtension.hpp` for the substrate code paths.
   * `IFE_FieldKeys.hpp` — `constexpr std::array<FieldKey, N>` per
     resource, where `FieldKey = {name, kind, scalar_tag, offset, size}`.
-    Consumed by the Phase 6 reflective reader.
+    Consumed by the reflective reader.
+  * **`IFE_Resources.hpp`** — single per-resource dispatch table
+    `IFE::resources::table[]` of `ResourceInfo {tag, name, header_size,
+    fields, field_count}` plus a `lookup(tag)` helper. The reflective
+    lens does one linear scan over this table instead of the two
+    parallel N-way switches it used to carry. Adding a new resource is
+    a pure schema change; zero edits to `IFE_Reflective.hpp` are needed.
   * `IFE_FieldKeys_wasm.hpp` — `__EMSCRIPTEN__`-gated `extern "C"`
-    surface. Stubs only; Phase 6 wires implementations.
+    surface. Stubs only.
 * CMake integration (`IFE_USE_FASTFHIR_SUBSTRATE=ON`):
   * Requires Python 3 (`find_package(Python3 REQUIRED)`).
   * Runs `ifc.py` at configure time; `CMAKE_CONFIGURE_DEPENDS` re-runs
     it if either the schema or the codegen script changes.
   * Adds the build-tree generated dir to the include path.
-* `tests/ife_codegen_tests.cpp` — parity safety net. For every resource,
-  every legacy `IrisCodec::Serialization::<RES>::FIELD` offset, every
-  `..._S` size, every `HEADER_SIZE`, and every `recovery` tag is
-  cross-checked at compile time against the generated equivalent via
-  `static_assert`. A second ctest entry (`ife_codegen_check`) re-runs
+* `tests/ife_codegen_tests.cpp` — codegen-output sanity test. Verifies the
+  generated headers are *internally consistent*: schema version pin,
+  FILE_HEADER preamble layout, monotonic field offsets, `header_size`
+  equals the universal preamble plus the sum of field sizes, dispatch
+  table round-trip via `lookup`, and every entry's tag in the RESOURCE
+  partition. The codegen output is the source of truth — there is no
+  longer a parity check against the legacy `IrisCodec::Serialization`
+  enums. A second ctest entry (`ife_codegen_check`) re-runs
   `ifc.py --check` so a stale build directory also fails CI.
 * Schema version (`IFE::IFE_SCHEMA_VERSION_MAJOR/MINOR`) is embedded as
   `constexpr` so a translation unit compiled against an older schema
@@ -216,10 +216,10 @@ time**. Substrate-OFF builds remain Python-free.
 - The schema (`schema/ife_v1.json`) is the single source of truth.
 - Generated headers live under `${CMAKE_BINARY_DIR}/generated/IFE/` and
   are NEVER checked in — they are regenerated at every CMake configure.
-- The legacy `IrisCodec::Serialization` enums in
-  `IrisCodecExtension.hpp` are the parity baseline for v1. Phase 4
-  flips the relationship: the schema becomes authoritative and the
-  legacy enums get removed.
+- The substrate is independent of the legacy
+  `IrisCodec::Serialization` enums. The legacy enums in
+  `IrisCodecExtension.hpp` continue to drive the legacy write path
+  (substrate-OFF builds) until Phase 6b retires it.
 
 ## Phase 4 — what landed
 
@@ -246,23 +246,19 @@ universal shape:
 |     26 |    8 | TILE_TABLE_OFFSET |                                                     |
 |     34 |    8 | METADATA_OFFSET   |                                                     |
 
-`IFE_FILE_MAGIC` is a 64-bit zero-extension of the legacy 32-bit
-`MAGIC_BYTES = 0x49726973`, so any code that probes the first 4 bytes of
-an `.iris` file via `LOAD_U32` continues to recognise the magic
-unchanged. Every other resource is unchanged — they already conformed
-to the universal preamble. The `tests/ife_codegen_tests.cpp` legacy
-parity asserts therefore still pass for every resource other than
-`FILE_HEADER`, whose layout asserts have been updated to reference the
-universal preamble (the recovery-tag value itself is unchanged).
+`IFE_FILE_MAGIC` packs the four ASCII bytes `'I','r','i','s'` into the
+low 32 bits of the validation slot (so a `LOAD_U32` at file offset 0
+reads `0x49726973`). Every other resource was already conformant. Both
+the magic and `DATA_BLOCK_HEADER_SIZE` are pinned by `static_assert` in
+`IFE_DataBlock.hpp`.
 
 ### Substrate API additions
 
 * `src/IFE_DataBlock.hpp` — universal 10-byte block header type:
   * `IFE::DATA_BLOCK_HEADER_SIZE`, `IFE::DATA_BLOCK_VALIDATION_OFFSET`,
     `IFE::DATA_BLOCK_RECOVERY_OFFSET`.
-  * `IFE::IFE_FILE_MAGIC` constant (`static_assert`-pinned to match the
-    legacy `MAGIC_BYTES` in its low 32 bits and to match the legacy
-    `IrisCodec::Serialization::DATA_BLOCK::HEADER_SIZE` for its size).
+  * `IFE::IFE_FILE_MAGIC` constant (`static_assert`-pinned to spell
+    `'I','r','i','s'` in its low 32 bits).
   * `IFE::DataBlockHeader` POD + `read_header(buf)` / `write_header(buf,
     tag, validation)` / `validate_at(view, offset, expected_tag)` /
     `is_file_magic(buf)` helpers.
@@ -289,8 +285,8 @@ universal preamble (the recovery-tag value itself is unchanged).
 
 * `tests/ife_datablock_tests.cpp` (new):
   * Universal-preamble round-trip.
-  * `IFE_FILE_MAGIC` low half == legacy `MAGIC_BYTES`; arena bytes
-    spell `'sirI'` (legacy magic, little-endian) followed by zeros.
+  * `IFE_FILE_MAGIC` byte layout pin (arena bytes spell `'s','i','r','I'`
+    little-endian; high half is zero).
   * `Builder::claim_block` lays out a valid preamble at the offset
     returned by `claim_space`; body pointer matches the in-arena
     address; arena cursor advances correctly.
@@ -301,11 +297,13 @@ universal preamble (the recovery-tag value itself is unchanged).
     same offset. **TSan-clean.**
   * Bounds and empty-handle error paths.
 
-* `tests/ife_codegen_tests.cpp` (updated): the FILE_HEADER legacy
-  offset/size parity asserts are replaced with self-consistency asserts
-  against the universal preamble (`offset::VALIDATION == 0`, size==8,
-  `RECOVERY` at offset 8). Every other resource's parity asserts are
-  unchanged.
+* `tests/ife_codegen_tests.cpp` (rewritten as part of the cleanup pass):
+  the FILE_HEADER preamble layout is pinned via the universal preamble
+  (`offset::VALIDATION == 0`, size==8, `RECOVERY` at offset 8). Every
+  resource is then walked via the codegen `IFE::resources::table`
+  dispatch and asserted to be internally consistent (monotonic offsets,
+  `header_size == preamble + sum(field sizes)`, tag in RESOURCE
+  partition). No external parity baseline.
 
 ### CMake
 
@@ -492,10 +490,13 @@ which is gated on the open blockers above.
   rebasing each field offset to absolute arena coordinates so callers
   never have to add the block offset themselves.
 
-* Tag dispatch is a single `switch` over every v1 `RESOURCE_*` tag. Adding
-  a resource in `schema/ife_v1.json` regenerates the field-key array and
-  also adds a missing-case warning to the lens; the dispatch table is the
-  only hand-edit needed for a new resource.
+* Tag dispatch is a single linear scan over the codegen
+  `IFE::resources::table` (one entry per resource — at most a few dozen).
+  Adding a resource in `schema/ife_v1.json` regenerates the table; **zero
+  edits to `IFE_Reflective.hpp` are required**. This replaces what used
+  to be two parallel N-way switches over `RECOVERY_TAG` (one for the
+  `field_keys` span, one for the body-size hint, ~120 lines of
+  hand-maintained dispatch).
 
 ### `Builder::finalize()`
 
@@ -545,11 +546,36 @@ which is gated on the open blockers above.
 * New `ife_reflective_tests` ctest entry (links `Threads::Threads`).
 * Substrate-OFF builds remain byte-identical.
 
+## Cleanup pass — what dropped
+
+A cleanup pass landed alongside Phase 6a in response to the observation that
+the substrate work was *adding* code (≈5k lines across Phases 1–6a) without
+removing the legacy boilerplate it was meant to subsume. The substrate is
+not a bridge; it is a fresh design. The pass removed every legacy reference
+from the substrate headers and replaced two parallel hand-written dispatch
+tables with one codegen-emitted one.
+
+What the pass dropped:
+
+| Surface                                        | What changed                                                       |
+|------------------------------------------------|--------------------------------------------------------------------|
+| `IFE_Types.hpp`                                | Dropped `legacy_to_tag` / `tag_to_legacy` (~50 LOC), the `IFE_ROUND_TRIP` macro and its 17 invocations, the `static_assert` pins against `IrisCodec::Serialization::TYPE_SIZE_*` and `LAYER_EXTENT::SIZE`, and the `#include "IrisFileExtension.hpp"`. The substrate is now self-pinning. |
+| `IFE_DataBlock.hpp`                            | Dropped the `static_assert` against `IrisCodec::Serialization::DATA_BLOCK::HEADER_SIZE`. The universal preamble is its own contract. |
+| `IFE_Reflective.hpp`                           | Replaced the two parallel 15-case switches (`field_keys_for` + `fixed_body_size_for`, ~120 lines) with a single `IFE::resources::lookup(tag)` call into the codegen table. |
+| `tools/ifc.py`                                 | Added `IFE_Resources.hpp` codegen — one `ResourceInfo` table entry per resource, one `lookup(tag)` helper. |
+| `tests/ife_types_tests.cpp`                    | Rewrote without the legacy round-trip table; kept partition-helper + `TypeTraits` sanity. |
+| `tests/ife_codegen_tests.cpp`                  | Dropped every `IFE_CHECK_OFFSET / SIZE / HEADER_SIZE / RECOVERY` parity macro. Codegen is the source of truth; what remains are schema invariants (FILE_HEADER preamble, monotonic offsets, header_size accounting, dispatch round-trip). |
+| `tests/ife_datablock_tests.cpp`                | Renamed `test_file_magic_matches_legacy` → `test_file_magic`; dropped the `MAGIC_BYTES` cross-reference and the `IrisFileExtension.hpp` include. |
+
+Substrate-OFF builds remain byte-identical. `IrisCodecExtension.{hpp,cpp}`
+is unchanged — it remains the legacy write/read path until Phase 6b.
+
 ## Phase 6b — pending
 
-Phase 6b is the substrate-OFF→ON cutover: it removes the dormancy guarantee
-that has held since Phase 1 and turns the substrate into the default write
-path. It has explicit prerequisites:
+Phase 6b is the substrate-OFF→ON cutover **and** the retirement of the
+hand-written serializer in `IrisCodecExtension.cpp` in favour of codegen.
+It removes the dormancy guarantee that has held since Phase 1 and turns
+the substrate into the default write path. It has explicit prerequisites:
 
 1. **FastFHIR source pointer** (`FF_Memory`, `ffc.py`). Phase 1's lock-free
    VMA semantics were inferred from the migration spec; Phase 6b's
@@ -573,6 +599,16 @@ path. It has explicit prerequisites:
 When (1)–(4) are unblocked, Phase 6b will:
 
 * Add `Memory::openFromFile(path)` (read-mode factory).
+* **Extend `tools/ifc.py` to emit per-resource serializer source** —
+  `IFE_Serializers.hpp` / `.cpp` containing one `read_<RES>` and one
+  `write_<RES>` function per schema resource, generated directly from
+  the same JSON schema that already drives the offset/size vtables.
+  This is the largest net-LOC reduction in the migration: the
+  hand-written `IrisCodecExtension.cpp` serialization (≈3.4k lines of
+  bespoke `STORE_U64` / `LOAD_U32` calls) collapses to a few hundred
+  lines of generated dispatch plus the user-visible `Abstraction::File`
+  shim. Codegen *generating* the serializer is precisely what the
+  schema-driven design was always intended to enable.
 * Mark `IrisCodec::Abstraction::File` and its bytes-in/bytes-out helpers
   with `[[deprecated]]` and document the `IFE::Builder` / `Reflective::Node`
   replacement path.

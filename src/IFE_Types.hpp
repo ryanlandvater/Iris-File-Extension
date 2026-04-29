@@ -1,29 +1,24 @@
 /**
  * @file IFE_Types.hpp
- * @brief FastFHIR-style type system for the Iris File Extension. Phase 2 of
- *        the substrate migration.
+ * @brief FastFHIR-style type system for the Iris File Extension.
  *
  * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
- * It introduces no on-disk format change and no public ABI change. The
- * existing `IrisCodec::RECOVERY` enum (`0x55xx` values) remains the source of
- * truth for the v1 wire format until Phase 4. The new `IFE::RECOVERY_TAG`
- * enum lives in a separate `IFE` namespace and uses partitioned tag values
- * (`0x01xx` primitive / `0x02xx` datatype / `0x03xx` resource, with the
- * `0x8000` array bit) that the codegen, builder, and reflective lenses in
- * Phases 3-6 will consume. A constexpr round-trip (`legacy_to_tag` /
- * `tag_to_legacy`) connects the two so existing readers/writers keep
- * functioning while later phases migrate the resources one at a time.
+ * It is deliberately self-contained: no v1 wire-format bridge, no
+ * round-trip helpers, no reference to `IrisCodec::Serialization`. The
+ * substrate is the source of truth for the new format and is pinned by
+ * the `static_assert`s in this file alone.
  *
- * Soft-deprecation note (deviation from the literal plan): the migration plan
- * called for marking `enum IrisCodec::RECOVERY` with `[[deprecated]]`. Phase 1
- * preserved binary parity with downstream consumers (notably the Iris-Codec
- * Community Module), and every existing field declaration in
- * `IrisCodecExtension.hpp` is of the form `RECOVERY recovery = RECOVER_*;` —
- * a hard deprecation attribute would emit a warning at every such site even
- * for builds that never enable the substrate. The deprecation is therefore
- * documented here and in `MIGRATION.md`; a real `[[deprecated]]` is staged
- * for Phase 6 when the flag default flips and legacy callers are already
- * migrating.
+ * Tag space (`enum class RECOVERY_TAG : uint16_t`) is partitioned by
+ * semantic class so codegen can validate at compile time that, for example,
+ * a `BLOCK` field never carries a resource tag:
+ *
+ *   bit  15        : ARRAY bit (set => the tag describes an array of the
+ *                    underlying scalar/block).
+ *   bits 14..8     : reserved.
+ *   bits 7..0      : partition + ordinal:
+ *                       0x01xx — primitive scalar (uint8 .. float64),
+ *                       0x02xx — datatype / BLOCK (LayerExtent, ...),
+ *                       0x03xx — resource (HEADER, TILE_TABLE, ...).
  *
  * @copyright Copyright (c) 2026 Ryan Landvater. MIT licensed.
  */
@@ -33,8 +28,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-
-#include "IrisFileExtension.hpp"
 
 namespace IFE {
 
@@ -64,26 +57,8 @@ enum class IFE_FieldKind : uint8_t {
 // Recovery-tag partitioning
 // =============================================================================
 //
-// The legacy enum `IrisCodec::RECOVERY` packs every tag into a single 0x55xx
-// space. Phase 2 partitions the new tag space by semantic class so codegen
-// can validate at compile time that, e.g., a `BLOCK` field never carries a
-// resource tag. Layout of a `uint16_t` tag:
-//
-//   bit  15        : ARRAY bit (set => the tag describes an array of the
-//                    underlying scalar/block).
-//   bits 14..8     : reserved (must be zero in v2; reused for additional
-//                    flags in later phases).
-//   bits 7..0      : partition + ordinal. The high byte selects the
-//                    partition (PRIMITIVE / DATATYPE / RESOURCE).
-//
-// Concretely the unmasked (non-array) value of a tag is:
-//     0x01xx — primitive scalar (uint8 .. float64)
-//     0x02xx — datatype / BLOCK (LayerExtent, ...)
-//     0x03xx — resource (HEADER, TILE_TABLE, ...)
-//
-// The 0x55xx legacy values are *not* in any of these partitions; they are
-// translated via `legacy_to_tag` at the read/write boundary and never appear
-// inside the substrate.
+// Bit layout is documented at the top of this header. The constants below
+// expose the masks/bits the codegen and reflective lens consume.
 //
 inline constexpr uint16_t RECOVERY_PARTITION_MASK       = 0x7F00;
 inline constexpr uint16_t RECOVERY_ORDINAL_MASK         = 0x00FF;
@@ -146,15 +121,12 @@ enum class RECOVERY_TAG : uint16_t {
 
     // ---- 0x02xx datatypes (BLOCK kind) -------------------------------------
     // First entry — LayerExtent — is the only BLOCK datatype currently
-    // serialized by the codebase. Phase 3 codegen will add the remaining
-    // composite datatypes from the schema.
+    // exposed by `TypeTraits`. Codegen synthesises the remaining composite
+    // datatypes from the schema into `IFE_DataTypes.hpp`.
     BLOCK_LAYER_EXTENT              = RECOVERY_PARTITION_DATATYPE | 0x01,
     ARRAY_LAYER_EXTENT              = RECOVERY_ARRAY_BIT | static_cast<uint16_t>(BLOCK_LAYER_EXTENT),
 
     // ---- 0x03xx resources --------------------------------------------------
-    // These mirror IrisCodec::RECOVERY 1:1 (HEADER..ANNOTATION_GROUP_BYTES,
-    // CIPHER, UNDEFINED). The numeric value is a partitioned re-encoding;
-    // the legacy 0x55xx values are NOT inherited.
     RESOURCE_HEADER                 = RECOVERY_PARTITION_RESOURCE | 0x01,
     RESOURCE_TILE_TABLE             = RECOVERY_PARTITION_RESOURCE | 0x02,
     RESOURCE_CIPHER                 = RECOVERY_PARTITION_RESOURCE | 0x03,
@@ -239,12 +211,12 @@ static_assert(to_underlying(RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_SIZES) == 0x
 static_assert(to_underlying(RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_BYTES) == 0x0310);
 
 // =============================================================================
-// TypeTraits<T> — the metadata codegen will consult per primitive/datatype
+// TypeTraits<T> — the metadata codegen consults per primitive/datatype
 // =============================================================================
 //
 // Each specialization carries the on-wire size, the field kind, the scalar
 // recovery tag (used when the field is single-valued), and the array
-// recovery tag (used when the field is repeated). Phase 3 codegen synthesises
+// recovery tag (used when the field is repeated). The codegen synthesises
 // `IFE_DataTypes.hpp` / `IFE_VTables.hpp` by reflecting over these traits.
 //
 template <class T>
@@ -273,21 +245,19 @@ IFE_DEFINE_SCALAR_TRAITS(double,   8, SCALAR_FLOAT64, ARRAY_FLOAT64);
 
 #undef IFE_DEFINE_SCALAR_TRAITS
 
-// Pin the wire sizes against the legacy `IrisCodec::TYPE_SIZES` enum so that
-// a primitive specialization here cannot drift from the on-disk encoder.
-static_assert(TypeTraits<uint8_t>::wire_size  == ::IrisCodec::Serialization::TYPE_SIZE_UINT8);
-static_assert(TypeTraits<uint16_t>::wire_size == ::IrisCodec::Serialization::TYPE_SIZE_UINT16);
-static_assert(TypeTraits<uint32_t>::wire_size == ::IrisCodec::Serialization::TYPE_SIZE_UINT32);
-static_assert(TypeTraits<uint64_t>::wire_size == ::IrisCodec::Serialization::TYPE_SIZE_UINT64);
-static_assert(TypeTraits<float>::wire_size    == ::IrisCodec::Serialization::TYPE_SIZE_FLOAT32);
-static_assert(TypeTraits<double>::wire_size   == ::IrisCodec::Serialization::TYPE_SIZE_FLOAT64);
+// Pin every primitive's wire size against its natural C++ size. The
+// substrate is little-endian by definition; the codegen and the on-disk
+// encoder share these constants directly, so a drift here is a build error.
+static_assert(TypeTraits<uint8_t>::wire_size  == sizeof(uint8_t));
+static_assert(TypeTraits<uint16_t>::wire_size == sizeof(uint16_t));
+static_assert(TypeTraits<uint32_t>::wire_size == sizeof(uint32_t));
+static_assert(TypeTraits<uint64_t>::wire_size == sizeof(uint64_t));
+static_assert(TypeTraits<float>::wire_size    == sizeof(float));
+static_assert(TypeTraits<double>::wire_size   == sizeof(double));
 
-// `LayerExtent` BLOCK datatype. Forward-declared to avoid pulling the
-// IrisHeaders include into this header — the wire size is pinned against
-// `IrisCodec::Serialization::LAYER_EXTENT::SIZE` below.
+// `LayerExtent` BLOCK datatype.
 //
-// On-disk layout (v1, see `LAYER_EXTENT` in `IrisCodecExtension.hpp`):
-//     uint32 xTiles | uint32 yTiles | float32 scale.
+// On-disk layout: uint32 xTiles | uint32 yTiles | float32 scale.
 struct LayerExtentBlock {
     uint32_t xTiles;
     uint32_t yTiles;
@@ -305,96 +275,10 @@ template <> struct TypeTraits<LayerExtentBlock> {
     static constexpr RECOVERY_TAG  array_tag  = RECOVERY_TAG::ARRAY_LAYER_EXTENT;
 };
 
-// Single source of truth: the in-memory layout matches the summed wire
-// size, and both match the legacy LAYER_EXTENT::SIZE used by
-// IrisCodec::Serialization.
+// The struct's natural C++ layout matches its wire size byte-for-byte
+// (12 bytes, no padding between three 4-byte fields).
 static_assert(sizeof(LayerExtentBlock) == TypeTraits<LayerExtentBlock>::wire_size,
               "LayerExtentBlock in-memory layout diverged from its wire size");
-static_assert(TypeTraits<LayerExtentBlock>::wire_size == ::IrisCodec::Serialization::LAYER_EXTENT::SIZE,
-              "LayerExtent block wire size diverged from legacy LAYER_EXTENT::SIZE");
-
-// =============================================================================
-// Legacy <-> partitioned tag round-trip
-// =============================================================================
-//
-// `IrisCodec::RECOVERY` (0x55xx) is the on-disk format until Phase 4. The
-// substrate exclusively manipulates `RECOVERY_TAG`. These two functions
-// bridge the boundary; the round-trip is `static_assert`-closed below so a
-// future schema edit that touches one side without the other fails the build.
-//
-constexpr RECOVERY_TAG legacy_to_tag(::IrisCodec::Serialization::RECOVERY r) noexcept {
-    using L = ::IrisCodec::Serialization::RECOVERY;
-    using T = RECOVERY_TAG;
-    switch (r) {
-        case L::RECOVER_HEADER:                  return T::RESOURCE_HEADER;
-        case L::RECOVER_TILE_TABLE:              return T::RESOURCE_TILE_TABLE;
-        case L::RECOVER_CIPHER:                  return T::RESOURCE_CIPHER;
-        case L::RECOVER_METADATA:                return T::RESOURCE_METADATA;
-        case L::RECOVER_ATTRIBUTES:              return T::RESOURCE_ATTRIBUTES;
-        case L::RECOVER_LAYER_EXTENTS:           return T::RESOURCE_LAYER_EXTENTS;
-        case L::RECOVER_TILE_OFFSETS:            return T::RESOURCE_TILE_OFFSETS;
-        case L::RECOVER_ATTRIBUTES_SIZES:        return T::RESOURCE_ATTRIBUTES_SIZES;
-        case L::RECOVER_ATTRIBUTES_BYTES:        return T::RESOURCE_ATTRIBUTES_BYTES;
-        case L::RECOVER_ASSOCIATED_IMAGES:       return T::RESOURCE_ASSOCIATED_IMAGES;
-        case L::RECOVER_ASSOCIATED_IMAGE_BYTES:  return T::RESOURCE_ASSOCIATED_IMAGE_BYTES;
-        case L::RECOVER_ICC_PROFILE:             return T::RESOURCE_ICC_PROFILE;
-        case L::RECOVER_ANNOTATIONS:             return T::RESOURCE_ANNOTATIONS;
-        case L::RECOVER_ANNOTATION_BYTES:        return T::RESOURCE_ANNOTATION_BYTES;
-        case L::RECOVER_ANNOTATION_GROUP_SIZES:  return T::RESOURCE_ANNOTATION_GROUP_SIZES;
-        case L::RECOVER_ANNOTATION_GROUP_BYTES:  return T::RESOURCE_ANNOTATION_GROUP_BYTES;
-        case L::RECOVER_UNDEFINED:               return T::UNDEFINED;
-    }
-    return T::UNDEFINED;
-}
-
-constexpr ::IrisCodec::Serialization::RECOVERY tag_to_legacy(RECOVERY_TAG t) noexcept {
-    using L = ::IrisCodec::Serialization::RECOVERY;
-    using T = RECOVERY_TAG;
-    switch (t) {
-        case T::RESOURCE_HEADER:                 return L::RECOVER_HEADER;
-        case T::RESOURCE_TILE_TABLE:             return L::RECOVER_TILE_TABLE;
-        case T::RESOURCE_CIPHER:                 return L::RECOVER_CIPHER;
-        case T::RESOURCE_METADATA:               return L::RECOVER_METADATA;
-        case T::RESOURCE_ATTRIBUTES:             return L::RECOVER_ATTRIBUTES;
-        case T::RESOURCE_LAYER_EXTENTS:          return L::RECOVER_LAYER_EXTENTS;
-        case T::RESOURCE_TILE_OFFSETS:           return L::RECOVER_TILE_OFFSETS;
-        case T::RESOURCE_ATTRIBUTES_SIZES:       return L::RECOVER_ATTRIBUTES_SIZES;
-        case T::RESOURCE_ATTRIBUTES_BYTES:       return L::RECOVER_ATTRIBUTES_BYTES;
-        case T::RESOURCE_ASSOCIATED_IMAGES:      return L::RECOVER_ASSOCIATED_IMAGES;
-        case T::RESOURCE_ASSOCIATED_IMAGE_BYTES: return L::RECOVER_ASSOCIATED_IMAGE_BYTES;
-        case T::RESOURCE_ICC_PROFILE:            return L::RECOVER_ICC_PROFILE;
-        case T::RESOURCE_ANNOTATIONS:            return L::RECOVER_ANNOTATIONS;
-        case T::RESOURCE_ANNOTATION_BYTES:       return L::RECOVER_ANNOTATION_BYTES;
-        case T::RESOURCE_ANNOTATION_GROUP_SIZES: return L::RECOVER_ANNOTATION_GROUP_SIZES;
-        case T::RESOURCE_ANNOTATION_GROUP_BYTES: return L::RECOVER_ANNOTATION_GROUP_BYTES;
-        default:                                 return L::RECOVER_UNDEFINED;
-    }
-}
-
-// Round-trip closure for every resource: legacy -> tag -> legacy is identity.
-#define IFE_ROUND_TRIP(LEG)                                                  \
-    static_assert(tag_to_legacy(legacy_to_tag(::IrisCodec::Serialization::LEG)) == ::IrisCodec::Serialization::LEG, \
-                  "legacy<->tag round-trip diverged for " #LEG)
-
-IFE_ROUND_TRIP(RECOVER_HEADER);
-IFE_ROUND_TRIP(RECOVER_TILE_TABLE);
-IFE_ROUND_TRIP(RECOVER_CIPHER);
-IFE_ROUND_TRIP(RECOVER_METADATA);
-IFE_ROUND_TRIP(RECOVER_ATTRIBUTES);
-IFE_ROUND_TRIP(RECOVER_LAYER_EXTENTS);
-IFE_ROUND_TRIP(RECOVER_TILE_OFFSETS);
-IFE_ROUND_TRIP(RECOVER_ATTRIBUTES_SIZES);
-IFE_ROUND_TRIP(RECOVER_ATTRIBUTES_BYTES);
-IFE_ROUND_TRIP(RECOVER_ASSOCIATED_IMAGES);
-IFE_ROUND_TRIP(RECOVER_ASSOCIATED_IMAGE_BYTES);
-IFE_ROUND_TRIP(RECOVER_ICC_PROFILE);
-IFE_ROUND_TRIP(RECOVER_ANNOTATIONS);
-IFE_ROUND_TRIP(RECOVER_ANNOTATION_BYTES);
-IFE_ROUND_TRIP(RECOVER_ANNOTATION_GROUP_SIZES);
-IFE_ROUND_TRIP(RECOVER_ANNOTATION_GROUP_BYTES);
-IFE_ROUND_TRIP(RECOVER_UNDEFINED);
-
-#undef IFE_ROUND_TRIP
 
 }  // namespace IFE
 

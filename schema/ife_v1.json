@@ -1,7 +1,8 @@
 {
   "_comment": [
     "IFE schema — single source of truth for tools/ifc.py.",
-    "Codegen output is cross-checked against the legacy IrisCodec::Serialization enums in src/IrisCodecExtension.hpp by tests/ife_codegen_tests.cpp."
+    "The substrate's wire format is defined here; codegen output is its",
+    "own authority and is sanity-checked by tests/ife_codegen_tests.cpp."
   ],
   "version_major": 1,
   "version_minor": 0,

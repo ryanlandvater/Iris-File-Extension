@@ -1,0 +1,15 @@
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/IrisFileExtensionLib.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/IrisFileExtension.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/IrisFileExtensionStatic.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/edit_cache.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/rebuild_cache.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/list_install_components.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/install.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/install/local.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/CMakeFiles/install/strip.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/edit_cache.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/rebuild_cache.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/list_install_components.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/install.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/install/local.dir
+/home/runner/work/Iris-File-Extension/Iris-File-Extension/build-off/_deps/irisheaders-build/CMakeFiles/install/strip.dir

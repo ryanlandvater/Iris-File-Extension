@@ -1,238 +1,52 @@
 /**
  * @file ife_codegen_tests.cpp
- * @brief Phase 3 parity test for the schema-driven codegen.
+ * @brief Sanity tests for the schema-driven codegen.
  *
- * Cross-checks the generated `IFE::vtables::*` namespaces (produced by
- * `tools/ifc.py` from `schema/ife_v1.json`) against the hand-written
- * `enum vtable_offsets` / `enum vtable_sizes` blocks inside
- * `IrisCodec::Serialization`. Every offset, every size, every header_size,
- * and every recovery_tag must match. If anything drifts (e.g. a schema
- * edit adds/removes a field, or someone hand-edits an enum), the build
- * fails at `static_assert` time with a precise message.
+ * Codegen (`tools/ifc.py`) is the single source of truth for the IFE wire
+ * format. The legacy `IrisCodec::Serialization::*` enums no longer exist
+ * inside the substrate, so this file verifies the codegen output is
+ * *internally consistent* — schema invariants the generated headers must
+ * satisfy regardless of any external reference:
  *
- * Most checks are compile-time. A trivial `main` is included so the test
- * also runs under ctest as a sanity probe.
+ *   - Schema version is pinned at codegen time.
+ *   - Every resource's `header_size` equals the universal preamble +
+ *     the sum of its field sizes (== the offset of the synthetic
+ *     "after the last field" boundary).
+ *   - Every resource's `recovery_tag` lives in the RESOURCE partition.
+ *   - The `IFE_Resources` dispatch table contains the same set of
+ *     resources as the codegen `field_keys::*` namespaces (one entry
+ *     per resource, all reachable via `lookup`).
+ *   - FILE_HEADER leads with the universal preamble.
+ *
+ * Most checks are compile-time; a trivial `main` runs the table sanity
+ * walk so ctest reports a passing executable.
  */
-#include "IrisFileExtension.hpp"
-#include "IFE_Types.hpp"
-#include "IFE_VTables.hpp"
+#include "IFE_DataBlock.hpp"
 #include "IFE_DataTypes.hpp"
 #include "IFE_FieldKeys.hpp"
+#include "IFE_Resources.hpp"
+#include "IFE_Types.hpp"
+#include "IFE_VTables.hpp"
 
 #include <cstdio>
 
-namespace L  = ::IrisCodec::Serialization;
 namespace G  = ::IFE::vtables;
 namespace GD = ::IFE::datatypes;
 namespace GK = ::IFE::field_keys;
+namespace GR = ::IFE::resources;
 
 // -----------------------------------------------------------------------------
-// Per-resource parity helpers — one `static_assert` per legacy field constant
-// against the generated equivalent. The macros expand inline so failures point
-// at the exact field that drifted.
+// FILE_HEADER must lead with the universal 10-byte preamble.
 // -----------------------------------------------------------------------------
-#define IFE_CHECK_OFFSET(RES, FIELD) \
-    static_assert(L::RES::FIELD == G::RES::offset::FIELD, \
-                  "vtable offset drift: " #RES "::" #FIELD)
-
-#define IFE_CHECK_SIZE(RES, FIELD) \
-    static_assert(L::RES::FIELD##_S == G::RES::size::FIELD, \
-                  "vtable size drift: " #RES "::" #FIELD "_S")
-
-#define IFE_CHECK_HEADER_SIZE(RES) \
-    static_assert(L::RES::HEADER_SIZE == G::RES::header_size, \
-                  "header_size drift: " #RES "::HEADER_SIZE")
-
-// Resource recovery tag: the generated `recovery_tag` (a partitioned
-// IFE::RECOVERY_TAG) must round-trip via tag_to_legacy back to the legacy
-// resource's constexpr `recovery` member (an IrisCodec::Serialization::RECOVERY).
-#define IFE_CHECK_RECOVERY(RES) \
-    static_assert(::IFE::tag_to_legacy(G::RES::recovery_tag) == L::RES::recovery, \
-                  "recovery tag drift: " #RES)
-
-// ---- FILE_HEADER ----
-//
-// Phase 4 layout adjustment: FILE_HEADER now leads with the same universal
-// 10-byte preamble as every other block — `VALIDATION (u64) + RECOVERY
-// (u16)` — instead of the legacy `MAGIC_BYTES_OFFSET (u32) + RECOVERY (u16)`
-// 6-byte preamble. The validation slot for the file's first block carries
-// `IFE::IFE_FILE_MAGIC`, a u64 zero-extension of the legacy 32-bit
-// `MAGIC_BYTES`, so existing magic probes that read the first 4 bytes still
-// see the same value. The legacy v1 `IrisCodec::Serialization::FILE_HEADER`
-// offset/size constants no longer match this layout, so they are not
-// parity-checked here — the layout is self-checked by the asserts below.
-static_assert(G::FILE_HEADER::offset::VALIDATION       == 0,
+static_assert(G::FILE_HEADER::offset::VALIDATION == 0,
               "FILE_HEADER must lead with VALIDATION at offset 0");
-static_assert(G::FILE_HEADER::size::VALIDATION         == 8,
+static_assert(G::FILE_HEADER::size::VALIDATION   == 8,
               "FILE_HEADER VALIDATION must be uint64");
-static_assert(G::FILE_HEADER::offset::RECOVERY         == 8,
+static_assert(G::FILE_HEADER::offset::RECOVERY   == 8,
               "FILE_HEADER RECOVERY must immediately follow VALIDATION");
-static_assert(G::FILE_HEADER::size::RECOVERY           == 2,
+static_assert(G::FILE_HEADER::size::RECOVERY     == 2,
               "FILE_HEADER RECOVERY must be uint16");
-// The recovery tag value itself is unchanged from v1.
-IFE_CHECK_RECOVERY(FILE_HEADER);
-
-// ---- TILE_TABLE ----
-IFE_CHECK_OFFSET(TILE_TABLE, VALIDATION);
-IFE_CHECK_OFFSET(TILE_TABLE, RECOVERY);
-IFE_CHECK_OFFSET(TILE_TABLE, ENCODING);
-IFE_CHECK_OFFSET(TILE_TABLE, FORMAT);
-IFE_CHECK_OFFSET(TILE_TABLE, CIPHER_OFFSET);
-IFE_CHECK_OFFSET(TILE_TABLE, TILE_OFFSETS_OFFSET);
-IFE_CHECK_OFFSET(TILE_TABLE, LAYER_EXTENTS_OFFSET);
-IFE_CHECK_OFFSET(TILE_TABLE, X_EXTENT);
-IFE_CHECK_OFFSET(TILE_TABLE, Y_EXTENT);
-IFE_CHECK_HEADER_SIZE(TILE_TABLE);
-IFE_CHECK_RECOVERY(TILE_TABLE);
-
-// ---- METADATA ----
-IFE_CHECK_OFFSET(METADATA, VALIDATION);
-IFE_CHECK_OFFSET(METADATA, RECOVERY);
-IFE_CHECK_OFFSET(METADATA, CODEC_MAJOR);
-IFE_CHECK_OFFSET(METADATA, CODEC_MINOR);
-IFE_CHECK_OFFSET(METADATA, CODEC_BUILD);
-IFE_CHECK_OFFSET(METADATA, ATTRIBUTES_OFFSET);
-IFE_CHECK_OFFSET(METADATA, IMAGES_OFFSET);
-IFE_CHECK_OFFSET(METADATA, ICC_COLOR_OFFSET);
-IFE_CHECK_OFFSET(METADATA, ANNOTATIONS_OFFSET);
-IFE_CHECK_OFFSET(METADATA, MICRONS_PIXEL);
-IFE_CHECK_OFFSET(METADATA, MAGNIFICATION);
-IFE_CHECK_HEADER_SIZE(METADATA);
-IFE_CHECK_RECOVERY(METADATA);
-
-// ---- ATTRIBUTES ----
-IFE_CHECK_OFFSET(ATTRIBUTES, VALIDATION);
-IFE_CHECK_OFFSET(ATTRIBUTES, RECOVERY);
-IFE_CHECK_OFFSET(ATTRIBUTES, FORMAT);
-IFE_CHECK_OFFSET(ATTRIBUTES, VERSION);
-IFE_CHECK_OFFSET(ATTRIBUTES, LENGTHS_OFFSET);
-IFE_CHECK_OFFSET(ATTRIBUTES, BYTE_ARRAY_OFFSET);
-IFE_CHECK_HEADER_SIZE(ATTRIBUTES);
-IFE_CHECK_RECOVERY(ATTRIBUTES);
-
-// ---- LAYER_EXTENTS ----
-IFE_CHECK_OFFSET(LAYER_EXTENTS, VALIDATION);
-IFE_CHECK_OFFSET(LAYER_EXTENTS, RECOVERY);
-IFE_CHECK_OFFSET(LAYER_EXTENTS, ENTRY_SIZE);
-IFE_CHECK_OFFSET(LAYER_EXTENTS, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(LAYER_EXTENTS);
-IFE_CHECK_RECOVERY(LAYER_EXTENTS);
-
-// ---- TILE_OFFSETS ----
-IFE_CHECK_OFFSET(TILE_OFFSETS, VALIDATION);
-IFE_CHECK_OFFSET(TILE_OFFSETS, RECOVERY);
-IFE_CHECK_OFFSET(TILE_OFFSETS, ENTRY_SIZE);
-IFE_CHECK_OFFSET(TILE_OFFSETS, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(TILE_OFFSETS);
-IFE_CHECK_RECOVERY(TILE_OFFSETS);
-
-// ---- ATTRIBUTES_SIZES ----
-IFE_CHECK_OFFSET(ATTRIBUTES_SIZES, VALIDATION);
-IFE_CHECK_OFFSET(ATTRIBUTES_SIZES, RECOVERY);
-IFE_CHECK_OFFSET(ATTRIBUTES_SIZES, ENTRY_SIZE);
-IFE_CHECK_OFFSET(ATTRIBUTES_SIZES, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ATTRIBUTES_SIZES);
-IFE_CHECK_RECOVERY(ATTRIBUTES_SIZES);
-
-// ---- ATTRIBUTES_BYTES ----
-IFE_CHECK_OFFSET(ATTRIBUTES_BYTES, VALIDATION);
-IFE_CHECK_OFFSET(ATTRIBUTES_BYTES, RECOVERY);
-IFE_CHECK_OFFSET(ATTRIBUTES_BYTES, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ATTRIBUTES_BYTES);
-IFE_CHECK_RECOVERY(ATTRIBUTES_BYTES);
-
-// ---- IMAGE_ARRAY ----
-IFE_CHECK_OFFSET(IMAGE_ARRAY, VALIDATION);
-IFE_CHECK_OFFSET(IMAGE_ARRAY, RECOVERY);
-IFE_CHECK_OFFSET(IMAGE_ARRAY, ENTRY_SIZE);
-IFE_CHECK_OFFSET(IMAGE_ARRAY, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(IMAGE_ARRAY);
-IFE_CHECK_RECOVERY(IMAGE_ARRAY);
-
-// ---- IMAGE_BYTES ----
-IFE_CHECK_OFFSET(IMAGE_BYTES, VALIDATION);
-IFE_CHECK_OFFSET(IMAGE_BYTES, RECOVERY);
-IFE_CHECK_OFFSET(IMAGE_BYTES, TITLE_SIZE);
-IFE_CHECK_OFFSET(IMAGE_BYTES, IMAGE_SIZE);
-IFE_CHECK_HEADER_SIZE(IMAGE_BYTES);
-IFE_CHECK_RECOVERY(IMAGE_BYTES);
-
-// ---- ICC_PROFILE ----
-IFE_CHECK_OFFSET(ICC_PROFILE, VALIDATION);
-IFE_CHECK_OFFSET(ICC_PROFILE, RECOVERY);
-IFE_CHECK_OFFSET(ICC_PROFILE, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ICC_PROFILE);
-IFE_CHECK_RECOVERY(ICC_PROFILE);
-
-// ---- ANNOTATIONS ----
-IFE_CHECK_OFFSET(ANNOTATIONS, VALIDATION);
-IFE_CHECK_OFFSET(ANNOTATIONS, RECOVERY);
-IFE_CHECK_OFFSET(ANNOTATIONS, ENTRY_SIZE);
-IFE_CHECK_OFFSET(ANNOTATIONS, ENTRY_NUMBER);
-IFE_CHECK_OFFSET(ANNOTATIONS, GROUP_SIZES_OFFSET);
-IFE_CHECK_OFFSET(ANNOTATIONS, GROUP_BYTES_OFFSET);
-IFE_CHECK_HEADER_SIZE(ANNOTATIONS);
-IFE_CHECK_RECOVERY(ANNOTATIONS);
-
-// ---- ANNOTATION_BYTES ----
-IFE_CHECK_OFFSET(ANNOTATION_BYTES, VALIDATION);
-IFE_CHECK_OFFSET(ANNOTATION_BYTES, RECOVERY);
-IFE_CHECK_OFFSET(ANNOTATION_BYTES, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ANNOTATION_BYTES);
-IFE_CHECK_RECOVERY(ANNOTATION_BYTES);
-
-// ---- ANNOTATION_GROUP_SIZES ----
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_SIZES, VALIDATION);
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_SIZES, RECOVERY);
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_SIZES, ENTRY_SIZE);
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_SIZES, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ANNOTATION_GROUP_SIZES);
-IFE_CHECK_RECOVERY(ANNOTATION_GROUP_SIZES);
-
-// ---- ANNOTATION_GROUP_BYTES ----
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_BYTES, VALIDATION);
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_BYTES, RECOVERY);
-IFE_CHECK_OFFSET(ANNOTATION_GROUP_BYTES, ENTRY_NUMBER);
-IFE_CHECK_HEADER_SIZE(ANNOTATION_GROUP_BYTES);
-IFE_CHECK_RECOVERY(ANNOTATION_GROUP_BYTES);
-
-// -----------------------------------------------------------------------------
-// Sub-block (datatype) wire-size parity. The generated `IFE::datatypes::*`
-// PODs are reflective and may widen narrow on-disk types (uint24/uint40),
-// so sizeof(struct) is NOT pinned — only the `wire_size` constant.
-// -----------------------------------------------------------------------------
-static_assert(GD::LAYER_EXTENT::wire_size  == L::LAYER_EXTENT::SIZE,
-              "datatype LAYER_EXTENT wire_size drift");
-static_assert(GD::TILE_OFFSET::wire_size   == L::TILE_OFFSET::SIZE,
-              "datatype TILE_OFFSET wire_size drift");
-static_assert(GD::ATTRIBUTE_SIZE::wire_size == L::ATTRIBUTE_SIZE::SIZE,
-              "datatype ATTRIBUTE_SIZE wire_size drift");
-static_assert(GD::IMAGE_ENTRY::wire_size   == L::IMAGE_ENTRY::SIZE,
-              "datatype IMAGE_ENTRY wire_size drift");
-static_assert(GD::ANNOTATION_ENTRY::wire_size       == L::ANNOTATION_ENTRY::SIZE,
-              "datatype ANNOTATION_ENTRY wire_size drift");
-static_assert(GD::ANNOTATION_GROUP_SIZE::wire_size  == L::ANNOTATION_GROUP_SIZE::SIZE,
-              "datatype ANNOTATION_GROUP_SIZE wire_size drift");
-
-// LAYER_EXTENT happens to have only natural-aligned 32-bit fields, so its
-// in-memory layout matches the wire format byte-for-byte. The other
-// datatypes do not (uint24/uint40 widen) so we don't pin sizeof for them.
-static_assert(sizeof(GD::LAYER_EXTENT) == GD::LAYER_EXTENT::wire_size,
-              "LAYER_EXTENT in-memory layout diverged from its wire size");
-
-// -----------------------------------------------------------------------------
-// FieldKey table — sanity checks on a representative sample. Most invariants
-// (offsets/sizes per field) are already pinned by the IFE_CHECK_OFFSET /
-// IFE_CHECK_SIZE static_asserts above; here we additionally verify the
-// reflective FieldKey table agrees with those numbers for FILE_HEADER.
-// -----------------------------------------------------------------------------
-static_assert(GK::FILE_HEADER::fields.size() == 8,
-              "FILE_HEADER FieldKey table size drift");
-static_assert(GK::FILE_HEADER::fields[0].name == "VALIDATION");
-static_assert(GK::FILE_HEADER::fields[0].offset == G::FILE_HEADER::offset::VALIDATION);
-static_assert(GK::FILE_HEADER::fields[0].size   == G::FILE_HEADER::size::VALIDATION);
-static_assert(GK::FILE_HEADER::fields[0].kind   == ::IFE::IFE_FieldKind::SCALAR);
-static_assert(GK::FILE_HEADER::fields[0].scalar_tag == ::IFE::RECOVERY_TAG::SCALAR_UINT64);
+static_assert(G::FILE_HEADER::recovery_tag       == ::IFE::RECOVERY_TAG::RESOURCE_HEADER);
 
 // -----------------------------------------------------------------------------
 // Schema version pinning. The codegen embeds the schema version as
@@ -242,14 +56,101 @@ static_assert(GK::FILE_HEADER::fields[0].scalar_tag == ::IFE::RECOVERY_TAG::SCAL
 static_assert(::IFE::IFE_SCHEMA_VERSION_MAJOR == 1, "schema version_major drift");
 static_assert(::IFE::IFE_SCHEMA_VERSION_MINOR == 0, "schema version_minor drift");
 
+// -----------------------------------------------------------------------------
+// Resource dispatch table — every entry must round-trip via `lookup`.
+// -----------------------------------------------------------------------------
+static_assert(GR::table_size > 0, "resource dispatch table is empty");
+static_assert(GR::lookup(::IFE::RECOVERY_TAG::RESOURCE_HEADER) != nullptr);
+static_assert(GR::lookup(::IFE::RECOVERY_TAG::RESOURCE_TILE_TABLE) != nullptr);
+static_assert(GR::lookup(::IFE::RECOVERY_TAG::UNDEFINED) == nullptr);
+
+// FieldKey table sanity: FILE_HEADER is the canonical reference. Anything
+// else would catch an empty-array codegen bug.
+static_assert(GK::FILE_HEADER::fields.size() > 0,
+              "FILE_HEADER FieldKey table must not be empty");
+static_assert(GK::FILE_HEADER::fields[0].name == "VALIDATION");
+static_assert(GK::FILE_HEADER::fields[0].offset == G::FILE_HEADER::offset::VALIDATION);
+static_assert(GK::FILE_HEADER::fields[0].size   == G::FILE_HEADER::size::VALIDATION);
+static_assert(GK::FILE_HEADER::fields[0].kind   == ::IFE::IFE_FieldKind::SCALAR);
+static_assert(GK::FILE_HEADER::fields[0].scalar_tag == ::IFE::RECOVERY_TAG::SCALAR_UINT64);
+
+// -----------------------------------------------------------------------------
+// Datatype `wire_size` self-pinning: the generated PODs sum the schema
+// field widths into `wire_size`. Pin a few representative datatypes here;
+// adding new datatypes does not require changes to this test.
+// -----------------------------------------------------------------------------
+static_assert(GD::LAYER_EXTENT::wire_size == 12,
+              "LAYER_EXTENT wire_size drift (uint32+uint32+float32 == 12)");
+static_assert(sizeof(GD::LAYER_EXTENT) == GD::LAYER_EXTENT::wire_size,
+              "LAYER_EXTENT in-memory layout diverged from its wire size");
+static_assert(GD::TILE_OFFSET::wire_size == 8,
+              "TILE_OFFSET wire_size drift (uint40+uint24 == 8)");
+
 int main() {
-    // All real checks are static_assert-driven above. The runtime body
-    // just confirms the binary was built and the FieldKey table is
-    // populated as expected (catches accidental empty arrays).
-    if (GK::FILE_HEADER::fields.empty()) {
-        std::fprintf(stderr, "FAIL: FILE_HEADER FieldKey table is empty\n");
+    int failures = 0;
+
+    // Walk the dispatch table and verify each entry is internally consistent:
+    //   - lookup() round-trips,
+    //   - tag is in the RESOURCE partition,
+    //   - header_size includes the universal preamble,
+    //   - the FieldKey array is non-empty for every resource.
+    for (std::size_t i = 0; i < GR::table_size; ++i) {
+        const auto& info = GR::table[i];
+        if (GR::lookup(info.tag) != &info) {
+            std::fprintf(stderr,
+                         "FAIL: lookup(table[%zu].tag) did not round-trip\n", i);
+            ++failures;
+        }
+        const auto raw = ::IFE::to_underlying(info.tag);
+        if (::IFE::RecoveryPartition(raw) != ::IFE::RECOVERY_PARTITION_RESOURCE) {
+            std::fprintf(stderr,
+                         "FAIL: %.*s tag 0x%04x is not in the RESOURCE partition\n",
+                         static_cast<int>(info.name.size()), info.name.data(),
+                         static_cast<unsigned>(raw));
+            ++failures;
+        }
+        if (info.header_size < ::IFE::DATA_BLOCK_HEADER_SIZE) {
+            std::fprintf(stderr,
+                         "FAIL: %.*s header_size=%zu < preamble (%zu)\n",
+                         static_cast<int>(info.name.size()), info.name.data(),
+                         info.header_size, ::IFE::DATA_BLOCK_HEADER_SIZE);
+            ++failures;
+        }
+        if (info.field_count == 0 || info.fields == nullptr) {
+            std::fprintf(stderr,
+                         "FAIL: %.*s has empty FieldKey table\n",
+                         static_cast<int>(info.name.size()), info.name.data());
+            ++failures;
+        }
+        // Field offsets must be monotonic and the last-field end must equal
+        // header_size. This catches silent re-orderings and drift.
+        std::size_t expected = 0;
+        for (std::size_t f = 0; f < info.field_count; ++f) {
+            const auto& fk = info.fields[f];
+            if (fk.offset != expected) {
+                std::fprintf(stderr,
+                             "FAIL: %.*s::%.*s offset=%zu expected=%zu\n",
+                             static_cast<int>(info.name.size()), info.name.data(),
+                             static_cast<int>(fk.name.size()), fk.name.data(),
+                             fk.offset, expected);
+                ++failures;
+            }
+            expected = fk.offset + fk.size;
+        }
+        if (expected != info.header_size) {
+            std::fprintf(stderr,
+                         "FAIL: %.*s end-of-fields=%zu != header_size=%zu\n",
+                         static_cast<int>(info.name.size()), info.name.data(),
+                         expected, info.header_size);
+            ++failures;
+        }
+    }
+
+    if (failures) {
+        std::fprintf(stderr, "ife_codegen_tests: %d failure(s)\n", failures);
         return 1;
     }
-    std::fprintf(stderr, "ife_codegen_tests: OK\n");
+    std::fprintf(stderr, "ife_codegen_tests: OK (%zu resources)\n",
+                 GR::table_size);
     return 0;
 }

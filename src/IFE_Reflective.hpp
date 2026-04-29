@@ -50,10 +50,13 @@
 #include "IFE_Memory.hpp"
 #include "IFE_Types.hpp"
 
-// Generated headers (Phase 3). These define `IFE::field_keys::<RES>::fields`
-// (`std::array<FieldKey, N>`) and `IFE::vtables::<RES>::{recovery_tag,
-// header_size, offset::*, size::*}` for every v1 resource.
+// Generated headers (Phase 3). `IFE_Resources.hpp` provides a single
+// dispatch table `IFE::resources::table` (one entry per resource, with the
+// tag, header_size and a span of FieldKeys) plus a `lookup(tag)` helper.
+// The Phase 6a lens consults that table — adding a resource is a pure
+// schema change with zero edits to this header.
 #include "IFE_FieldKeys.hpp"
+#include "IFE_Resources.hpp"
 #include "IFE_VTables.hpp"
 
 namespace IFE {
@@ -75,112 +78,19 @@ struct Entry {
     std::size_t      size;        ///< Field width in bytes.
 };
 
-// =============================================================================
-// Field-key catalog dispatch
-// =============================================================================
-//
-// Maps a resource recovery tag to its generated `field_keys` table. Returns
-// an empty `Span<FieldKey>` for tags that have no fixed-layout vtable
-// (primitive scalars, IFE_ARRAY blocks, unknown values).
-//
-inline Span<const FieldKey> field_keys_for(RECOVERY_TAG tag) noexcept {
-    using namespace IFE::field_keys;
-    switch (tag) {
-    case RECOVERY_TAG::RESOURCE_HEADER:
-        return Span<const FieldKey>(FILE_HEADER::fields.data(),
-                                    FILE_HEADER::fields.size());
-    case RECOVERY_TAG::RESOURCE_TILE_TABLE:
-        return Span<const FieldKey>(TILE_TABLE::fields.data(),
-                                    TILE_TABLE::fields.size());
-    case RECOVERY_TAG::RESOURCE_METADATA:
-        return Span<const FieldKey>(METADATA::fields.data(),
-                                    METADATA::fields.size());
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES:
-        return Span<const FieldKey>(ATTRIBUTES::fields.data(),
-                                    ATTRIBUTES::fields.size());
-    case RECOVERY_TAG::RESOURCE_LAYER_EXTENTS:
-        return Span<const FieldKey>(LAYER_EXTENTS::fields.data(),
-                                    LAYER_EXTENTS::fields.size());
-    case RECOVERY_TAG::RESOURCE_TILE_OFFSETS:
-        return Span<const FieldKey>(TILE_OFFSETS::fields.data(),
-                                    TILE_OFFSETS::fields.size());
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES_SIZES:
-        return Span<const FieldKey>(ATTRIBUTES_SIZES::fields.data(),
-                                    ATTRIBUTES_SIZES::fields.size());
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES_BYTES:
-        return Span<const FieldKey>(ATTRIBUTES_BYTES::fields.data(),
-                                    ATTRIBUTES_BYTES::fields.size());
-    case RECOVERY_TAG::RESOURCE_ASSOCIATED_IMAGES:
-        return Span<const FieldKey>(IMAGE_ARRAY::fields.data(),
-                                    IMAGE_ARRAY::fields.size());
-    case RECOVERY_TAG::RESOURCE_ASSOCIATED_IMAGE_BYTES:
-        return Span<const FieldKey>(IMAGE_BYTES::fields.data(),
-                                    IMAGE_BYTES::fields.size());
-    case RECOVERY_TAG::RESOURCE_ICC_PROFILE:
-        return Span<const FieldKey>(ICC_PROFILE::fields.data(),
-                                    ICC_PROFILE::fields.size());
-    case RECOVERY_TAG::RESOURCE_ANNOTATIONS:
-        return Span<const FieldKey>(ANNOTATIONS::fields.data(),
-                                    ANNOTATIONS::fields.size());
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_BYTES:
-        return Span<const FieldKey>(ANNOTATION_BYTES::fields.data(),
-                                    ANNOTATION_BYTES::fields.size());
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_SIZES:
-        return Span<const FieldKey>(ANNOTATION_GROUP_SIZES::fields.data(),
-                                    ANNOTATION_GROUP_SIZES::fields.size());
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_BYTES:
-        return Span<const FieldKey>(ANNOTATION_GROUP_BYTES::fields.data(),
-                                    ANNOTATION_GROUP_BYTES::fields.size());
-    default:
-        return Span<const FieldKey>{};
+// Inline-storage capacity for `Node::m_entries`. Derived at compile time
+// from the codegen dispatch table so adding a resource with more fields
+// automatically grows the storage — there is no hand-maintained constant
+// to keep in sync with the schema.
+inline constexpr std::size_t kMaxNodeEntries = []() noexcept {
+    std::size_t m = 0;
+    for (std::size_t i = 0; i < resources::table_size; ++i) {
+        if (resources::table[i].field_count > m) {
+            m = resources::table[i].field_count;
+        }
     }
-}
-
-// True iff `tag` has a fixed-layout vtable (i.e. is one of the v1 resource
-// blocks the reflective lens knows how to walk by name).
-inline bool has_fixed_layout(RECOVERY_TAG tag) noexcept {
-    return field_keys_for(tag).size() > 0;
-}
-
-// Fixed-layout body size hint for a known resource tag. Returns 0 for
-// non-resource tags (callers should compute IFE_ARRAY bodies separately).
-inline std::size_t fixed_body_size_for(RECOVERY_TAG tag) noexcept {
-    using namespace IFE::vtables;
-    switch (tag) {
-    case RECOVERY_TAG::RESOURCE_HEADER:
-        return FILE_HEADER::header_size                 - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_TILE_TABLE:
-        return TILE_TABLE::header_size                  - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_METADATA:
-        return METADATA::header_size                    - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES:
-        return ATTRIBUTES::header_size                  - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_LAYER_EXTENTS:
-        return LAYER_EXTENTS::header_size               - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_TILE_OFFSETS:
-        return TILE_OFFSETS::header_size                - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES_SIZES:
-        return ATTRIBUTES_SIZES::header_size            - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ATTRIBUTES_BYTES:
-        return ATTRIBUTES_BYTES::header_size            - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ASSOCIATED_IMAGES:
-        return IMAGE_ARRAY::header_size                 - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ASSOCIATED_IMAGE_BYTES:
-        return IMAGE_BYTES::header_size                 - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ICC_PROFILE:
-        return ICC_PROFILE::header_size                 - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ANNOTATIONS:
-        return ANNOTATIONS::header_size                 - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_BYTES:
-        return ANNOTATION_BYTES::header_size            - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_SIZES:
-        return ANNOTATION_GROUP_SIZES::header_size      - DATA_BLOCK_HEADER_SIZE;
-    case RECOVERY_TAG::RESOURCE_ANNOTATION_GROUP_BYTES:
-        return ANNOTATION_GROUP_BYTES::header_size      - DATA_BLOCK_HEADER_SIZE;
-    default:
-        return 0;
-    }
-}
+    return m;
+}();
 
 // =============================================================================
 // Node — reflective view of a single block in an arena.
@@ -325,9 +235,10 @@ private:
     std::size_t    m_body_size_hint = 0;
 
     /// Per-instance copies of the field-key catalog with absolute offsets.
-    /// Capacity is fixed at the maximum field count any v1 resource uses
-    /// (METADATA has 11 fields; round up modestly for future growth).
-    static constexpr std::size_t kMaxEntries = 16;
+    /// Capacity is `kMaxNodeEntries`, derived at compile time from the
+    /// codegen dispatch table so adding a resource with more fields just
+    /// grows the inline storage automatically.
+    static constexpr std::size_t kMaxEntries = kMaxNodeEntries;
     Entry        m_entries[kMaxEntries]{};
     Span<const Entry> m_entries_view{};
 };
@@ -337,12 +248,14 @@ private:
 inline void Node::build_entries(Span<const FieldKey> keys) {
     const std::size_t n = keys.size();
     if (n > kMaxEntries) {
-        // The codegen would have to grow a resource past 16 fields to hit
-        // this; surfacing it as a bounds error makes the failure mode
-        // explicit instead of silently truncating.
+        // The codegen table is the source of truth for the inline
+        // capacity (`compute_max_entries()`), so this branch is reachable
+        // only if a caller passes a hand-rolled FieldKey span that is
+        // larger than any schema-defined resource. Surface as a bounds
+        // error rather than silently truncating.
         throw std::invalid_argument(
-            "IFE::Reflective::Node: resource has more fields than "
-            "Node::kMaxEntries (regenerate with a larger limit)");
+            "IFE::Reflective::Node: span has more fields than "
+            "kMaxEntries (codegen-derived from resources::table)");
     }
     for (std::size_t i = 0; i < n; ++i) {
         const FieldKey& fk = keys[i];
@@ -396,22 +309,25 @@ inline Node::Node(Memory::View view, std::uint64_t block_offset)
         return;
     }
 
-    // Fixed-layout resource (or unknown tag): consult the codegen catalog.
-    Span<const FieldKey> keys = field_keys_for(m_tag);
-    if (keys.size() == 0) {
+    // Fixed-layout resource (or unknown tag): consult the codegen dispatch
+    // table. A single linear scan over `IFE::resources::table` (one entry
+    // per resource — at most a few dozen) replaces what used to be two
+    // parallel N-way switches.
+    const auto* info = resources::lookup(m_tag);
+    if (info == nullptr) {
         // Unknown / non-resource tag (primitive scalar, BLOCK datatype, ...).
         // We accept it so callers can still observe `recovery_tag()` and
         // `validation()`, but body_size_hint and entries are empty.
         m_body_size_hint = 0;
         return;
     }
-    const std::size_t body = fixed_body_size_for(m_tag);
+    const std::size_t body = info->header_size - DATA_BLOCK_HEADER_SIZE;
     if (cap - block_offset < DATA_BLOCK_HEADER_SIZE + body) {
         throw std::invalid_argument(
             "IFE::Reflective::Node: resource body out of bounds");
     }
     m_body_size_hint = body;
-    build_entries(keys);
+    build_entries(Span<const FieldKey>(info->fields, info->field_count));
 }
 
 }  // namespace Reflective

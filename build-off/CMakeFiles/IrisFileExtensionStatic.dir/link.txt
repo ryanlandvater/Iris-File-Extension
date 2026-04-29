@@ -1,0 +1,2 @@
+/usr/bin/ar qc libIrisFileExtensionStatic.a CMakeFiles/IrisFileExtensionLib.dir/src/IrisCodecExtension.cpp.o "CMakeFiles/IrisFileExtensionLib.dir/_deps/irisheaders-src/src/IrisBuffer.cpp.o"
+/usr/bin/ranlib libIrisFileExtensionStatic.a
