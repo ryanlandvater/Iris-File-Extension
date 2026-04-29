@@ -69,9 +69,12 @@ void Builder::amend_pointer(std::uint64_t slot_offset,
                                        "amend_pointer");
     // Release store so any prior writes to the child block (header + body)
     // happen-before any reader that loads this slot with acquire ordering
-    // and follows the offset.
-    auto* atomic_slot = reinterpret_cast<std::atomic<std::uint64_t>*>(p);
-    atomic_slot->store(child_offset, std::memory_order_release);
+    // and follows the offset. The slot is plain `uint64_t` storage in the
+    // arena; access goes through `std::atomic_ref<u64>` (project rule:
+    // never alias raw arena bytes as `std::atomic<T>*`).
+    auto* slot = reinterpret_cast<std::uint64_t*>(p);
+    std::atomic_ref<std::uint64_t>(*slot)
+        .store(child_offset, std::memory_order_release);
 }
 
 std::uint64_t Builder::read_pointer(std::uint64_t slot_offset) const {
@@ -81,8 +84,9 @@ std::uint64_t Builder::read_pointer(std::uint64_t slot_offset) const {
     std::uint8_t* p = slot_ptr_checked(mut, slot_offset,
                                        sizeof(std::uint64_t),
                                        "read_pointer");
-    auto* atomic_slot = reinterpret_cast<std::atomic<std::uint64_t>*>(p);
-    return atomic_slot->load(std::memory_order_acquire);
+    auto* slot = reinterpret_cast<std::uint64_t*>(p);
+    return std::atomic_ref<std::uint64_t>(*slot)
+        .load(std::memory_order_acquire);
 }
 
 }  // namespace IFE

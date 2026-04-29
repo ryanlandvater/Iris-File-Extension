@@ -12,9 +12,11 @@
  *   - Handle/Body split: `Memory` is a thin handle around a
  *     `std::shared_ptr<Body>`. The `Body` owns the byte arena and the
  *     64-bit atomic write-head.
- *   - The first 16 bytes of the arena are reserved for the atomic write-head
- *     (`std::atomic<uint64_t>` in bytes [0,8); bytes [8,16) reserved for
- *     future Phase 4 `FILE_HEADER` migration). The cursor's low 63 bits hold
+ *   - The first 16 bytes of the arena are reserved for the atomic write-head.
+ *     Bytes [0,8) hold a plain `uint64_t` accessed exclusively through
+ *     `std::atomic_ref<uint64_t>` (the project rule is to never alias raw
+ *     storage as `std::atomic<T>*`). Bytes [8,16) reserved for future
+ *     Phase 4 `FILE_HEADER` migration. The cursor's low 63 bits hold
  *     the next write offset; bit 63 is the `STREAM_LOCK_BIT`.
  *   - `claim_space(bytes)` performs a `fetch_add` so concurrent ingestion
  *     threads never contend on a mutex. While the stream-lock bit is set,
@@ -81,13 +83,18 @@ public:
     const std::uint8_t* data() const noexcept { return m_arena; }
     std::size_t         capacity() const noexcept { return m_capacity; }
 
-    /// Atomic cursor stored at offset 0 of the arena. Pointer is stable for
-    /// the body's lifetime; the underlying bytes are owned by the arena.
-    std::atomic<std::uint64_t>* cursor() noexcept {
-        return reinterpret_cast<std::atomic<std::uint64_t>*>(m_arena);
+    /// Pointer to the plain `uint64_t` storage for the cursor at offset 0
+    /// of the arena. All atomic access goes through a `std::atomic_ref<u64>`
+    /// constructed on demand by callers — matching the FastFHIR reference
+    /// implementation (`FF_Memory_t::m_head_ptr`), which exposes only a
+    /// plain `uint64_t*` and lets each callsite wrap it as
+    /// `std::atomic_ref<uint64_t> head(*ptr)` at point of use. The project
+    /// rule is to never expose `std::atomic<T>*` over arena bytes.
+    std::uint64_t* cursor_storage() noexcept {
+        return reinterpret_cast<std::uint64_t*>(m_arena);
     }
-    const std::atomic<std::uint64_t>* cursor() const noexcept {
-        return reinterpret_cast<const std::atomic<std::uint64_t>*>(m_arena);
+    const std::uint64_t* cursor_storage() const noexcept {
+        return reinterpret_cast<const std::uint64_t*>(m_arena);
     }
 
 private:
@@ -128,13 +135,15 @@ public:
 
 private:
     friend class Memory;
-    StreamHead(std::atomic<std::uint64_t>* cursor,
-               std::uint8_t* data,
-               std::uint64_t acquired_offset) noexcept;
+    StreamHead(std::uint64_t* cursor_storage,
+               std::uint8_t*  data,
+               std::uint64_t  acquired_offset) noexcept;
 
-    std::atomic<std::uint64_t>* m_cursor          = nullptr;
-    std::uint8_t*               m_data            = nullptr;
-    std::uint64_t               m_acquired_offset = 0;
+    /// Plain `uint64_t*` to the cursor storage in the arena. All atomic
+    /// access wraps it in a `std::atomic_ref<u64>` at point of use.
+    std::uint64_t* m_cursor          = nullptr;
+    std::uint8_t*  m_data            = nullptr;
+    std::uint64_t  m_acquired_offset = 0;
 };
 
 /**
