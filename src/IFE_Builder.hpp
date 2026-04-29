@@ -25,8 +25,6 @@
  * `body_offset` skip past the 10-byte preamble for callers that want to
  * write the resource-specific fields directly.
  *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
- *
  * @copyright Copyright (c) 2026 Ryan Landvater. MIT licensed.
  */
 #ifndef IFE_Builder_hpp
@@ -95,7 +93,7 @@ public:
     /**
      * @brief Claim the FILE_HEADER block. Identical to `claim_block` but with
      *        `tag = RESOURCE_HEADER` and the validation slot pre-filled with
-     *        `IFE_FILE_MAGIC` so the file's first 8 bytes identify the
+        *        `IFE_FILE_MAGIC` so the file's first 4 bytes identify the
      *        IFE wire format.
      *
      * @param body_bytes  Body length excluding the 10-byte universal preamble.

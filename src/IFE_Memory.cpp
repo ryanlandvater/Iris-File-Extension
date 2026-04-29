@@ -475,7 +475,7 @@ Memory Memory::openFromFile(const std::filesystem::path& path) {
     const std::uint8_t* hdr = arena + WRITE_HEAD_BYTES;
     if (!is_file_magic(hdr)) {
         throw std::invalid_argument(
-            "IFE::Memory::openFromFile: missing IFE_FILE_MAGIC at FILE_HEADER "
+            "IFE::Memory::openFromFile: missing IFE_FILE_MAGIC (u32) at FILE_HEADER "
             "offset (file is not an IFE arena, or has been corrupted)");
     }
     const auto h = read_header(hdr);

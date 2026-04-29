@@ -54,25 +54,17 @@ int test_header_roundtrip() {
 }
 
 int test_file_magic() {
-    // Compile-time pin (also enforced inside IFE_DataBlock.hpp), repeated
-    // here as a runtime check so the test binary fails loudly if a future
-    // edit accidentally drops the static_assert.
-    IFE_REQUIRE((IFE::IFE_FILE_MAGIC & 0xFFFFFFFFu) == 0x49726973u);
-    // ASCII spelling of the magic in arena (little-endian) order. The 32-bit
-    // hex literal `0x49726973` reads as 'I','r','i','s' (left-to-right hex
-    // nibble pairs), but on little-endian targets memcpy stores the
-    // *least-significant* byte first, producing the arena-order sequence
-    // 's','i','r','I'. Building the buffer via memcpy keeps the test
-    // independent of any internal helper.
-    std::uint8_t buf[8]{};
-    std::uint64_t magic = IFE::IFE_FILE_MAGIC;
-    std::memcpy(buf, &magic, sizeof(magic));
+    // Magic is a 4-byte stamp.
+    IFE_REQUIRE(IFE::IFE_FILE_MAGIC == 0x49726973u);
+    // The stamp is written in the low 4 bytes of the 8-byte validation slot.
+    std::uint8_t buf[IFE::DATA_BLOCK_HEADER_SIZE]{};
+    IFE::write_header(buf, IFE::RECOVERY_TAG::RESOURCE_HEADER,
+                      IFE::IFE_FILE_MAGIC);
     IFE_REQUIRE(buf[0] == 's');
     IFE_REQUIRE(buf[1] == 'i');
     IFE_REQUIRE(buf[2] == 'r');
     IFE_REQUIRE(buf[3] == 'I');
-    // High half is zero (the magic is just a 32-bit ASCII tag in the
-    // low half of the 64-bit validation slot).
+    // High half of the u64 validation slot is zero for FILE_HEADER magic.
     IFE_REQUIRE(buf[4] == 0);
     IFE_REQUIRE(buf[5] == 0);
     IFE_REQUIRE(buf[6] == 0);
@@ -123,7 +115,7 @@ int test_builder_file_header() {
     IFE_REQUIRE(h.validation == IFE::IFE_FILE_MAGIC);
     IFE_REQUIRE(h.tag() == IFE::RECOVERY_TAG::RESOURCE_HEADER);
 
-    // is_file_magic recognises the FILE_HEADER's first 8 bytes.
+    // is_file_magic recognises the FILE_HEADER's first 4 bytes.
     IFE_REQUIRE(IFE::is_file_magic(mem.data() + fh.offset));
 
     // validate_at via the const Memory::View reports a match.

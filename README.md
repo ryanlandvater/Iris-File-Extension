@@ -5,9 +5,9 @@ This is the official implementation of the Iris File Extension specification, pa
 > [!IMPORTANT]
 > **IFE 2.x migration in progress.** A multi-phase migration to a FastFHIR-style
 > lock-free VMA substrate (with schema-driven codegen and a universal
-> `DATA_BLOCK` header) is underway. The new substrate is gated behind the
-> CMake option `IFE_USE_FASTFHIR_SUBSTRATE` (default **OFF**); the existing
-> `Abstraction::File` API is unaffected until Phase 6. See
+> `DATA_BLOCK` header) is underway. The substrate path is now the default
+> build path, while the existing `Abstraction::File` API remains available
+> (deprecated) during cutover. See
 > [`MIGRATION.md`](./MIGRATION.md) for the phase plan and current status.
 
 Example Iris slide files are hosted to test decoding are hosted at [the Iris-Example-Files repository](https://github.com/IrisDigitalPathology/Iris-Example-Files). 

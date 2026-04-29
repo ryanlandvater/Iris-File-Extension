@@ -2,8 +2,7 @@
  * @file IFE_Types.hpp
  * @brief FastFHIR-style type system for the Iris File Extension.
  *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
- * It is deliberately self-contained: no v1 wire-format bridge, no
+ * This header is deliberately self-contained: no v1 wire-format bridge, no
  * round-trip helpers, no reference to `IrisCodec::Serialization`. The
  * substrate is the source of truth for the new format and is pinned by
  * the `static_assert`s in this file alone.

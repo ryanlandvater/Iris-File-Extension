@@ -22,16 +22,12 @@ The migration is staged across **six sequential PRs**. Each PR is independently
 reviewable, buildable, and testable. The legacy `IrisCodecExtension.{hpp,cpp}`
 API continues to build and behave unchanged until **Phase 6b**.
 
-## Feature flag
+## Build mode
 
-A new CMake option `IFE_USE_FASTFHIR_SUBSTRATE` (default **OFF**) gates the
-new substrate. While OFF:
-- The build is byte-identical to the pre-migration build.
-- No new headers are exported.
-- No on-disk format change.
-
-Downstream consumers (notably the Iris-Codec Community Module) are not
-affected until they explicitly opt in.
+The FastFHIR substrate path is now the default build path. The legacy
+`IrisCodecExtension.{hpp,cpp}` API surface remains linkable during cutover,
+but substrate replacements are preferred and legacy entry points are marked
+deprecated.
 
 ## Phase status
 
@@ -44,7 +40,7 @@ affected until they explicitly opt in.
 | 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, `Span<T>` (removes `std::vector` from substrate read paths) | ✅ landed (this PR) |
 | 6a | `IFE_Reflective::Node`/`Entry` zero-copy lens, `Builder::finalize()` | ✅ landed (this PR) |
 | 6b (partial) | Codegen `IFE_Accessors.hpp`, `Memory::openFromFile`, `[[deprecated]]` on `Abstraction::File` + `STORE_*` helpers | ✅ landed (this PR) |
-| 6b (cutover) | Flip `IFE_USE_FASTFHIR_SUBSTRATE` default ON; delete `IrisCodecExtension.cpp` and regenerate it from `schema/ife_v1.json` | pending parity corpus |
+| 6b (cutover) | Delete `IrisCodecExtension.cpp` and regenerate it from `schema/ife_v1.json` | pending parity corpus |
 
 ## Phase 1 — what landed
 
@@ -141,17 +137,15 @@ that backs `FF_Memory_t` in FastFHIR:
   and `TypeTraits` specializations. Most invariants are already pinned at
   compile time inside `IFE_Types.hpp`.
 
-### Dormant by design
+### Staged by design
 
 Phase 1 introduces **no on-disk format change** and **no public ABI change**.
-The new headers are only compiled when `IFE_USE_FASTFHIR_SUBSTRATE=ON`, and
-even then they are not wired into `Abstraction::File` or
-`validate_file_structure`. Wiring happens in Phase 6b. Phases 2-3 likewise
-add only header-only metadata (Phase 2) and build-tree-only generated
-headers (Phase 3) — `IFE_Types.hpp` is exported alongside `IFE_Memory.hpp`
-when the substrate flag is ON; the legacy `IrisCodec::Serialization` block
-layouts continue to define the v1 wire format separately until Phase 6b
-flips the default.
+The initial substrate headers landed before they were wired into
+`Abstraction::File` or `validate_file_structure`; that wiring is tracked in
+Phase 6b. Phases 2-3 likewise add header-only metadata (Phase 2) and
+build-tree generated headers (Phase 3). The legacy
+`IrisCodec::Serialization` layouts continue to define the v1 wire format on
+legacy paths until the full serializer regeneration lands.
 
 ## Phase 3 — what landed
 
@@ -189,7 +183,7 @@ flips the default.
     a pure schema change; zero edits to `IFE_Reflective.hpp` are needed.
   * `IFE_FieldKeys_wasm.hpp` — `__EMSCRIPTEN__`-gated `extern "C"`
     surface. Stubs only.
-* CMake integration (`IFE_USE_FASTFHIR_SUBSTRATE=ON`):
+* CMake integration:
   * Requires Python 3 (`find_package(Python3 REQUIRED)`).
   * Runs `ifc.py` at configure time; `CMAKE_CONFIGURE_DEPENDS` re-runs
     it if either the schema or the codegen script changes.
@@ -209,8 +203,7 @@ flips the default.
 
 ### Build-time dependency
 
-When `IFE_USE_FASTFHIR_SUBSTRATE=ON`, **Python 3 is required at configure
-time**. Substrate-OFF builds remain Python-free.
+**Python 3 is required at configure time** for schema codegen.
 
 ### Codegen contract
 
@@ -219,8 +212,8 @@ time**. Substrate-OFF builds remain Python-free.
   are NEVER checked in — they are regenerated at every CMake configure.
 - The substrate is independent of the legacy
   `IrisCodec::Serialization` enums. The legacy enums in
-  `IrisCodecExtension.hpp` continue to drive the legacy write path
-  (substrate-OFF builds) until Phase 6b retires it.
+  `IrisCodecExtension.hpp` continue to drive the legacy write path until
+  Phase 6b retires it.
 
 ## Phase 4 — what landed
 
@@ -308,23 +301,21 @@ the magic and `DATA_BLOCK_HEADER_SIZE` are pinned by `static_assert` in
 
 ### CMake
 
-* `IFE_USE_FASTFHIR_SUBSTRATE=ON` now exports `IFE_DataBlock.hpp` /
+* The build now exports `IFE_DataBlock.hpp` /
   `IFE_Builder.hpp` and compiles `IFE_Builder.cpp`.
 * New `ife_datablock_tests` ctest entry; links `Threads::Threads` for
   the multi-thread amend race.
 
-### Substrate-OFF dormancy preserved
+### Legacy-path status at that time
 
-Substrate-OFF builds are **byte-identical** to before this PR — none of
-the new headers or sources are compiled, no Python is invoked, and the
-legacy `IrisCodec::Abstraction::File` write path still produces the same
-on-disk bytes as before.
+At the time of this phase landing, the legacy
+`IrisCodec::Abstraction::File` write path still produced the same on-disk
+bytes as before.
 
 ## Building with the substrate
 
 ```bash
 cmake -B build -S . \
-      -DIFE_USE_FASTFHIR_SUBSTRATE=ON \
       -DIFE_BUILD_TESTS=ON
 cmake --build build -j
 ctest --test-dir build --output-on-failure
@@ -334,7 +325,6 @@ For thread-sanitizer validation of the lock-free paths:
 
 ```bash
 cmake -B build-tsan -S . \
-      -DIFE_USE_FASTFHIR_SUBSTRATE=ON \
       -DIFE_BUILD_TESTS=ON \
       -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1"
 cmake --build build-tsan --target ife_memory_tests
@@ -429,9 +419,9 @@ change for the legacy `IrisCodec::Abstraction::File` API.
 * Substrate-ON exports `IFE_Array.hpp` alongside the Phase 1-4 headers.
 * New `ife_array_tests` ctest entry (links `Threads::Threads`).
 
-### Substrate-OFF dormancy preserved
+### Legacy-path status at that time
 
-Substrate-OFF builds remain byte-identical to before this PR.
+At the time of this phase landing, the legacy path remained byte-identical.
 
 ## Open items blocking Phase 6
 
@@ -454,10 +444,9 @@ Phase 4 `DATA_BLOCK` preamble, Phase 5 `IFE_ARRAY` headers, and the
 Phase 3 codegen catalogs — without touching the legacy
 `IrisCodec::Abstraction::File` API.
 
-Phase 6a is **additive and substrate-OFF byte-identical**. The ABI-breaking
-pieces of the original Phase 6 (deprecating `Abstraction::File`, flipping
-the `IFE_USE_FASTFHIR_SUBSTRATE` default to ON) are deferred to Phase 6b,
-which is gated on the open blockers above.
+Phase 6a is **additive**. The ABI-breaking pieces of the original Phase 6
+(deprecating/removing `Abstraction::File`) are deferred to Phase 6b, which is
+gated on the open blockers above.
 
 ### Reflective lens (`IFE_Reflective.hpp`)
 
@@ -545,7 +534,7 @@ which is gated on the open blockers above.
 * Substrate-ON exports `IFE_Reflective.hpp` alongside the Phase 1–5
   headers.
 * New `ife_reflective_tests` ctest entry (links `Threads::Threads`).
-* Substrate-OFF builds remain byte-identical.
+
 
 ## Cleanup pass — what dropped
 
@@ -568,15 +557,14 @@ What the pass dropped:
 | `tests/ife_codegen_tests.cpp`                  | Dropped every `IFE_CHECK_OFFSET / SIZE / HEADER_SIZE / RECOVERY` parity macro. Codegen is the source of truth; what remains are schema invariants (FILE_HEADER preamble, monotonic offsets, header_size accounting, dispatch round-trip). |
 | `tests/ife_datablock_tests.cpp`                | Renamed `test_file_magic_matches_legacy` → `test_file_magic`; dropped the `MAGIC_BYTES` cross-reference and the `IrisFileExtension.hpp` include. |
 
-Substrate-OFF builds remain byte-identical. `IrisCodecExtension.{hpp,cpp}`
-is unchanged — it remains the legacy write/read path until Phase 6b.
+`IrisCodecExtension.{hpp,cpp}` is unchanged — it remains the legacy
+write/read path until Phase 6b.
 
 ## Phase 6b — partial: substrate-side cutover landed
 
 This PR lands the substrate-side work that does **not** require a parity
 corpus or an ABI break, plus the codegen scaffolding that the eventual
-full cutover will compose into a regenerated serializer. The flag default
-stays **OFF**; substrate-OFF builds remain byte-identical to today.
+full cutover will compose into a regenerated serializer.
 
 ### What landed in this PR
 
@@ -617,10 +605,8 @@ stays **OFF**; substrate-OFF builds remain byte-identical to today.
 3. **`[[deprecated]]` on the legacy API surface.** `IrisCodec::Abstraction::File`,
    `abstract_file_structure`, `generate_file_map`, and all 13 `STORE_*`
    bytes-in helpers now carry an `IFE_LEGACY_DEPRECATED(...)` annotation
-   that expands to `[[deprecated("IFE 2.x: prefer ..." )]]` only when
-   built against `IFE_USE_FASTFHIR_SUBSTRATE=ON`. Substrate-OFF
-   consumers see no deprecation warnings (matching the dormancy
-   guarantee). Every annotation names its substrate replacement (e.g.
+  that expands to `[[deprecated("IFE 2.x: prefer ..." )]]`.
+  Every annotation names its substrate replacement (e.g.
    `STORE_FILE_HEADER` → `IFE::Builder::claim_file_header +
    IFE::accessors::FILE_HEADER::encode`). The legacy `.cpp` opens with
    a localised `-Wdeprecated-declarations` suppression so the file's
@@ -671,8 +657,8 @@ PR landed, with one item retired:
    break must be acknowledged by the dependent tree (`Iris-Codec`,
    etc.) before the deprecation graduates from a warning to a removal.
    The `[[deprecated]]` annotations from this PR are the warning step.
-3. **Real-`.iris` parity corpus.** Flipping the substrate default to
-   ON requires byte-exact round-trip parity against a representative
+3. **Real-`.iris` parity corpus.** Full wire-format cutover requires
+  byte-exact round-trip parity against a representative
    set of `.iris` files — the same corpus that gates the eventual
    wire-format cutover.
 4. ~~**Read-mode `Memory::createFromFile`.**~~ ✅ Landed in this PR
@@ -692,10 +678,6 @@ When (1)–(3) are unblocked, the **final** Phase 6b step is:
   outright once the ABI break is confirmed). This is the largest net-
   LOC reduction in the migration, and the codegen-emitted accessors
   from this PR are the foundation it composes from.
-
-* Flip `option(IFE_USE_FASTFHIR_SUBSTRATE … OFF)` to `ON`, behind a
-  feature gate that downstream consumers can flip back during their
-  own cutover.
 
 * Add a `tests/ife_corpus_parity_tests.cpp` driven by the real-`.iris`
   corpus, asserting byte-exact round-trip through the regenerated

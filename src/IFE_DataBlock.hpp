@@ -5,17 +5,15 @@
  * Every block in the IFE wire format leads with a uniform 10-byte preamble:
  *
  *     bytes [0, 8)  : `validation`   — uint64. For inline blocks it carries
- *                     the validation hash / sentinel; for the FILE_HEADER it
- *                     carries `IFE_FILE_MAGIC` so the very first eight
- *                     bytes of an `.iris` file identify the format.
+ *                     the validation hash / sentinel; for the FILE_HEADER the
+ *                     low 4 bytes carry `IFE_FILE_MAGIC` so byte 0..3 identify
+ *                     the format.
  *     bytes [8,10)  : `recovery_tag` — uint16, an `IFE::RECOVERY_TAG` value
  *                     from `IFE_Types.hpp` (e.g. `RESOURCE_HEADER`,
  *                     `RESOURCE_TILE_TABLE`, ...).
  *
- * `IFE_FILE_MAGIC` packs the four ASCII bytes `'I','r','i','s'` into the
- * first 32 bits of the validation slot (zero-extended to 64 bits).
- *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
+ * `IFE_FILE_MAGIC` is a 4-byte ASCII stamp (`'I','r','i','s'`) that is
+ * written into the low 32 bits of the validation slot.
  *
  * @copyright Copyright (c) 2026 Ryan Landvater. MIT licensed.
  */
@@ -39,11 +37,10 @@ inline constexpr std::size_t DATA_BLOCK_HEADER_SIZE = 10;
 inline constexpr std::size_t DATA_BLOCK_VALIDATION_OFFSET   = 0;
 inline constexpr std::size_t DATA_BLOCK_RECOVERY_OFFSET     = 8;
 
-/// File identification magic stored in the FILE_HEADER's `validation` slot.
-/// 64-bit zero-extension of the four ASCII bytes `'I','r','i','s'` packed
-/// little-endian (so a `LOAD_U32` at file offset 0 reads `0x49726973`).
-inline constexpr std::uint64_t IFE_FILE_MAGIC =
-    static_cast<std::uint64_t>(0x49726973u);
+/// 4-byte file identification stamp stored in the low 32 bits of the
+/// FILE_HEADER `validation` slot (so a `LOAD_U32` at file offset 0 reads
+/// `0x49726973`).
+inline constexpr std::uint32_t IFE_FILE_MAGIC = 0x49726973u;
 
 // Pin the universal-preamble size and the magic's intended bit layout at
 // compile time so a future schema edit cannot silently break either.
@@ -51,8 +48,8 @@ static_assert(DATA_BLOCK_HEADER_SIZE ==
                   DATA_BLOCK_VALIDATION_OFFSET + sizeof(std::uint64_t) +
                   sizeof(std::uint16_t),
               "DATA_BLOCK_HEADER_SIZE inconsistent with field layout");
-static_assert((IFE_FILE_MAGIC & 0xFFFFFFFFu) == 0x49726973u,
-              "Low 32 bits of IFE_FILE_MAGIC must spell 'Iris'");
+static_assert(IFE_FILE_MAGIC == 0x49726973u,
+              "IFE_FILE_MAGIC must spell 'Iris'");
 
 /// POD view of a universal block header. Returned by `read_header`.
 struct DataBlockHeader {
@@ -75,6 +72,12 @@ inline std::uint64_t load_u64_le(const std::uint8_t* p) noexcept {
 
 inline std::uint16_t load_u16_le(const std::uint8_t* p) noexcept {
     std::uint16_t v = 0;
+    std::memcpy(&v, p, sizeof(v));
+    return v;
+}
+
+inline std::uint32_t load_u32_le(const std::uint8_t* p) noexcept {
+    std::uint32_t v = 0;
     std::memcpy(&v, p, sizeof(v));
     return v;
 }
@@ -118,10 +121,10 @@ inline bool validate_at(const Memory::View& view,
     return h.tag() == expected_tag;
 }
 
-/// True iff `buf[0..8)` carries the file magic. Useful for very early
+/// True iff `buf[0..4)` carries the file magic. Useful for very early
 /// identification of an arena that has been populated with a FILE_HEADER.
 inline bool is_file_magic(const std::uint8_t* buf) noexcept {
-    return detail::load_u64_le(buf) == IFE_FILE_MAGIC;
+    return detail::load_u32_le(buf) == IFE_FILE_MAGIC;
 }
 
 }  // namespace IFE

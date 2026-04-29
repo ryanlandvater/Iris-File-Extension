@@ -30,8 +30,7 @@
  * `shared_ptr<const Body>`), so the arena cannot be unmapped while a `Node`
  * exists — same lifetime contract as all other `Memory::View`-based readers.
  *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`
- * (it pulls in the generated codegen headers, which only exist in that mode).
+ * This header pulls in generated codegen headers emitted at configure time.
  *
  * @copyright Copyright (c) 2026 Ryan Landvater. MIT licensed.
  */
@@ -115,8 +114,8 @@ public:
     /// Recovery tag from the universal preamble.
     RECOVERY_TAG recovery_tag() const noexcept { return m_tag; }
 
-    /// 64-bit `validation` field from the universal preamble. Carries
-    /// `IFE_FILE_MAGIC` for the FILE_HEADER block.
+    /// 64-bit `validation` field from the universal preamble. For
+    /// FILE_HEADER, its low 32 bits carry `IFE_FILE_MAGIC`.
     std::uint64_t validation() const noexcept { return m_validation; }
 
     /// Absolute arena offset of the universal preamble's first byte.

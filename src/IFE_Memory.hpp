@@ -3,10 +3,9 @@
  * @brief Lock-free Virtual Memory Arena (VMA) substrate for the Iris File
  *        Extension. Phase 1 of the FastFHIR substrate migration.
  *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
- * It introduces no on-disk format change and no change to the existing
- * `IrisCodec::Abstraction::File` API. Phases 2-6 progressively wire the
- * substrate into the read/write paths.
+ * This header defines the substrate memory layer used by the 2.x retooled
+ * implementation. Legacy `IrisCodec::Abstraction::File` APIs remain linkable
+ * during cutover but are deprecated.
  *
  * Design (ported from the FastFHIR `FF_Memory` Handle/Body pattern):
  *   - Handle/Body split: `Memory` is a thin handle around a

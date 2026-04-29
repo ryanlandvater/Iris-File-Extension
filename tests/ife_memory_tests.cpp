@@ -343,7 +343,7 @@ void test_open_from_file_rejects_invalid() {
     IFE_CHECK(threw);
 
     // Garbage file: 64 bytes of 0xFF — passes the size gate but the
-    // FILE_HEADER preamble fails the magic check (0xFFFF... != IFE_FILE_MAGIC).
+    // FILE_HEADER preamble fails the magic check (0xFFFFFFFF != IFE_FILE_MAGIC).
     const fs::path garbage =
         fs::temp_directory_path() /
         ("ife_memory_openfrom_garbage_" +

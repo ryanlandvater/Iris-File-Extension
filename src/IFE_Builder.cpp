@@ -7,6 +7,7 @@
 #include "IFE_Builder.hpp"
 
 #include <atomic>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -103,14 +104,17 @@ void Builder::amend_pointer(std::uint64_t slot_offset,
     std::uint8_t* p = slot_ptr_checked(m_mem, slot_offset,
                                        sizeof(std::uint64_t),
                                        "amend_pointer");
-    // Release store so any prior writes to the child block (header + body)
-    // happen-before any reader that loads this slot with acquire ordering
-    // and follows the offset. The slot is plain `uint64_t` storage in the
-    // arena; access goes through `std::atomic_ref<u64>` (project rule:
-    // never alias raw arena bytes as `std::atomic<T>*`).
-    auto* slot = reinterpret_cast<std::uint64_t*>(p);
-    std::atomic_ref<std::uint64_t>(*slot)
-        .store(child_offset, std::memory_order_release);
+    // A DATA_BLOCK body begins at +10 bytes, so many schema pointer fields
+    // are naturally unaligned for uint64_t. On architectures that fault on
+    // unaligned atomic 64-bit access (e.g. arm64), fallback to memcpy.
+    if ((reinterpret_cast<std::uintptr_t>(p) % alignof(std::uint64_t)) == 0) {
+        auto* slot = reinterpret_cast<std::uint64_t*>(p);
+        std::atomic_ref<std::uint64_t>(*slot)
+            .store(child_offset, std::memory_order_release);
+        return;
+    }
+    std::atomic_thread_fence(std::memory_order_release);
+    std::memcpy(p, &child_offset, sizeof(child_offset));
 }
 
 std::uint64_t Builder::read_pointer(std::uint64_t slot_offset) const {
@@ -120,9 +124,15 @@ std::uint64_t Builder::read_pointer(std::uint64_t slot_offset) const {
     std::uint8_t* p = slot_ptr_checked(mut, slot_offset,
                                        sizeof(std::uint64_t),
                                        "read_pointer");
-    auto* slot = reinterpret_cast<std::uint64_t*>(p);
-    return std::atomic_ref<std::uint64_t>(*slot)
-        .load(std::memory_order_acquire);
+    if ((reinterpret_cast<std::uintptr_t>(p) % alignof(std::uint64_t)) == 0) {
+        auto* slot = reinterpret_cast<std::uint64_t*>(p);
+        return std::atomic_ref<std::uint64_t>(*slot)
+            .load(std::memory_order_acquire);
+    }
+    std::uint64_t v = 0;
+    std::memcpy(&v, p, sizeof(v));
+    std::atomic_thread_fence(std::memory_order_acquire);
+    return v;
 }
 
 }  // namespace IFE

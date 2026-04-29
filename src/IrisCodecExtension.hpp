@@ -76,11 +76,8 @@
 // -----------------------------------------------------------------------------
 // IFE_LEGACY_DEPRECATED — Phase 6b deprecation marker.
 //
-// When the FastFHIR substrate is built (`IFE_USE_FASTFHIR_SUBSTRATE=ON`),
-// every legacy API surface that the substrate replaces is annotated with
-// `[[deprecated(...)]]`. Substrate-OFF builds see the macro expand to nothing,
-// so existing consumers that haven't opted in to the new API don't get a wall
-// of warnings during the cutover. The replacement APIs (`IFE::Builder`,
+// Every legacy API surface that the substrate replaces is annotated with
+// `[[deprecated(...)]]`. The replacement APIs (`IFE::Builder`,
 // `IFE::Reflective::Node`, `IFE::Memory::openFromFile`) are documented in
 // `IFE_Builder.hpp` / `IFE_Reflective.hpp` / `IFE_Memory.hpp` and the
 // migration trajectory is recorded in `MIGRATION.md`.
@@ -91,13 +88,9 @@
 // happens, the legacy API stays linkable; the `[[deprecated]]` annotation is
 // the only warning.
 // -----------------------------------------------------------------------------
-#if defined(IFE_USE_FASTFHIR_SUBSTRATE)
-    #define IFE_LEGACY_DEPRECATED(replacement)                                 \
-        [[deprecated("IFE 2.x: prefer " replacement                            \
-                     " (FastFHIR substrate); see MIGRATION.md")]]
-#else
-    #define IFE_LEGACY_DEPRECATED(replacement)
-#endif
+#define IFE_LEGACY_DEPRECATED(replacement)                                     \
+    [[deprecated("IFE 2.x: prefer " replacement                                \
+                 " (FastFHIR substrate); see MIGRATION.md")]]
 
 namespace IrisCodec {
 using namespace Iris;

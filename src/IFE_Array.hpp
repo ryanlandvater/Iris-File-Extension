@@ -30,8 +30,6 @@
  * instead of `std::vector<T>`; legacy `IrisCodec::Abstraction::File`
  * read code is unchanged until Phase 6.
  *
- * This header is **dormant** unless built with `IFE_USE_FASTFHIR_SUBSTRATE`.
- *
  * @copyright Copyright (c) 2026 Ryan Landvater. MIT licensed.
  */
 #ifndef IFE_Array_hpp
