@@ -1,6 +1,6 @@
 # IFE 2.x Migration — FastFHIR Substrate
 
-> **Status:** in progress (Phase 1 of 6 landed). Targeted version: `2.0.0-alpha`.
+> **Status:** in progress (Phases 1-3 of 6 landed). Targeted version: `2.0.0-alpha`.
 
 The Iris File Extension is migrating from the eager-mapping `Abstraction::File`
 pattern to a lock-free Virtual Memory Arena (VMA) substrate ported from
@@ -31,8 +31,8 @@ affected until they explicitly opt in.
 | Phase | Scope | Status |
 |------:|-------|--------|
 | 1 | Lock-free VMA: `IFE_Memory`, `claim_space`, `StreamHead`, `Memory::View` | ✅ landed (PR #1) |
-| 2 | `IFE_FieldKind`, partitioned `RECOVERY_TAG`, `0x8000` array bit, `TypeTraits<T>` | ✅ landed (this PR) |
-| 3 | `ifc.py` JSON-schema-driven codegen → `IFE_DataTypes.hpp`, `IFE_VTables.hpp`, `IFE_FieldKeys.hpp`, WASM stubs | pending |
+| 2 | `IFE_FieldKind`, partitioned `RECOVERY_TAG`, `0x8000` array bit, `TypeTraits<T>` | ✅ landed (PR #2) |
+| 3 | `ifc.py` JSON-schema-driven codegen → `IFE_DataTypes.hpp`, `IFE_VTables.hpp`, `IFE_FieldKeys.hpp`, WASM stubs | ✅ landed (this PR) |
 | 4 | Universal 10-byte `DATA_BLOCK` header, `Builder::amend_pointer` (**v2 on-disk break**) | pending |
 | 5 | `IFE_ARRAY` block, `KIND_AND_STEP`, removal of `std::vector` from read paths | pending |
 | 6 | `IFE_Builder`, `Reflective::Node`/`Entry`, deprecate `Abstraction::File`, flag default ON | pending |
@@ -102,11 +102,72 @@ default flips and legacy callers are already migrating.
 Phase 1 introduces **no on-disk format change** and **no public ABI change**.
 The new headers are only compiled when `IFE_USE_FASTFHIR_SUBSTRATE=ON`, and
 even then they are not yet wired into `Abstraction::File` or
-`validate_file_structure`. Wiring happens in Phase 4. Phase 2 likewise adds
-only header-only metadata — `IFE_Types.hpp` is exported alongside
-`IFE_Memory.hpp` when the substrate flag is ON, and both legacy
-`IrisCodec::RECOVERY` / `IrisCodec::Serialization` block layouts continue to
-define the v1 wire format until Phase 4.
+`validate_file_structure`. Wiring happens in Phase 4. Phases 2-3 likewise add
+only header-only metadata (Phase 2) and build-tree-only generated headers
+(Phase 3) — `IFE_Types.hpp` is exported alongside `IFE_Memory.hpp` when the
+substrate flag is ON, and both legacy `IrisCodec::Serialization::RECOVERY` /
+`IrisCodec::Serialization` block layouts continue to define the v1 wire
+format until Phase 4.
+
+## Phase 3 — what landed
+
+* `schema/ife_v1.json` — JSON description of the v1 IFE container. Single
+  source of truth for every resource (FILE_HEADER, TILE_TABLE, METADATA,
+  ATTRIBUTES, LAYER_EXTENTS, TILE_OFFSETS, ATTRIBUTES_SIZES,
+  ATTRIBUTES_BYTES, IMAGE_ARRAY, IMAGE_BYTES, ICC_PROFILE, ANNOTATIONS,
+  ANNOTATION_BYTES, ANNOTATION_GROUP_SIZES, ANNOTATION_GROUP_BYTES) and
+  every sub-block datatype (LAYER_EXTENT, TILE_OFFSET, ATTRIBUTE_SIZE,
+  IMAGE_ENTRY, ANNOTATION_ENTRY, ANNOTATION_GROUP_SIZE).
+* `tools/ifc.py` — Python 3 stdlib-only codegen (no jinja2 dependency).
+  Reads the schema and emits four C++ headers into the build tree.
+  Includes a `--check` mode for CI: regenerates to a temp dir and diffs
+  against the build-tree files; non-zero exit on drift.
+* Generated headers (in `${CMAKE_BINARY_DIR}/generated/IFE/`):
+  * `IFE_DataTypes.hpp` — POD reflective structs (`IFE::datatypes::*`)
+    for every sub-block datatype, each pinning its on-disk `wire_size`
+    via `static_assert`. `sizeof(struct)` is *not* pinned in general
+    because narrow on-disk types (uint24 / uint40) widen to natural
+    C++ types in memory; it is pinned for `LAYER_EXTENT` because all
+    of its fields are 4-byte naturally aligned.
+  * `IFE_VTables.hpp` — per-resource `IFE::vtables::<NAME>` namespaces
+    with `constexpr` field offsets, field sizes, `header_size`, and a
+    `recovery_tag` constant. Replaces the hand-written
+    `enum vtable_offsets` / `enum vtable_sizes` blocks in
+    `IrisCodecExtension.hpp`.
+  * `IFE_FieldKeys.hpp` — `constexpr std::array<FieldKey, N>` per
+    resource, where `FieldKey = {name, kind, scalar_tag, offset, size}`.
+    Consumed by the Phase 6 reflective reader.
+  * `IFE_FieldKeys_wasm.hpp` — `__EMSCRIPTEN__`-gated `extern "C"`
+    surface. Stubs only; Phase 6 wires implementations.
+* CMake integration (`IFE_USE_FASTFHIR_SUBSTRATE=ON`):
+  * Requires Python 3 (`find_package(Python3 REQUIRED)`).
+  * Runs `ifc.py` at configure time; `CMAKE_CONFIGURE_DEPENDS` re-runs
+    it if either the schema or the codegen script changes.
+  * Adds the build-tree generated dir to the include path.
+* `tests/ife_codegen_tests.cpp` — parity safety net. For every resource,
+  every legacy `IrisCodec::Serialization::<RES>::FIELD` offset, every
+  `..._S` size, every `HEADER_SIZE`, and every `recovery` tag is
+  cross-checked at compile time against the generated equivalent via
+  `static_assert`. A second ctest entry (`ife_codegen_check`) re-runs
+  `ifc.py --check` so a stale build directory also fails CI.
+* Schema version (`IFE::IFE_SCHEMA_VERSION_MAJOR/MINOR`) is embedded as
+  `constexpr` so a translation unit compiled against an older schema
+  fails the build against a newer one.
+
+### Build-time dependency
+
+When `IFE_USE_FASTFHIR_SUBSTRATE=ON`, **Python 3 is required at configure
+time**. Substrate-OFF builds remain Python-free.
+
+### Codegen contract
+
+- The schema (`schema/ife_v1.json`) is the single source of truth.
+- Generated headers live under `${CMAKE_BINARY_DIR}/generated/IFE/` and
+  are NEVER checked in — they are regenerated at every CMake configure.
+- The legacy `IrisCodec::Serialization` enums in
+  `IrisCodecExtension.hpp` are the parity baseline for v1. Phase 4
+  flips the relationship: the schema becomes authoritative and the
+  legacy enums get removed.
 
 ## Building with the substrate
 

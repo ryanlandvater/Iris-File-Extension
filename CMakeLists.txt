@@ -95,13 +95,53 @@ if(IFE_USE_FASTFHIR_SUBSTRATE)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
     list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Types.hpp)
     list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-2: IFE_Memory, IFE_Types)")
+
+    # Phase 3 — schema-driven codegen (tools/ifc.py). Generates
+    # IFE_DataTypes.hpp / IFE_VTables.hpp / IFE_FieldKeys.hpp /
+    # IFE_FieldKeys_wasm.hpp from schema/ife_v1.json into the build tree.
+    # Re-runs at configure time whenever the schema or the codegen script
+    # changes (CONFIGURE_DEPENDS).
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(IFE_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated/IFE)
+    set(IFE_SCHEMA        ${PROJECT_SOURCE_DIR}/schema/ife_v1.json)
+    set(IFE_CODEGEN       ${PROJECT_SOURCE_DIR}/tools/ifc.py)
+    set(IFE_GENERATED_HEADERS
+        ${IFE_GENERATED_DIR}/IFE_DataTypes.hpp
+        ${IFE_GENERATED_DIR}/IFE_VTables.hpp
+        ${IFE_GENERATED_DIR}/IFE_FieldKeys.hpp
+        ${IFE_GENERATED_DIR}/IFE_FieldKeys_wasm.hpp
+    )
+    file(MAKE_DIRECTORY ${IFE_GENERATED_DIR})
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${IFE_CODEGEN}
+                --schema  ${IFE_SCHEMA}
+                --out-dir ${IFE_GENERATED_DIR}
+        RESULT_VARIABLE IFE_CODEGEN_RESULT
+        OUTPUT_VARIABLE IFE_CODEGEN_STDOUT
+        ERROR_VARIABLE  IFE_CODEGEN_STDERR
+    )
+    if(NOT IFE_CODEGEN_RESULT EQUAL 0)
+        message(FATAL_ERROR
+                "ifc.py codegen failed (exit ${IFE_CODEGEN_RESULT}):\n"
+                "${IFE_CODEGEN_STDOUT}\n${IFE_CODEGEN_STDERR}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 ${IFE_SCHEMA} ${IFE_CODEGEN})
+    # Generated headers live under the build tree, not the source tree, so
+    # they are NOT added to the install FILE_SET (which uses ${IFE_SOURCE_DIR}
+    # as its BASE_DIRS). They are available to internal targets via the
+    # include path appended below; downstream installation is a Phase 4+
+    # concern once the substrate is wired into the public surface.
+    message(STATUS "IFE: FastFHIR substrate ENABLED (Phases 1-3: IFE_Memory, IFE_Types, codegen)")
 endif()
 set (
     IFE_IncludeDir
     ${irisheaders_SOURCE_DIR}/priv
     ${IFE_SOURCE_DIR}
 )
+if(IFE_USE_FASTFHIR_SUBSTRATE)
+    list(APPEND IFE_IncludeDir ${IFE_GENERATED_DIR})
+endif()
 set (
     IFE_Dependencies
     IrisHeaders
@@ -237,4 +277,31 @@ if(IFE_BUILD_TESTS)
     target_compile_features(ife_types_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_types_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_types_tests COMMAND ife_types_tests)
+
+    # Phase 3 — codegen parity test. Cross-checks every generated vtable
+    # offset/size/header_size and every generated recovery_tag against the
+    # legacy IrisCodec::Serialization enums via static_assert. Only built
+    # when IFE_USE_FASTFHIR_SUBSTRATE=ON because the generated headers do
+    # not exist otherwise.
+    if(IFE_USE_FASTFHIR_SUBSTRATE)
+        add_executable(
+            ife_codegen_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_codegen_tests.cpp
+        )
+        target_include_directories(ife_codegen_tests PRIVATE ${IFE_IncludeDir})
+        target_compile_features(ife_codegen_tests PRIVATE cxx_std_20)
+        target_link_libraries(ife_codegen_tests PRIVATE ${IFE_Dependencies})
+        add_test(NAME ife_codegen_tests COMMAND ife_codegen_tests)
+
+        # Schema-vs-codegen-output --check: re-runs ifc.py in --check mode
+        # so CI catches any drift between the schema and the generated
+        # headers in the build tree (e.g. stale build dir).
+        add_test(
+            NAME ife_codegen_check
+            COMMAND ${Python3_EXECUTABLE} ${IFE_CODEGEN}
+                    --schema  ${IFE_SCHEMA}
+                    --out-dir ${IFE_GENERATED_DIR}
+                    --check
+        )
+    endif()
 endif()
