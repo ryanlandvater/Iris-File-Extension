@@ -2,6 +2,14 @@
 
 This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This repository has a very limited scope; it provies the byte-offset vtables and enumerations referenced by the Iris Codec specification and validates files against the published IFE specification. This is an advanced repository. **If this is your first foray into Iris, the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) is a much better choice**. 
 
+> [!IMPORTANT]
+> **IFE 2.x migration in progress.** A multi-phase migration to a FastFHIR-style
+> lock-free VMA substrate (with schema-driven codegen and a universal
+> `DATA_BLOCK` header) is underway. The new substrate is gated behind the
+> CMake option `IFE_USE_FASTFHIR_SUBSTRATE` (default **OFF**); the existing
+> `Abstraction::File` API is unaffected until Phase 6. See
+> [`MIGRATION.md`](./MIGRATION.md) for the phase plan and current status.
+
 Example Iris slide files are hosted to test decoding are hosted at [the Iris-Example-Files repository](https://github.com/IrisDigitalPathology/Iris-Example-Files). 
 
 > [!CAUTION]
