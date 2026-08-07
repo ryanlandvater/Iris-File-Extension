@@ -102,7 +102,8 @@
     "CIPHER": {
       "kind": "header",
       "recovery_tag": "RECOVER_CIPHER",
-      "description": "Reserved for future use by the Iris Codec.",
+      "unspecified": "reserved",
+      "description": "Reserved for future use by the Iris Codec. The block is claimed so its recovery tag and position in the inventory are fixed; encoders write nothing beyond the universal header and readers ignore its contents. TILE_TABLE.CIPHER_OFFSET is nullable and is NULL_OFFSET in every file written to date.",
       "fields": {
         "ife_version": {
           "1.0": []
@@ -249,7 +250,9 @@
     "ICC_PROFILE": {
       "kind": "array",
       "recovery_tag": "RECOVER_ICC_PROFILE",
-      "description": "Serialized contents of an ICC (.icc) color profile without modification.",
+      "unspecified": "external",
+      "specified_by": "ICC.1 colour profile specification (International Color Consortium)",
+      "description": "Serialized contents of an ICC (.icc) color profile without modification. IFE specifies only that the bytes are stored verbatim and their length; their internal structure is defined by the ICC specification and deliberately not constrained here.",
       "entry": { "blob": true }
     },
 
@@ -290,7 +293,9 @@
     "ANNOTATION_BYTES": {
       "kind": "array",
       "recovery_tag": "RECOVER_ANNOTATION_BYTES",
-      "description": "One annotation's raw visual-object byte stream.",
+      "unspecified": "external",
+      "specified_by": "The annotation_types value carried by the referencing ANNOTATION_ENTRY.FORMAT field",
+      "description": "One annotation's raw visual-object byte stream. IFE specifies only where the bytes are and how many; their interpretation is determined by the annotation format the referencing entry declares, and is deliberately not constrained here.",
       "entry": { "blob": true }
     },
 

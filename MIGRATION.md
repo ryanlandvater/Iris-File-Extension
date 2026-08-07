@@ -20,7 +20,8 @@ source of truth for:
    supplies the narrative (purpose, definitions, design rationale, prose about
    sentinels like `NULL_OFFSET`, figures); all layout tables, enumeration
    tables, and per-block sections are generated from the JSON and interleaved
-   at build time to produce LaTeX (and later HTML) output.
+   at build time — via AsciiDoc's native `include::`, the mechanism Khronos
+   uses for the Vulkan specification — to produce PDF and HTML output.
 3. **Language bindings** — Python and JavaScript/WASM surfaces are generated
    or generator-assisted, not hand-maintained.
 
@@ -48,6 +49,39 @@ source of truth for:
   carried as schema machinery (per-field `since`, arrays storing their
   encoding-time stride) precisely so that adding is the only available
   move.
+* **The schema is capped, permanently.** It describes what a byte **is**; it
+  never describes what a program should **do**. This is a hard boundary, not
+  a preference — the whole design depends on the description language staying
+  weak. Rich specification languages are a well-documented dead end: ASN.1
+  made every parser a security liability for decades on the strength of
+  variable-length everything, optional fields, and multiple valid encodings
+  of the same value. Pressure to add "just one feature" is the main long-term
+  threat to this architecture, so the boundary is written down rather than
+  remembered.
+
+  **Permitted, and this is the whole list:** a field's name, its scalar type
+  or enum reference, and the version group that introduced it; offset linkage
+  (`points_to`, `nullable`); a constant a field always holds; the primitive a
+  block derives from and its recovery tag; documentation (`description`,
+  `errata`, `deprecated`); and validation predicates drawn from a **closed
+  vocabulary** — range, enum membership, ordering, non-null — with no
+  expression syntax.
+
+  **Forbidden, permanently:** expressions or arithmetic of any kind;
+  conditionals, so no field's presence, type or width may ever depend on
+  another field's value; computed lengths — a length is a field, or it is
+  `STRIDE`/`COUNT`, never a formula; literal offsets or sizes (the derivation
+  rule); alignment or padding directives (packing is dense, everywhere);
+  byte-order overrides (little endian, always); anything describing runtime
+  behaviour — caching, threading, I/O, recovery policy; and any type whose
+  width is not derivable from the schema alone, which is why there is no
+  `string` type.
+
+  **When a rule will not fit:** it stays in the specification prose and is
+  hand-written into the validation layer. That is the designed escape valve
+  and using it is not a failure. The moment a proposal needs `if`, the answer
+  is no.
+
 * **Modularity is preserved.** This repository defines structure and
   validation; Iris-Codec implements compression and the user-facing API.
   The cutover is coordinated with Iris-Codec, but the boundary does not
@@ -69,7 +103,7 @@ source of truth for:
 | 2 | `spec/ife_fields.json` + `spec/ife_constants.json` + stdlib spec validator | 1 |
 | 3 | Generator `generator/` (`python -m generator`) → `generated_source/` (gitignored, regenerated at configure) | 2 |
 | 4 | Generated runtime: serialization, deserialization, validation, recovery | 3 |
-| 5 | Spec document pipeline: spec-basis MD + generated sections → LaTeX/HTML | 2 (parallel with 3–4) |
+| 5 | Spec document pipeline: AsciiDoc narrative + generated `include::` files → PDF/HTML | 2 (parallel with 3–4) |
 | 6 | Bindings, tooling, corpus, downstream (Iris-Codec) cutover, release | 4, 5 |
 
 ---
@@ -105,7 +139,7 @@ spec will encode. Broad checklist:
       partitioned ranges and no array bit — see 4.0-A for the four reasons.
 - [x] **Array subsystem — settled (primitives + 4.0-H).** Two array
       primitives, not one: `array` (`STRIDE` + `COUNT`, stride stored because
-      it can vary) and `binary_array` (`COUNT` only, stride intrinsically 1).
+      it can vary) and `byte_array` (`COUNT` only, stride intrinsically 1).
       v1's externally-sliced byte arrays are **kept** as shipped — the
       format is frozen at 1.0. See "Primitive block types".
 - [x] **Field type system — settled.** Vocabulary as shipped: `u8`–`u64`
@@ -567,11 +601,11 @@ made legible:
 | `file_header` | — (root; special by design) | `MAGIC` u32 @0, `RECOVERY` u16 @4 | **6 B** | `FILE_HEADER` only |
 | `block` | — | `VALIDATION` u64 @0, `RECOVERY` u16 @8 | **10 B** | `TILE_TABLE`, `CIPHER`, `METADATA`, `ATTRIBUTES`, `IMAGE_BYTES` |
 | `array` | `block` | `STRIDE` u16 @10, `COUNT` u32 @12 | **16 B** | `LAYER_EXTENTS`, `TILE_OFFSETS`, `ATTRIBUTE_SIZES`, `IMAGES`, `ANNOTATIONS`, `ANNOTATION_GROUP_SIZES` |
-| `binary_array` | `block` | `COUNT` u32 @10 (byte count) | **14 B** | `ATTRIBUTE_BYTES`, `ICC_PROFILE`, `ANNOTATION_BYTES`, `ANNOTATION_GROUP_BYTES` |
+| `byte_array` | `block` | `COUNT` u32 @10 (byte count) | **14 B** | `ATTRIBUTE_BYTES`, `ICC_PROFILE`, `ANNOTATION_BYTES`, `ANNOTATION_GROUP_BYTES` |
 
 Three things this makes obvious that the current schema obscures:
 
-- **`binary_array` carries no `STRIDE` because its stride is intrinsically 1.**
+- **`byte_array` carries no `STRIDE` because its stride is intrinsically 1.**
   Storing it would encode no information. That is why shipped 1.0 omits it,
   and why the current schema's uniform 16-byte array header is a defect
   (4.0-H), not a design improvement.
@@ -583,6 +617,32 @@ Three things this makes obvious that the current schema obscures:
   addressed by its own `TITLE_SIZE`/`IMAGE_SIZE` fields, so it needs neither
   `STRIDE` nor `COUNT`. Classifying it as an array is what pushed those two
   fields from @10/@12 to @16/@18.
+
+**There is no string type, and there never will be.** Every string in IFE is
+a byte range whose length is supplied from outside it — never
+null-terminated, never length-prefixed in place. `ATTRIBUTE_BYTES` holds keys
+and values sliced by `ATTRIBUTE_SIZES`; `ANNOTATION_GROUP_BYTES` holds titles
+sliced by `ANNOTATION_GROUP_SIZES`; `IMAGE_BYTES` holds a label of
+`TITLE_SIZE` bytes. **A string is therefore a `byte_array` region**, and
+character encoding is normative prose, not layout: keys, labels and titles
+are ASCII, attribute values are UTF-8 (`spec/ife_spec.md:297-298`,
+`:324`, `:381`). The layout layer must never gain a `string` type — it would
+have to invent a length or a terminator, and IFE has neither.
+
+Two consequences worth stating, because both are irregularities the format's
+history bequeathed and neither can be tidied under append-only:
+
+- **A `byte_array` is opaque, and its slices are not uniform.**
+  `ATTRIBUTE_BYTES` interleaves ASCII keys with UTF-8 values;
+  `ANNOTATION_GROUP_BYTES` interleaves ASCII titles with packed 24-bit
+  identifiers. So a per-block "encoding" property would be wrong — the
+  encoding belongs to the *slice*, described by the sizes array that cuts it.
+  `ICC_PROFILE` and `ANNOTATION_BYTES` carry no text at all.
+- **Payload length has two mechanisms.** A `byte_array` takes it from
+  `COUNT`; `IMAGE_BYTES` takes it from `TITLE_SIZE + IMAGE_SIZE`. Shipped 1.0
+  does it both ways, so the taxonomy documents the difference rather than
+  forcing one — `IMAGE_BYTES` is a `block` that happens to carry a trailing
+  payload described by its own fields.
 
 **In the schema.** `spec/ife_fields.json` gains a top-level `primitives`
 object: each entry names its `extends` parent (absent for roots) and the
@@ -633,6 +693,43 @@ property carrying the version in which it was retired (alongside the existing
 Nothing in the schema is deprecated today; the mechanism is specified now so
 the first retirement is a schema edit rather than a design discussion.
 
+**Deliberate silence — saying "we are not specifying this", out loud.** A
+specification that is silent about something cannot distinguish *not decided
+yet* from *decided not to decide* from *somebody forgot*. All three read as a
+blank cell. The schema therefore carries an `unspecified` property, on a
+field or a block, drawn from a closed vocabulary of three — no expression
+syntax, so this stays inside the cap; it is documentation, not behaviour:
+
+| Value | Means | Example |
+|---|---|---|
+| `reserved` | The slot exists and is claimed. Encoders write nothing; readers ignore it; meaning is deferred to a future version. | `CIPHER` |
+| `external` | The bytes are meaningful, but another authority defines them — a different standard, or a value elsewhere in this file. Requires `specified_by` naming that authority. | `ICC_PROFILE` (the ICC specification), `ANNOTATION_BYTES` (whichever `annotation_types` value the entry declares) |
+| `implementation` | The encoder chooses freely and IFE declines to constrain it. | — none today |
+
+Every use requires prose saying **why** — silence without a reason is the
+thing this mechanism exists to abolish. Its effects:
+
+- **Layout is untouched.** An `unspecified` field keeps its type, width and
+  offset and contributes to every cumulative size, exactly as a `deprecated`
+  one does. This records intent, never bytes.
+- **Readers still get accessors** — the bytes are present and a caller may
+  legitimately want them. `reserved` fields get no `CreateInfo` member and
+  `store()` writes zero.
+- **The validation layer must not flag them.** This is the point: an
+  unspecified region has no conformance rules to violate, and a layer that
+  complains about one is broken. Without the marker the layer would have to
+  guess, and guessing would make deliberate silence indistinguishable from
+  non-conformance.
+- **The document renders it explicitly** — "Reserved" or "Not specified by
+  this document; see <authority>" rather than an empty cell, so a reader can
+  tell a deliberate gap from an oversight without asking anyone.
+
+Applied today to `CIPHER` (`reserved`), and to `ICC_PROFILE` and
+`ANNOTATION_BYTES` (`external`). `IMAGE_BYTES` is deliberately *not* marked:
+its payload is part specified (an ASCII label of `TITLE_SIZE` bytes) and part
+external (the compressed stream), so a block-level marker would overclaim —
+prose covers it instead.
+
 #### 4.0-H — Wire-format parity correction (BLOCKING: do before 4.1)
 
 Every divergence above is a bug in the spec JSON. Until this lands, the
@@ -656,7 +753,7 @@ generated layer would silently produce unreadable files.
      `file_header` primitive's `MAGIC` + `RECOVERY`.
   3. `IMAGE_BYTES` becomes `primitive: "block"` with `TITLE_SIZE` +
      `IMAGE_SIZE`; the four byte-blob blocks become
-     `primitive: "binary_array"`.
+     `primitive: "byte_array"`.
   4. `generator/model/layout.py`: `derive_layout` currently prepends
      `block_header_fields` to **every** block unconditionally and always adds
      `STRIDE`+`COUNT` to arrays. Replace both with a generic walk of the
@@ -1182,8 +1279,12 @@ must already exist, or adding it later breaks the ABI.
      borrowed from Vulkan.
   2. Add normative clauses to `spec/ife_fields.json` per field — the
      `shall`/`should`/`may` tagging Phase 2 already calls for, carrying the
-     predicate (range, enum membership, monotonicity) and the spec section
-     reference.
+     predicate and the spec section reference. **Predicates come from the
+     capped vocabulary only** (range, enum membership, ordering, non-null;
+     see "The schema is capped, permanently" in the guiding principles).
+     There is no expression syntax and there must never be one. A rule that
+     will not fit stays as prose and is hand-written into the layer — that
+     is the designed escape valve, not a shortfall.
   3. Emit the layer implementation from those clauses into
      `generated_source/IFE_Validation.cpp` — register it in
      `generator/pipeline.py::_render` exactly as 4.2b registers
@@ -1203,25 +1304,50 @@ with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
 
-## Phase 5 — Specification document pipeline
+## Phase 5 — Specification document pipeline (AsciiDoc)
 
-- [ ] **Spec-basis document** (`spec/basis/*.md`): hand-written narrative —
-      purpose, terms, technical requirements, sentinel semantics
-      (`NULL_OFFSET` etc.), figures, worked examples — with explicit
-      insertion anchors for generated content.
-- [ ] **Doc emitter in `generator/`** (or sibling tool): renders enumeration
-      tables, per-block layout tables (with *derived* offsets), entry
-      layouts, and normative clause lists from the JSON.
-- [ ] **Assembly to LaTeX** reproducing the professional structure of the
-      ratified v1.0 document (contents, revision history, numbered sections,
-      figure references); HTML output as a second target from the same
-      assembly.
+**Toolchain decision: AsciiDoc via Asciidoctor, with its native `include::`
+directive — not Markdown with a bespoke `{{...}}` anchor syntax.** Custom
+anchors mean writing and maintaining a preprocessor that will only grow,
+while AsciiDoc's include mechanism already does the interleaving and brings
+numbered sections, cross-references, figure and table captions, admonitions,
+a table of contents, and PDF plus HTML output from one source. This is how
+Khronos builds the Vulkan specification: `vk.xml` generates AsciiDoc include
+files that the hand-written narrative pulls in, and the same sources produce
+the published document and the reference pages. Reproducing "the
+professional structure of the ratified v1.0 document" is precisely what that
+toolchain exists for; Markdown plus a homegrown templating layer is the
+harder road to the same place.
+
+- [ ] **Convert the narrative** `spec/ife_spec.md` → `spec/ife_spec.adoc`:
+      headings, lists, tables, and normative shall/should/may prose. Replace
+      each `{{...}}` anchor with an `include::` of the corresponding
+      generated file. Nothing about the *content* changes in this step — it
+      is a format conversion, reviewed as one.
+- [ ] **Re-target the doc emitter.** `generator/emit/docs.py` currently
+      writes a single `generated_docs/layout_tables.md`. AsciiDoc includes
+      work best fine-grained, as Vulkan's do: emit **one file per item** —
+      per block layout, per enumeration, per shared structure — so the
+      narrative includes exactly what it needs where it needs it, and a
+      moved section does not drag unrelated tables with it. Register the
+      new outputs in `generator/pipeline.py::_render`; `--check` then covers
+      them automatically.
+- [ ] **Assembly**: `asciidoctor-pdf` for the published document,
+      `asciidoctor` for HTML, from the same source. Carry the document
+      furniture the ratified v1.0 has — contents, revision history, numbered
+      sections, figure references — as AsciiDoc attributes rather than
+      hand-maintained text.
+- [ ] **Record provenance in the document itself.** The published PDF states
+      the spec version *and the generator version that produced it*. A
+      ratified document that cannot be reproduced years later is not
+      reproducible in any useful sense — and the generator is now part of the
+      standard, not merely a build tool.
 - [ ] **CI docs build** so a schema change that breaks the document fails
-      before merge; versioned artifacts (draft watermark until
-      ratification).
+      before merge; draft watermark until ratification.
 
-**Exit:** `make spec` (or equivalent) produces the complete draft PDF
-from basis-MD + JSON with zero hand-edited layout content.
+**Exit:** one command produces the complete draft PDF and HTML from
+`ife_spec.adoc` + the JSON, with zero hand-written layout content and no
+custom preprocessor in the pipeline.
 
 ## Phase 6 — Ecosystem cutover & release
 

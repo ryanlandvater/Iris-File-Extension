@@ -9,7 +9,63 @@ the HTML documentation (`generated_docs`):
 |------|------|
 | `ife_fields.json` | **Byte structure only.** The type vocabulary and, for the preamble / universal block header / array header / every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
 | `ife_constants.json` | **Values.** Statically defined values (sentinels) and every enumeration — recovery codes, tile encodings, pixel formats, metadata formats, annotation types, image encodings, orientations — with per-value descriptions and errata. |
-| `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` anchors mark where generated tables are interleaved at document build time. |
+| `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** Phase 5 converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::` — see MIGRATION.md Phase 5 for why a bespoke anchor syntax was rejected. |
+
+## What may never enter the schema
+
+These documents describe **what a byte is**. They never describe what a
+program should **do**. The boundary is fixed; treat a proposal to widen it as
+a design error rather than a feature request.
+
+**Allowed:** field name, scalar type or enum reference, introducing version,
+offset linkage (`points_to`/`nullable`), a constant a field always holds, the
+primitive a block derives from, its recovery tag, documentation
+(`description`, `errata`, `deprecated`), and validation predicates from a
+closed vocabulary — range, enum membership, ordering, non-null.
+
+**Never:** expressions or arithmetic · conditionals of any kind (no field may
+depend on another field's value for its presence, type or width) · computed
+lengths (a length is a field, or `STRIDE`/`COUNT`) · literal offsets or sizes
+· alignment or padding directives · byte-order overrides · anything about
+runtime behaviour · any type whose width is not derivable from the schema
+alone.
+
+A rule that will not fit belongs in `ife_spec.adoc` as prose, hand-written
+into the validation layer. That is the intended escape valve. If a proposal
+needs `if`, the answer is no.
+
+## Saying "we are not specifying this"
+
+A blank in a specification is ambiguous: not decided yet, decided not to
+decide, or forgotten. Mark the second case explicitly with `unspecified` on a
+field or block — one of three values, always with prose saying why:
+
+* `reserved` — the slot is claimed, encoders write nothing, meaning is
+  deferred to a future version (`CIPHER`).
+* `external` — another authority defines these bytes; add `specified_by`
+  naming it (`ICC_PROFILE` → the ICC specification; `ANNOTATION_BYTES` →
+  whichever `annotation_types` value the entry declares).
+* `implementation` — the encoder chooses; IFE declines to constrain it.
+
+It changes no layout: the field keeps its type, width and offset. It tells
+the validation layer there is nothing here to enforce, and it makes the
+published document say "Reserved" or "Not specified by this document" instead
+of leaving a cell empty.
+
+## Strings
+
+**There is no string type.** Every string in IFE is a byte range whose length
+comes from a size field elsewhere — never null-terminated, never
+length-prefixed in place. Keys and values live in `ATTRIBUTE_BYTES` sliced by
+`ATTRIBUTE_SIZES`; group titles live in `ANNOTATION_GROUP_BYTES` sliced by
+`ANNOTATION_GROUP_SIZES`; an image label is the first `TITLE_SIZE` bytes of
+`IMAGE_BYTES`. A string is therefore a **byte array** (stride 1), and its
+character encoding — ASCII for keys, labels and titles; UTF-8 for attribute
+values — is normative prose in `ife_spec.md`, not layout.
+
+Do not add a `string` entry to the `types` table. A layout type must have a
+width derivable from the schema alone, and a string does not: it would have
+to invent either a length prefix or a terminator, neither of which IFE has.
 
 ## Document organization (`// MARK:` banners)
 
@@ -74,14 +130,23 @@ Two kinds of top-level entry, and the distinction is load-bearing:
   `enum class : float`. Reach for an enumeration only when the value domain is
   genuinely closed.
 
-## `ife_spec.md` anchors
+## `ife_spec.md` insertion markers (provisional)
 
-| Anchor | Renders |
-|--------|---------|
+These mark where generated content belongs. They are **placeholders, not a
+supported syntax** — no preprocessor implements them, and Phase 5 replaces
+each with an Asciidoctor `include::` of the corresponding generated file. Do
+not build tooling against them.
+
+| Marker | Will include |
+|--------|--------------|
 | `{{preamble}}`, `{{block_header}}`, `{{array_header}}` | Shared structure layout tables |
 | `{{layout:BLOCK}}` | Derived block layout table (parameter, type, derived offset, value/linkage) |
 | `{{entry_layout:BLOCK}}` | Derived entry layout table for an array block |
 | `{{constants:group}}` | Value table for a constants group |
+
+Keep one marker per generated table rather than one per section: Phase 5
+emits fine-grained include files so the narrative pulls in exactly what it
+needs, and moving a section never drags unrelated tables along.
 
 ## Design decisions embedded in this draft (awaiting ratification)
 
