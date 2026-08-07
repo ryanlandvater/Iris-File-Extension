@@ -809,53 +809,50 @@ The original task description follows, for the record.
   the hand-written layer in Phase 6, having served as the parity gate for the
   whole migration.
 
-#### 4.1 — `src/IFE_Bytes.hpp` — load/store primitives (hand-written, header-only)
+#### 4.1 — `src/IFE_Bytes.hpp` — load/store primitives — ✅ DONE
 
-The only place byte order and packed widths appear. Small, stable, exhaustively
-tested; everything above it is generated.
+Header-only, `namespace IFE`, self-contained (it includes `IrisTypes.hpp` and
+`IrisCodecTypes.hpp` itself rather than inheriting v1's include-order
+fragility). Covers every width in `_TYPE_WIDTH`: `load<T>`/`store<T>` for the
+whole-width scalars, `load_u24`/`store_u24`, `load_u40`/`store_u40`, and
+`load_f16`/`store_f16`. Gated by `tests/ife_bytes_tests.cpp`.
 
-- **v1 precedent — read this first, it is the working implementation:**
-  `src/IrisCodecExtension.cpp:111-118` (`load_unaligned` / `store_unaligned`
-  — the `memcpy` + `is_trivially_copyable_v` pattern to keep) and `:125-177`
-  (the full `LOAD_*` / `STORE_*` set). That block is the complete list of
-  operations the new header must cover — one named entry point per width,
-  loads and stores, integers and floats. Reproduce its *coverage* and its
-  naming intent; fix the three defects below rather than transcribing it.
-- **Read first (in addition):** `src/IFE_Memory.hpp` (naming and header
-  conventions for a hand-written `IFE_` header — this repo's own template
-  for what 4.1 is writing); `generator/model/layout.py:24-45` (`_TYPE_WIDTH`
-  / `_TYPE_CPP` — the exact type vocabulary that must be covered).
-- **Write** `src/IFE_Bytes.hpp`, namespace `IFE`. Per decision 4.0-C it uses
-  the **Iris** scalar types (`BYTE`, `Offset`, `Size`) and declares no aliases
-  of its own; include the Iris header that defines them directly rather than
-  relying on include order (see 4.0-C). Beyond that, includes are limited to
-  `<bit>`, `<cstddef>`, `<cstdint>`, `<cstring>`, `<type_traits>`. It provides
-  a `load<T>` / `store<T>` pair covering every width in `_TYPE_WIDTH`, plus
-  explicit `load_u24` / `store_u24` / `load_u40` / `store_u40` for the packed
-  widths.
-- **Rules, each of which fixes a specific v1 defect:**
-  1. **Read exactly the field width.** `load_u40` `memcpy`s **5** bytes into a
-     zeroed `uint64_t`; `load_u24` `memcpy`s **3** into a zeroed `uint32_t`.
-     v1 reads 8 and 4 respectively and masks (`IrisCodecExtension.cpp:128,132`)
-     — a 3-byte over-read past the field, which for the last `TILE_OFFSETS`
-     entry of a file is a read past EOF.
-  2. **Byte order at compile time.** `if constexpr (std::endian::native ==
-     std::endian::big)` + `std::byteswap`-equivalent. v1 dispatches every load
-     through a `static std::function` (`IrisCodecExtension.cpp:166-177`): an
-     indirect call per field access plus a static-initialization-order hazard.
-     No `std::function` in this header.
-  3. **Correct masks.** v1's `__BE_LOAD_U24` masks with `U40_MASK`
-     (`IrisCodecExtension.cpp:133`) — wrong width, big-endian only. Do not
-     carry it forward.
-  4. `float`/`double` go through `std::bit_cast` from the byte-order-corrected
-     integer. Keep v1's non-IEC559 fallbacks **out** of this header — add a
-     `static_assert(std::numeric_limits<float>::is_iec559)` instead, and if a
-     non-IEEE target ever appears, that assert is the single place to extend.
-  5. Every function `noexcept`, `[[nodiscard]]` on loads, no allocation, no
-     aliasing UB (`memcpy` only, never a reinterpret-cast dereference).
-- **Done when:** `tests/ife_bytes_tests.cpp` (4.5) passes, and
-  `c++ -std=c++20 -fsyntax-only src/IFE_Bytes.hpp` succeeds with no other
-  include path.
+All three v1 defects are fixed and each is documented at the function that
+replaces it:
+
+- **Over-read.** v1 read a `u24` by loading four bytes and masking, a `u40` by
+  loading eight (`src/IrisCodecExtension.cpp:128,132`). These read exactly 3
+  and exactly 5.
+- **Runtime dispatch.** v1 chose byte order through `static std::function`
+  objects (`:166-177`). Replaced by `if constexpr`; `std::byteswap` is C++23,
+  so the swaps are hand-written `constexpr`.
+- **Wrong mask.** v1's big-endian `u24` reader masked with `U40_MASK`
+  (`:133`). Not carried forward.
+
+`f16` is implemented rather than rejected (decision 4.0-E): `half_to_float`
+is exact for all 65,536 inputs including subnormals, infinities and NaN
+payloads; `float_to_half` rounds to nearest, ties to even. The paired
+generator change shipped with it — `_TYPE_CPP["f16"]` is now `float`, and
+`emit_constants_header` decodes `f16` sentinels to float literals, so
+`ORIENTATION_90` emits as `90.0f` with its wire value (`0x55A0`) preserved in
+the doc comment. An `f16` **enum underlying type** now raises `SpecError`
+naming why: C++ has no `enum class : float`.
+
+**A test-design correction worth keeping.** The first version of the
+over-read test used guard bytes and passed *even with v1's defect
+reintroduced* — guard bytes prove nothing was **written** out of bounds, but
+an over-read lands inside the same buffer and is then masked away invisibly.
+That is precisely how the defect survived in v1 for years. Detecting it needs
+the field to end where the allocation ends: `test_packed_loads_do_not_over_read`
+heap-allocates exactly 3 and exactly 5 bytes, so a fourth or sixth byte is
+genuinely not ours. Under `-fsanitize=address` restoring v1's behaviour
+aborts with `READ of size 4` naming `IFE::load_u24`; without a sanitizer the
+same test is an ordinary passing round-trip.
+
+**The sanitizer job is therefore load-bearing, not optional hygiene** — it is
+the only thing standing between this class of bug and a silent return. 4.5's
+CI item must build the test targets with `-fsanitize=address,undefined`, not
+just the corruption tests.
 
 #### 4.2 — `generated_source/IFE_Blocks.hpp` — generated block I/O
 
@@ -1238,8 +1235,7 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
       FATAL_ERROR unless `IFE_USE_FASTFHIR_SUBSTRATE=ON`. The generated-layer
       tests do not need `IFE_Memory` — move that requirement onto the
       `ife_memory_tests` target alone.
-- [ ] `tests/ife_bytes_tests.cpp` (gates 4.1) — v1 source:
-      `src/IrisCodecExtension.cpp:125-177`. Round-trip every width
+- [x] `tests/ife_bytes_tests.cpp` (gates 4.1) — **done.** Round-trip every width
       including `u24`/`u40` at boundary values (0, 1, max, max-1) and at
       unaligned addresses; assert `load_u40` touches exactly 5 bytes by
       placing the field at the end of a guarded buffer.
@@ -1323,7 +1319,7 @@ must already exist, or adding it later breaks the ABI.
   attached.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
-**4.1 (next)** → 4.2a → 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
+~~4.1 (primitives)~~ → **4.2a (next)** → 4.2a → 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.

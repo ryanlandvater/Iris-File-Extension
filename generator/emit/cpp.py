@@ -6,6 +6,7 @@ so CI can diff-check regeneration.
 """
 from __future__ import annotations
 
+import struct
 from typing import Any
 
 from ..model.layout import FieldLayout, LayoutResult, SpecError, _TYPE_CPP, _canonical_type, is_banner, parse_int, version_key
@@ -30,6 +31,18 @@ def _value_display(value: Any) -> str:
     if isinstance(value, str) and value.lower().startswith("0x"):
         return value
     return str(parse_int(value))
+
+
+def _half_literal(bits: int) -> str:
+    """Decode an IEEE binary16 bit pattern into a C++ float literal.
+
+    The spec stores half floats as their on-wire bit pattern, which is the
+    right thing for a byte-layout document. Emitting that integer as a float
+    constant would be silently wrong — 0x55A0 is 90.0 degrees, not 21920 —
+    and the error would only surface as a comparison that never matches.
+    """
+    value = struct.unpack("<e", struct.pack("<H", bits))[0]
+    return f"{value!r}f"
 
 
 def _cpp_of(type_name: str, types: dict[str, Any]) -> str:
@@ -73,6 +86,12 @@ def emit_constants_header(doc: dict[str, Any], types: dict[str, Any]) -> str:
         # resolved. Looking underlying_type up in _TYPE_CPP directly made the
         # same word behave two ways: "type": "recovery" worked, while
         # "underlying_type": "recovery" raised.
+        if _canonical_type(underlying, types) == "f16":
+            raise SpecError(
+                f"enum group {group_name!r} has underlying_type 'f16'; C++ has no "
+                "'enum class : float'. A set of named values over a continuous "
+                "domain belongs in statically_defined_values, not an enumeration."
+            )
         cpp = _cpp_of(underlying, types)
 
         members: list[tuple[str, str, str, str | None]] = []
@@ -108,7 +127,14 @@ def emit_constants_header(doc: dict[str, Any], types: dict[str, Any]) -> str:
             out.extend(_comment(entry.get("description", ""), "///"))
             if entry.get("errata"):
                 out.extend(_comment(f"errata: {entry['errata']}"))
-            out.append(f"inline constexpr {_cpp_of(entry['type'], types)} {name} = {_value_display(entry['value'])};")
+            canonical = _canonical_type(entry["type"], types)
+            if canonical == "f16":
+                bits = parse_int(entry["value"])
+                out.append(f"/// Wire value: {_value_display(entry['value'])} (IEEE binary16).")
+                literal = _half_literal(bits)
+            else:
+                literal = _value_display(entry["value"])
+            out.append(f"inline constexpr {_cpp_of(entry['type'], types)} {name} = {literal};")
 
     out += ["", "} // namespace constants", "} // namespace IFE", "", "#endif // IFE_Constants_hpp", ""]
     return "\n".join(out)

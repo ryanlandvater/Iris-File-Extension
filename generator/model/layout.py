@@ -39,7 +39,10 @@ _TYPE_CPP: dict[str, str] = {
     "u32": "std::uint32_t",
     "u40": "std::uint64_t",
     "u64": "std::uint64_t",
-    "f16": "std::uint16_t",
+    # f16 has no C++20 type. It widens to float on load and narrows on store
+    # (IFE_Bytes.hpp: load_f16 / store_f16); the wire width stays 2 bytes,
+    # which _TYPE_WIDTH above records separately.
+    "f16": "float",
     "f32": "float",
     "f64": "double",
 }
