@@ -1,0 +1,14 @@
+{
+  "// MARK: - SPECIFICATION IDENTITY": "Who this specification is, what version it is, and the terms it is published under. Held in one document because it belongs to neither the layout nor the constants: both describe the same specification, and a version or copyright stated twice is a version or copyright that can disagree with itself.",
+
+  "name": "Iris File Extension",
+  "abbreviation": "IFE",
+
+  "// MARK: - VERSION": "The specification version, emitted as IFE_SCHEMA_VERSION_MAJOR / _MINOR. Every field's 'since' label is bounded by this: a version group newer than the document is a spec error. Append-only is inviolable, so a bump never invalidates a file written under an earlier one.",
+  "version": { "major": 1, "minor": 0 },
+  "status": "draft",
+
+  "// MARK: - PUBLICATION": "Legal terms, reproduced verbatim into generated file banners and the published document. The single source for both.",
+  "copyright": "Copyright 2025-2026 Iris Developers",
+  "license": "CC BY-ND 4.0"
+}

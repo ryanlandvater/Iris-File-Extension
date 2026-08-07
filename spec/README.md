@@ -1,12 +1,13 @@
 # IFE Specification Source (`spec/`)
 
-The Iris File Extension is specified by three documents that together are the
+The Iris File Extension is specified by four documents that together are the
 **single source of truth** for the C++ serialization layer
 (`generator/` → `generated_source/`), the LaTeX specification document, and
 the HTML documentation (`generated_docs`):
 
 | File | Role |
 |------|------|
+| `ife_header.json` | **Specification identity.** Name, version, status, copyright, licence — stated **once**. It belongs to neither the layout nor the constants, and a version or copyright written in two files is one that can disagree with itself. Generated file banners and `IFE_SCHEMA_VERSION_MAJOR`/`_MINOR` both come from here. |
 | `ife_fields.json` | **Byte structure only.** The type vocabulary, the primitive block types, and for every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
 | `ife_constants.json` | **Values.** Statically defined values (sentinels) and every enumeration — recovery codes, tile encodings, pixel formats, metadata formats, annotation types, image encodings, orientations — with per-value descriptions and errata. |
 | `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** Phase 5 converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::` — see MIGRATION.md Phase 5 for why a bespoke anchor syntax was rejected. |
@@ -33,6 +34,30 @@ alone.
 A rule that will not fit belongs in `ife_spec.adoc` as prose, hand-written
 into the validation layer. That is the intended escape valve. If a proposal
 needs `if`, the answer is no.
+
+## Checking the documents
+
+`python3 -m generator --validate` runs before every generation and in CI. It
+catches what layout derivation does not care about but a *file* does:
+
+* **Recovery-tag conflicts** — two blocks sharing a tag, an unknown tag, a tag
+  no block claims, and the ceiling: the sequence is the low byte of `0x55xx`,
+  so **256 tags is the hard limit**. Tag 256 would be `0x5600`, changing the
+  prefix that keeps the corruption scan's false-positive rate acceptable.
+  Passing that point is a decision to admit a second prefix, not a routine
+  addition.
+* **Enum value conflicts** — two members aliasing one value.
+* **Types** — every `type` and `underlying_type` resolves through the alias
+  chain to something the generator can emit, declared widths agree with the
+  emitted ones, no alias cycles, and no floating-point enum (C++ has no
+  `enum class : float`).
+* **Dangling references** — `points_to`, `enum`, `primitive`, `extends`.
+* **Ordering** — block order matches recovery-tag order. Tag values are
+  positional and therefore on the wire; a reorder redefines every file already
+  written, and this is the check that makes deriving them safe.
+
+Recovery-tag **values are never authored**. Each is `0x5500` plus its position,
+assigned by the generator. Writing one by hand is itself an error.
 
 ## Saying "we are not specifying this"
 

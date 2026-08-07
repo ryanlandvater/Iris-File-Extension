@@ -13,17 +13,22 @@ from pathlib import Path
 from .emit.cpp import emit_constants_header, emit_vtables_header
 from .emit.docs import emit_layout_markdown
 from .model.layout import LayoutResult, derive_layout
+from .validate import validate
 
 _CPP_ROOT = "generated_source"
 _DOCS_ROOT = "generated_docs"
 
 
-def _render(fields_doc: dict, constants_doc: dict) -> tuple[dict[str, str], LayoutResult]:
+def _render(
+    fields_doc: dict, constants_doc: dict, header: dict
+) -> tuple[dict[str, str], LayoutResult]:
     """Render every output: relative path -> content (byte-stable)."""
     layout = derive_layout(fields_doc, constants_doc)
     outputs = {
-        f"{_CPP_ROOT}/IFE_Constants.hpp": emit_constants_header(constants_doc, fields_doc.get("types", {})),
-        f"{_CPP_ROOT}/IFE_VTables.hpp": emit_vtables_header(layout),
+        f"{_CPP_ROOT}/IFE_Constants.hpp": emit_constants_header(
+            constants_doc, fields_doc.get("types", {}), header
+        ),
+        f"{_CPP_ROOT}/IFE_VTables.hpp": emit_vtables_header(layout, header),
         f"{_DOCS_ROOT}/layout_tables.md": emit_layout_markdown(layout),
     }
     return outputs, layout
@@ -61,13 +66,39 @@ def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> int:
     return 0
 
 
-def run(schema_dir: Path, out_dir: Path, docs_dir: Path, check: bool = False) -> int:
+def run(
+    schema_dir: Path,
+    out_dir: Path,
+    docs_dir: Path,
+    check: bool = False,
+    validate_only: bool = False,
+) -> int:
     fields_path = schema_dir / "ife_fields.json"
     constants_path = schema_dir / "ife_constants.json"
+    header_path = schema_dir / "ife_header.json"
     try:
         fields_doc = json.loads(fields_path.read_text())
         constants_doc = json.loads(constants_path.read_text())
-        outputs, layout = _render(fields_doc, constants_doc)
+        header = json.loads(header_path.read_text())
+    except (OSError, ValueError) as exc:
+        print(f"generator: {exc}", file=sys.stderr)
+        return 2
+
+    # Consistency before derivation: a dangling reference or a tag conflict
+    # produces a clearer message here than a SpecError from the middle of
+    # layout computation, and some conflicts derivation never notices at all.
+    problems = validate(fields_doc, constants_doc, header)
+    for problem in problems:
+        print(f"generator: {problem}", file=sys.stderr)
+    if problems:
+        print(f"generator: {len(problems)} consistency problem(s)", file=sys.stderr)
+        return 1
+    if validate_only:
+        print("generator: spec documents are consistent")
+        return 0
+
+    try:
+        outputs, layout = _render(fields_doc, constants_doc, header)
     except (OSError, ValueError) as exc:
         print(f"generator: {exc}", file=sys.stderr)
         return 2

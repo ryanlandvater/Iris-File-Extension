@@ -1,14 +1,4 @@
 {
-  "// MARK: - DOCUMENT IDENTITY": "Name and version of the specification these constants belong to. Must match ife_fields.json byte for byte.",
-  "spec": {
-    "name": "Iris File Extension",
-    "abbreviation": "IFE",
-    "version": { "major": 1, "minor": 0 },
-    "status": "draft",
-    "copyright": "Copyright 2025-2026 Iris Developers",
-    "license": "CC BY-ND 4.0"
-  },
-
   "// MARK: - STATICALLY DEFINED VALUES": "Sentinels and named convenience constants. Each carries its own type; this is not an enumeration.",
   "statically_defined_values": {
     "description": "Constants defined by the specification and reserved for use in the designated contexts. Null-type constants indicate an optional data-element is not present and should be used to indicate an unused optional parameter rather than creating a data-block with zero entries.",
@@ -81,23 +71,23 @@
     "underlying_type": "u16",
     "ife_version": {
       "1.0": {
-        "RECOVER_UNDEFINED": { "value": "0x5500", "description": "Reserved sentinel marking an undefined block type. Never written to a file; a scan that finds it has found corruption, not a block." },
-        "RECOVER_FILE_HEADER": { "value": "0x5501", "description": "Tags the FILE_HEADER block at byte 0, the root of the file structure." },
-        "RECOVER_TILE_TABLE": { "value": "0x5502", "description": "Tags the TILE_TABLE block holding the information needed to reconstruct the slide image." },
-        "RECOVER_CIPHER": { "value": "0x5503", "description": "Tags the CIPHER block, reserved for future Iris Codec use." },
-        "RECOVER_METADATA": { "value": "0x5504", "description": "Tags the METADATA block holding encoder identity and the optional-structure offsets." },
-        "RECOVER_ATTRIBUTES": { "value": "0x5505", "description": "Tags the ATTRIBUTES block heading the key-value metadata arrays." },
-        "RECOVER_LAYER_EXTENTS": { "value": "0x5506", "description": "Tags the LAYER_EXTENTS array of pyramidal layer dimensions." },
-        "RECOVER_TILE_OFFSETS": { "value": "0x5507", "description": "Tags the TILE_OFFSETS array locating each compressed tile stream." },
-        "RECOVER_ATTRIBUTE_SIZES": { "value": "0x5508", "description": "Tags the ATTRIBUTE_SIZES array of slicing tuples for the attribute byte array." },
-        "RECOVER_ATTRIBUTE_BYTES": { "value": "0x5509", "description": "Tags the ATTRIBUTE_BYTES byte array holding packed key and value strings." },
-        "RECOVER_IMAGES": { "value": "0x550A", "description": "Tags the IMAGES array of associated (ancillary) image entries." },
-        "RECOVER_IMAGE_BYTES": { "value": "0x550B", "description": "Tags an IMAGE_BYTES block holding one associated image's label and compressed stream." },
-        "RECOVER_ICC_PROFILE": { "value": "0x550C", "description": "Tags the ICC_PROFILE byte array holding a colour profile verbatim." },
-        "RECOVER_ANNOTATIONS": { "value": "0x550D", "description": "Tags the ANNOTATIONS array of on-slide annotation entries." },
-        "RECOVER_ANNOTATION_BYTES": { "value": "0x550E", "description": "Tags an ANNOTATION_BYTES byte array holding one annotation's visual-object stream." },
-        "RECOVER_ANNOTATION_GROUP_SIZES": { "value": "0x550F", "description": "Tags the ANNOTATION_GROUP_SIZES array of slicing tuples for the group byte array." },
-        "RECOVER_ANNOTATION_GROUP_BYTES": { "value": "0x5510", "description": "Tags the ANNOTATION_GROUP_BYTES byte array holding group titles and member identifiers." }
+        "RECOVER_UNDEFINED": { "value": 0, "description": "Reserved sentinel marking an undefined block type. Never written to a file; a scan that finds it has found corruption, not a block." },
+        "RECOVER_FILE_HEADER": { "value": 1, "description": "Tags the FILE_HEADER block at byte 0, the root of the file structure." },
+        "RECOVER_TILE_TABLE": { "value": 2, "description": "Tags the TILE_TABLE block holding the information needed to reconstruct the slide image." },
+        "RECOVER_CIPHER": { "value": 3, "description": "Tags the CIPHER block, reserved for future Iris Codec use." },
+        "RECOVER_METADATA": { "value": 4, "description": "Tags the METADATA block holding encoder identity and the optional-structure offsets." },
+        "RECOVER_ATTRIBUTES": { "value": 5, "description": "Tags the ATTRIBUTES block heading the key-value metadata arrays." },
+        "RECOVER_LAYER_EXTENTS": { "value": 6, "description": "Tags the LAYER_EXTENTS array of pyramidal layer dimensions." },
+        "RECOVER_TILE_OFFSETS": { "value": 7, "description": "Tags the TILE_OFFSETS array locating each compressed tile stream." },
+        "RECOVER_ATTRIBUTE_SIZES": { "value": 8, "description": "Tags the ATTRIBUTE_SIZES array of slicing tuples for the attribute byte array." },
+        "RECOVER_ATTRIBUTE_BYTES": { "value": 9, "description": "Tags the ATTRIBUTE_BYTES byte array holding packed key and value strings." },
+        "RECOVER_IMAGES": { "value": 10, "description": "Tags the IMAGES array of associated (ancillary) image entries." },
+        "RECOVER_IMAGE_BYTES": { "value": 11, "description": "Tags an IMAGE_BYTES block holding one associated image's label and compressed stream." },
+        "RECOVER_ICC_PROFILE": { "value": 12, "description": "Tags the ICC_PROFILE byte array holding a colour profile verbatim." },
+        "RECOVER_ANNOTATIONS": { "value": 13, "description": "Tags the ANNOTATIONS array of on-slide annotation entries." },
+        "RECOVER_ANNOTATION_BYTES": { "value": 14, "description": "Tags an ANNOTATION_BYTES byte array holding one annotation's visual-object stream." },
+        "RECOVER_ANNOTATION_GROUP_SIZES": { "value": 15, "description": "Tags the ANNOTATION_GROUP_SIZES array of slicing tuples for the group byte array." },
+        "RECOVER_ANNOTATION_GROUP_BYTES": { "value": 16, "description": "Tags the ANNOTATION_GROUP_BYTES byte array holding group titles and member identifiers." }
       }
     }
   },

@@ -48,6 +48,13 @@ _TYPE_CPP: dict[str, str] = {
 }
 
 
+# Recovery tags are the 0x55 high byte plus a positional sequence. The prefix
+# is what makes a false positive unlikely during a corruption scan: a u16 that
+# happens to equal its own offset AND begins 0x55 is rare. Named here because
+# both the emitter and the validator depend on it.
+RECOVERY_PREFIX = 0x5500
+
+
 class SpecError(ValueError):
     """The spec JSON violates a derivation invariant; message names the value."""
 
@@ -162,10 +169,12 @@ class ConstantsIndex:
         sentinels: dict[str, dict[str, Any]] = {}
         for version_entries in doc.get("statically_defined_values", {}).get("ife_version", {}).values():
             sentinels.update(version_entries)
+        # Prefix plus the authored sequence number, matching the emitter.
         recovery_values: dict[str, int] = {}
         for version_entries in doc.get("recovery_codes", {}).get("ife_version", {}).values():
             for name, raw in version_entries.items():
-                recovery_values[name] = parse_int(raw["value"] if isinstance(raw, dict) else raw)
+                sequence = raw["value"] if isinstance(raw, dict) else raw
+                recovery_values[name] = RECOVERY_PREFIX + parse_int(sequence)
         return cls(groups=groups, sentinels=sentinels, recovery_values=recovery_values)
 
 

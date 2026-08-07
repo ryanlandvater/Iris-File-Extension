@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory to write generated documentation into (default: generated_docs/)",
     )
     parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Check the spec documents for conflicts and dangling references (exit 1 on any)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Verify outputs match a fresh regeneration (exit 1 on drift)",
@@ -51,6 +56,7 @@ def main(argv=None) -> int:
         out_dir=Path(args.out_dir),
         docs_dir=Path(args.docs_dir),
         check=args.check,
+        validate_only=args.validate,
     )
 
 

@@ -1,10 +1,4 @@
 {
-  "// MARK: - DOCUMENT IDENTITY": "Name and version of the specification this layout belongs to. Must match ife_constants.json byte for byte.",
-  "spec": {
-    "name": "Iris File Extension",
-    "version": { "major": 1, "minor": 0 }
-  },
-
   "// MARK: - TYPE VOCABULARY": "Every scalar width the format may use, plus alias chains. Dense packing, always little endian on disk; no field is ever padded for alignment.",
   "types": {
     "u8":  { "bits": 8,  "kind": "unsigned" },
