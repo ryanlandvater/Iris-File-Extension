@@ -161,8 +161,8 @@ spec will encode. Broad checklist:
       rather than bolted onto each block.
 - [x] **Concurrency & write model — settled (4.0-F): out of scope for this
       repository.** Concurrent encoding is the Iris Codec's concern; the spec
-      says nothing about it and it implies nothing on disk. `IFE_Memory` is
-      scheduled for deletion at Phase 4 exit.
+      says nothing about it and it implies nothing on disk. The `IFE_Memory`
+      VMA substrate was deleted — encoding is the Iris Codec's concern (4.0-F).
 - [x] **Coexistence policy — settled (4.0-G): none required.** The format
       does not change, so there is no transition. Existing files remain
       readable by definition; parity is enforced by the `static_assert` wall
@@ -224,6 +224,17 @@ spec will encode. Broad checklist:
 - [ ] **Build integration:** configure-time generation when `generated_source/`
       is absent or `-DIFE_RUN_GENERATOR=ON`; CI check that
       regeneration is diff-clean; generator is stdlib-only Python.
+- [ ] **`--check` parity, not byte-equality (future).** The current
+      `--check` is exact character equivalence: regenerate in memory, diff
+      against the on-disk files byte-for-byte. That gate is brittle — it
+      flags every *legitimate* change (a spec version bump, the banner's
+      copyright year rolling over at New Year) as drift until regeneration,
+      and byte-equality cannot answer "was this produced from the current
+      spec?" Replace it with a generated-parity check: embed the schema
+      version (and a hash of the input JSON) in each output's banner, and
+      have `--check` verify the on-disk files carry the current version.
+      The gate then asks "is `generated_source/` in parity with `spec/`?"
+      instead of "is the diff empty?".
 
 **Exit:** regeneration byte-stable; generated headers compile standalone;
 CI drift gate green.
@@ -239,9 +250,11 @@ CI drift gate green.
       the JSON's normative clauses.
 - [ ] **Recovery:** file-map generation and corruption-recovery scan
       matching against the generated recovery-tag value set.
-- [ ] **Memory substrate decision executed:** adopt `IFE_Memory` (currently
-      dormant behind `IFE_USE_FASTFHIR_SUBSTRATE`) for the write path if
-      Phase 1 says so, or delete it; no dormant half-features remain at exit.
+- [x] **Memory substrate decision — executed: delete (4.0-F).**
+      `IFE_Memory.hpp/.cpp`, `tests/ife_memory_tests.cpp`, and the
+      `IFE_USE_FASTFHIR_SUBSTRATE` option are removed; the substrate belongs
+      to Iris-Codec ('how'), not the spec ('what'). No dormant half-features
+      remain.
 - [ ] **Public API:** define the generated surface (successor to
       `validate_file_structure` / `abstract_file_structure` /
       `Serialization::` / `Abstraction::`), designed with Iris-Codec's
@@ -328,7 +341,7 @@ Do not re-derive these; do not contradict them without re-verifying.
 | Recovery tags | flat `0x5500`–`0x5510`, carried over from v1; unique, sharing the `0x55` high byte. Deliberately **not** partitioned and **no** array bit — settled in 4.0-A |
 | CMake already compiles generated code | `CMakeLists.txt:128-137` GLOBs `generated_source/*.cpp` and `*.hpp` with `CONFIGURE_DEPENDS` and appends them to the library — **adding a generated file needs no CMake edit** |
 | Generator regen trigger | `IFE_RUN_GENERATOR=ON`, or `generated_source/IFE_VTables.hpp` missing (`CMakeLists.txt:110-124`) |
-| Tests today | one file, `tests/ife_memory_tests.cpp`; framework-free `IFE_CHECK` macro + `g_failures` + non-zero exit; gated by `IFE_BUILD_TESTS`, which currently **FATAL_ERRORs unless `IFE_USE_FASTFHIR_SUBSTRATE=ON`** (`CMakeLists.txt:247-249`) |
+| Tests today | `tests/ife_bytes_tests.cpp` + `tests/ife_wire_parity_tests.cpp`; framework-free `IFE_CHECK` macro + `g_failures` + non-zero exit; gated by `IFE_BUILD_TESTS` alone (no substrate requirement) |
 
 #### Version gating — the v1 mechanism, reverse-engineered
 
@@ -520,13 +533,11 @@ sentinel set, decision A).
       - **Now:** 4.2d's generated `store()` takes a plain `BYTE* const __base`
         — no arena, no write-head coupling. Encoding stays one-thread-per-file,
         as the hand-written layer does today.
-      - **Keep in tree, dormant, for the duration of Phase 4** as a reference
-        implementation should Iris-Codec want the pattern.
-      - **Delete before Phase 4 exit:** `src/IFE_Memory.hpp/.cpp`,
-        `tests/ife_memory_tests.cpp`, the `IFE_USE_FASTFHIR_SUBSTRATE` option
-        and its `IFE_BUILD_TESTS` coupling. This is what satisfies the Phase 4
-        exit rule that no dormant half-feature survives — it is a scheduled
-        deletion, not an open question.
+      - **Executed — deleted from this repository.** `src/IFE_Memory.hpp/.cpp`,
+        `tests/ife_memory_tests.cpp`, and the `IFE_USE_FASTFHIR_SUBSTRATE`
+        option are gone; the code survives in git history for Iris-Codec to
+        take as its own. This satisfies the Phase 4 exit rule that no dormant
+        half-feature survives.
 - [x] **G. Coexistence — DECIDED: there is nothing to coexist with. This is a
       refactor, not a new format version.** The on-disk format stays exactly
       as shipped for IFE 1.0; the generated layer must read and write files
@@ -891,10 +902,13 @@ just the corruption tests.
 
 Four sub-tasks, executed in order. Each ends green before the next begins.
 
-##### 4.2a — Thread version groups through the layout model
+##### 4.2a — Thread version groups through the layout model — DONE
 
-**Prerequisite for version gating, and it does not exist today:**
-`_concat_versioned` (`generator/model/layout.py:161-164`) flattens
+Implemented with the initial layout model: `_concat_versioned` returns
+`(version, field)` pairs, `FieldLayout.since` records the introducing
+version, and `BlockLayout.header_sizes` / `entry_sizes` carry the
+cumulative size per version group. The steps below are the original spec,
+kept for the record; the "Done when" gate passes.
 `{"1.0": [...], "1.1": [...]}` into a plain field list and discards the
 version label, and `FieldLayout` has no `since` member — so no emitter can
 know which fields are post-1.0. Fix the model before the emitter needs it.
@@ -1254,9 +1268,9 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
 
 #### 4.5 — Tests (the gate for every task above)
 
-- **Precedent for the harness:** `tests/ife_memory_tests.cpp:1-30` (the file
-  header, the `IFE_CHECK` macro, the `g_failures` counter) and its per-test
-  function shape at `:32-56`; registration at `CMakeLists.txt:251-261`
+- **Precedent for the harness:** `tests/ife_bytes_tests.cpp` (file header,
+  the `IFE_CHECK` macro, the `g_failures` counter, per-test function shape)
+  and its registration under `IFE_BUILD_TESTS` in `CMakeLists.txt`
   (`enable_testing` / `add_executable` / `target_compile_features cxx_std_20`
   / `add_test`). Follow both exactly — self-contained, no framework, non-zero
   exit on failure, one `add_executable` + `add_test` per file.
@@ -1264,10 +1278,9 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
   in its bullet below; read that function before writing the test, because
   its checks *are* the specification of correct behaviour.
 
-- [ ] **CMake first:** `CMakeLists.txt:247-249` makes `IFE_BUILD_TESTS`
-      FATAL_ERROR unless `IFE_USE_FASTFHIR_SUBSTRATE=ON`. The generated-layer
-      tests do not need `IFE_Memory` — move that requirement onto the
-      `ife_memory_tests` target alone.
+- [x] **CMake first — done, superseded by 4.0-F execution.** `IFE_BUILD_TESTS`
+      has no substrate requirement and `ife_memory_tests` no longer exists;
+      the `IFE_USE_FASTFHIR_SUBSTRATE` option is deleted with the substrate.
 - [x] `tests/ife_bytes_tests.cpp` (gates 4.1) — **done.** Round-trip every width
       including `u24`/`u40` at boundary values (0, 1, max, max-1) and at
       unaligned addresses; assert `load_u40` touches exactly 5 bytes by
@@ -1307,7 +1320,7 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
 - [ ] **CI:** keep the `python3 -m generator --check` drift gate; add a job
       that configures with `-DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON` and
       runs `ctest`, so an emission bug fails before merge rather than at the
-      next regeneration. TSan job only if 4.0-F adopts `IFE_Memory`.
+      next regeneration.
 
 #### 4.6 — Validation layer (generated; implements decision 4.0-B)
 
@@ -1352,7 +1365,8 @@ must already exist, or adding it later breaks the ABI.
   attached.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
-~~4.1 (primitives)~~ → **4.2a (next)** → 4.2a → 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
+~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → **4.2b (next)** →
+4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1449,6 +1463,6 @@ the hand-written layer is the primary quality gate** (enforced by 4.0-H's
 What the schema-driven approach still buys is that the layout is *derived*
 rather than transcribed — parity is checked, not hand-maintained. What survives from both: the
 JSON-as-single-source principle, the dependency-free stdlib-only generator
-writing `generated_source/`, version-aware generated tables, and the dormant
-`IFE_Memory`
-substrate whose adopt-or-delete decision is owned by Phase 1/4.
+writing `generated_source/`, version-aware generated tables, and the
+`IFE_Memory` substrate — whose adopt-or-delete decision (4.0-F) resolved to
+deletion, relocating the 'how' to Iris-Codec and leaving the 'what' here.

@@ -44,11 +44,7 @@ option(IRIS_EXTENSION_BUILD_ALL "Convenience option to build all targets" OFF)
 option(IFE_BUILD_SHARED "Build shared Iris File Extension Libraries" ON)
 option(IFE_BUILD_STATIC "Build static Iris File Extension Libraries" ON)
 option(IFE_BUILD_EXAMPLES "Build shared Iris File Extension Example implementations" OFF)
-option(IFE_BUILD_TESTS "Build IFE unit/stress tests (requires IFE_USE_FASTFHIR_SUBSTRATE)" OFF)
-# Phase 1 of the FastFHIR substrate migration. Dormant when OFF; enabling it
-# compiles the new lock-free VMA layer alongside the legacy Abstraction::File
-# code. Phases 2-6 progressively replace the legacy paths.
-option(IFE_USE_FASTFHIR_SUBSTRATE "Compile the new FastFHIR-style substrate (IFE_Memory, etc.)" OFF)
+option(IFE_BUILD_TESTS "Build IFE unit/stress tests" OFF)
 option(IFE_RUN_GENERATOR "Regenerate generated_source/ at configure (requires generator/)" OFF)
 if(IRIS_EXTENSION_BUILD_ALL)
     set (IFE_BUILD_SHARED ON)
@@ -96,11 +92,6 @@ set (
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
 )
-if(IFE_USE_FASTFHIR_SUBSTRATE)
-    list(APPEND IFE_SourcesExport ${IFE_SOURCE_DIR}/IFE_Memory.hpp)
-    list(APPEND IFE_SourcesPriv   ${IFE_SOURCE_DIR}/IFE_Memory.cpp)
-    message(STATUS "IFE: FastFHIR substrate ENABLED (Phase 1: IFE_Memory)")
-endif()
 set (
     IFE_IncludeDir
     ${irisheaders_SOURCE_DIR}/priv
@@ -285,20 +276,5 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_bytes_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_bytes_tests COMMAND ife_bytes_tests)
 
-    # The IFE_Memory substrate is dormant and scheduled for deletion at Phase 4
-    # exit; its tests build only when it does.  This requirement belongs to the
-    # target, not to IFE_BUILD_TESTS as a whole - the generated-layer tests do
-    # not depend on the substrate.
-    if(IFE_USE_FASTFHIR_SUBSTRATE)
-        add_executable(
-            ife_memory_tests
-            ${PROJECT_SOURCE_DIR}/tests/ife_memory_tests.cpp
-            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
-        )
-        target_include_directories(ife_memory_tests PRIVATE ${IFE_SOURCE_DIR})
-        target_compile_features(ife_memory_tests PRIVATE cxx_std_20)
-        find_package(Threads REQUIRED)
-        target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
-        add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
-    endif()
 endif()
+
