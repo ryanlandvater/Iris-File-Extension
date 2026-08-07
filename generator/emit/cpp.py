@@ -67,9 +67,13 @@ def emit_constants_header(doc: dict[str, Any], types: dict[str, Any]) -> str:
         if group_name in ("$schema", "spec", "statically_defined_values") or is_banner(group_name):
             continue
         underlying = group.get("underlying_type")
-        cpp = _TYPE_CPP.get(underlying) if underlying else None
-        if cpp is None:
-            raise SpecError(f"enum group {group_name!r} has missing or unsupported underlying_type {underlying!r}")
+        if underlying is None:
+            raise SpecError(f"enum group {group_name!r} has no underlying_type")
+        # Resolve through the alias chain, exactly as a sentinel's "type" is
+        # resolved. Looking underlying_type up in _TYPE_CPP directly made the
+        # same word behave two ways: "type": "recovery" worked, while
+        # "underlying_type": "recovery" raised.
+        cpp = _cpp_of(underlying, types)
 
         members: list[tuple[str, str, str, str | None]] = []
         for _, entries in sorted(group.get("ife_version", {}).items(), key=lambda kv: version_key(kv[0])):
@@ -150,14 +154,13 @@ def emit_vtables_header(layout: LayoutResult) -> str:
         "namespace vtables {",
     ]
 
-    _emit_structure(out, "file_preamble", "file preamble", layout.preamble_fields, "total_size", layout.preamble_size)
-    out.append("")
-    _emit_structure(out, "block_header", "universal block header", layout.block_header_fields, "total_size", layout.block_header_size)
-    out.append("")
-    _emit_structure(
-        out, "array_header", "uniform array header (universal + STRIDE + COUNT)",
-        layout.array_header_fields, "total_size", layout.array_header_size,
-    )
+    for primitive in layout.primitives.values():
+        inherits = f" (inherits {primitive.extends})" if primitive.extends else ""
+        _emit_structure(
+            out, primitive.name, f"{primitive.name} primitive{inherits}",
+            primitive.fields, "total_size", primitive.size,
+        )
+        out.append("")
 
     recovery_enum = _pascal("recovery_codes")
     for name, block in layout.blocks.items():
@@ -165,6 +168,7 @@ def emit_vtables_header(layout: LayoutResult) -> str:
         out.append(f"// ---- {name} ----")
         out.extend(_comment(block.description))
         out.append(f"namespace {name} {{")
+        out.append(f"    // primitive: {block.primitive}")
         out.append(
             f"    inline constexpr ::IFE::constants::{recovery_enum} recovery_tag"
             f" = ::IFE::constants::{recovery_enum}::{block.recovery_tag};"
@@ -173,11 +177,10 @@ def emit_vtables_header(layout: LayoutResult) -> str:
         out.append(f"    inline constexpr std::size_t header_size = {block.header_size};")
         if block.from_sof is not None:
             out.append(
-                f"    /// Fixed at byte {block.from_sof} from SOF"
-                f" (preamble {layout.preamble_size} B + header {block.header_size} B)."
+                f"    /// Fixed at byte 0; occupies the first {block.from_sof} B of the file."
             )
             out.append(f"    inline constexpr std::size_t from_sof = {block.from_sof};")
-        if block.kind == "array":
+        if block.entry_fields:
             if block.entry_fields:
                 out.append("")
                 out.append(f"    // ---- {block.entry_name} (entry, {block.entry_size} B) ----")
@@ -186,8 +189,6 @@ def emit_vtables_header(layout: LayoutResult) -> str:
                 out.append("    }")
                 out.append("")
                 out.append(f"    inline constexpr std::size_t entry_size = {block.entry_size};")
-            else:
-                out.append(f"    inline constexpr std::size_t entry_size = {block.entry_size}; // stride-1 byte blob")
         out.append("}")
 
     out += ["", "} // namespace vtables", "} // namespace IFE", "", "#endif // IFE_VTables_hpp", ""]

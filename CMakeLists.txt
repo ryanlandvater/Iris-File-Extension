@@ -242,21 +242,40 @@ if(IFE_BUILD_EXAMPLES)
 endif(IFE_BUILD_EXAMPLES)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# Tests (Phase 1 substrate)
+# Tests
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 if(IFE_BUILD_TESTS)
-    if(NOT IFE_USE_FASTFHIR_SUBSTRATE)
-        message(FATAL_ERROR "IFE_BUILD_TESTS requires IFE_USE_FASTFHIR_SUBSTRATE=ON")
-    endif()
     enable_testing()
+
+    # Wire-format parity: compile-time proof that the generated layout equals
+    # shipped IFE 1.0.  Pure static_assert - building it IS the test, so it is
+    # registered only so `ctest` reports it.  Retired with the hand-written
+    # layer in Phase 6.
     add_executable(
-        ife_memory_tests
-        ${PROJECT_SOURCE_DIR}/tests/ife_memory_tests.cpp
-        ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+        ife_wire_parity_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_wire_parity_tests.cpp
     )
-    target_include_directories(ife_memory_tests PRIVATE ${IFE_SOURCE_DIR})
-    target_compile_features(ife_memory_tests PRIVATE cxx_std_20)
-    find_package(Threads REQUIRED)
-    target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
-    add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
+    target_include_directories(
+        ife_wire_parity_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_wire_parity_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_wire_parity_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_wire_parity_tests COMMAND ife_wire_parity_tests)
+
+    # The IFE_Memory substrate is dormant and scheduled for deletion at Phase 4
+    # exit; its tests build only when it does.  This requirement belongs to the
+    # target, not to IFE_BUILD_TESTS as a whole - the generated-layer tests do
+    # not depend on the substrate.
+    if(IFE_USE_FASTFHIR_SUBSTRATE)
+        add_executable(
+            ife_memory_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_memory_tests.cpp
+            ${IFE_SOURCE_DIR}/IFE_Memory.cpp
+        )
+        target_include_directories(ife_memory_tests PRIVATE ${IFE_SOURCE_DIR})
+        target_compile_features(ife_memory_tests PRIVATE cxx_std_20)
+        find_package(Threads REQUIRED)
+        target_link_libraries(ife_memory_tests PRIVATE Threads::Threads)
+        add_test(NAME ife_memory_tests COMMAND ife_memory_tests)
+    endif()
 endif()

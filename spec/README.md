@@ -7,7 +7,7 @@ the HTML documentation (`generated_docs`):
 
 | File | Role |
 |------|------|
-| `ife_fields.json` | **Byte structure only.** The type vocabulary and, for the preamble / universal block header / array header / every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
+| `ife_fields.json` | **Byte structure only.** The type vocabulary, the primitive block types, and for every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
 | `ife_constants.json` | **Values.** Statically defined values (sentinels) and every enumeration — recovery codes, tile encodings, pixel formats, metadata formats, annotation types, image encodings, orientations — with per-value descriptions and errata. |
 | `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** Phase 5 converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::` — see MIGRATION.md Phase 5 for why a bespoke anchor syntax was rejected. |
 
@@ -76,7 +76,7 @@ headers use (`src/IrisCodecExtension.hpp`). A banner is a key beginning
 
 | Document | Sections |
 |---|---|
-| `ife_fields.json` | DOCUMENT IDENTITY · TYPE VOCABULARY · STRUCTURAL PREFIXES · BLOCK INVENTORY, the last subdivided into HEADER BLOCKS · TILE DATA ARRAYS · ATTRIBUTE ARRAYS · ASSOCIATED IMAGES · ICC COLOR PROFILE · ANNOTATION ARRAYS |
+| `ife_fields.json` | DOCUMENT IDENTITY · TYPE VOCABULARY · PRIMITIVE BLOCK TYPES · BLOCK INVENTORY, the last subdivided into HEADER BLOCKS · TILE DATA ARRAYS · ATTRIBUTE ARRAYS · ASSOCIATED IMAGES · ICC COLOR PROFILE · ANNOTATION ARRAYS |
 | `ife_constants.json` | DOCUMENT IDENTITY · STATICALLY DEFINED VALUES · STRUCTURAL ENUMERATIONS · CONTENT ENUMERATIONS |
 
 Every consumer skips them via `generator.model.layout.is_banner()`, which is
@@ -104,10 +104,21 @@ section order, so a reader moving between the two is never re-orienting.
   * `constant` — the field always holds this statically defined value.
   * `points_to` + `nullable` — offset linkage to another block and whether
     NULL_OFFSET is permitted.
-* Blocks are `kind: "header"` (fixed-size) or `kind: "array"`. Arrays define
-  an `entry` (versioned `fields`, or `blob: true` for stride-1 byte arrays)
-  and optionally versioned block-specific `header_fields` that follow the
-  array header.
+* Every block names the **primitive** it derives from, and contributes its
+  own versioned `fields` after that primitive's prefix:
+
+  | Primitive | Extends | Adds | Prefix |
+  |---|---|---|---|
+  | `file_header` | — | `MAGIC`, `RECOVERY` | 6 B |
+  | `block` | — | `VALIDATION`, `RECOVERY` | 10 B |
+  | `array` | `block` | `STRIDE`, `COUNT` | 16 B |
+  | `byte_array` | `block` | `COUNT` (byte count) | 14 B |
+
+  `file_header` carries no `VALIDATION` because the root is at byte 0, where
+  that field could only ever store zero. `byte_array` carries no `STRIDE`
+  because a byte's stride is intrinsically 1. Neither is an exception to be
+  tidied away — they are why the primitives are declared separately.
+  An `array` block also defines an `entry` with its own versioned `fields`.
 * Append-only rule: a new minor version adds a new `ife_version` group;
   existing groups are never edited or reordered. All fields currently live
   under `"1.0"`; `"1.1"` and later are reserved for append-only additions.

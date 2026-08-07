@@ -97,7 +97,7 @@ class BlockLayout:
     header_fields + entry)."""
 
     name: str
-    kind: str  # "header" | "array"
+    primitive: str  # the primitive this block derives from
     description: str
     recovery_tag: str  # JSON name, e.g. RECOVER_FILE_HEADER
     recovery_value: int
@@ -110,13 +110,24 @@ class BlockLayout:
 
 
 @dataclass(frozen=True)
+class PrimitiveLayout:
+    """One primitive block type: its inherited chain flattened into fields.
+
+    ``fields`` is the complete prefix a derived block inherits, root-first,
+    with offsets already accumulated across the chain; ``size`` is its total
+    width and therefore the offset at which a block's own fields begin.
+    """
+
+    name: str
+    extends: str | None
+    description: str
+    fields: tuple[FieldLayout, ...]
+    size: int
+
+
+@dataclass(frozen=True)
 class LayoutResult:
-    preamble_fields: tuple[FieldLayout, ...]
-    preamble_size: int
-    block_header_fields: tuple[FieldLayout, ...]
-    block_header_size: int
-    array_header_fields: tuple[FieldLayout, ...]
-    array_header_size: int
+    primitives: dict[str, PrimitiveLayout]
     blocks: dict[str, BlockLayout]
 
 
@@ -228,87 +239,102 @@ def _derive_fields(
 
 
 def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> LayoutResult:
-    """Derive every layout from the two spec documents."""
+    """Derive every layout from the two spec documents.
+
+    A block inherits the flattened field prefix of the primitive it names,
+    then contributes its own fields at the cumulative offset that prefix
+    ends at. Nothing about the prefix is assumed here: a ``file_header``
+    carries no VALIDATION and a ``byte_array`` carries no STRIDE purely
+    because their primitives do not declare those fields.
+    """
     types = fields_doc.get("types", {})
     constants = ConstantsIndex.build(constants_doc)
 
-    def structure(key: str) -> tuple[tuple[FieldLayout, ...], int]:
-        groups = fields_doc[key]["fields"]["ife_version"]
-        fields, end = _derive_fields(_concat_versioned(groups), types, constants, 0)
-        return tuple(fields), end
+    primitive_specs = {
+        name: spec
+        for name, spec in fields_doc.get("primitives", {}).items()
+        if not is_banner(name)
+    }
+    primitives: dict[str, PrimitiveLayout] = {}
 
-    preamble_fields, preamble_size = structure("file_preamble")
-    block_header_fields, block_header_size = structure("block_header")
+    def resolve(name: str, seen: tuple[str, ...] = ()) -> PrimitiveLayout:
+        if name in primitives:
+            return primitives[name]
+        if name in seen:
+            raise SpecError(f"primitive inheritance cycle involving {name!r}")
+        spec = primitive_specs.get(name)
+        if spec is None:
+            raise SpecError(f"unknown primitive {name!r}")
 
-    # Array header = universal block header + STRIDE + COUNT (contiguous).
-    array_specific, _ = _derive_fields(
-        _concat_versioned(fields_doc["array_header"]["fields"]["ife_version"]),
-        types, constants, block_header_size,
-    )
-    array_header_fields = (*block_header_fields, *array_specific)
-    array_header_size = array_header_fields[-1].offset + array_header_fields[-1].size
+        parent = spec.get("extends")
+        inherited: tuple[FieldLayout, ...] = ()
+        start = 0
+        if parent is not None:
+            base = resolve(parent, (*seen, name))
+            inherited, start = base.fields, base.size
+
+        own, end = _derive_fields(
+            _concat_versioned(spec.get("fields", {}).get("ife_version", {})),
+            types, constants, start,
+        )
+        primitives[name] = PrimitiveLayout(
+            name=name,
+            extends=parent,
+            description=spec.get("description", ""),
+            fields=(*inherited, *own),
+            size=end,
+        )
+        return primitives[name]
+
+    for name in primitive_specs:
+        resolve(name)
 
     blocks: dict[str, BlockLayout] = {}
     for name, spec in fields_doc.get("blocks", {}).items():
         if is_banner(name):
             continue
-        kind = spec.get("kind")
-        if kind not in ("header", "array"):
-            raise SpecError(f"block {name!r} has invalid kind {kind!r}")
+        primitive_name = spec.get("primitive")
+        if primitive_name is None:
+            raise SpecError(f"block {name!r} names no primitive")
+        primitive = primitives.get(primitive_name)
+        if primitive is None:
+            raise SpecError(f"block {name!r} references unknown primitive {primitive_name!r}")
+
         recovery = spec.get("recovery_tag")
         if recovery not in constants.recovery_values:
             raise SpecError(f"block {name!r} references unknown recovery tag {recovery!r}")
 
-        header_fields = list(block_header_fields)
-        if kind == "array":
-            header_fields += array_specific
-            block_specific = spec.get("header_fields")
-        else:
-            block_specific = spec.get("fields")
-        if block_specific:
-            # Block-specific fields follow the headers contiguously: the
-            # start offset is the cumulative byte size, not the field count.
-            start = header_fields[-1].offset + header_fields[-1].size
-            more, _ = _derive_fields(
-                _concat_versioned(block_specific["ife_version"]),
-                types, constants, start,
+        header_fields = list(primitive.fields)
+        header_size = primitive.size
+        own = spec.get("fields")
+        if own:
+            more, header_size = _derive_fields(
+                _concat_versioned(own["ife_version"]), types, constants, primitive.size,
             )
             header_fields += more
-        header_size = header_fields[-1].offset + header_fields[-1].size
 
         entry_name = entry_size = None
         entry_fields: tuple[FieldLayout, ...] = ()
-        if kind == "array":
-            entry = spec.get("entry", {})
-            if entry.get("blob"):
-                entry_size = 1
-            else:
-                entry_name = entry.get("name") or f"{name}_ENTRY"
-                fields, end = _derive_fields(
-                    _concat_versioned(entry["fields"]["ife_version"]), types, constants, 0
-                )
-                entry_name, entry_size, entry_fields = entry_name, end, tuple(fields)
+        entry = spec.get("entry")
+        if entry is not None:
+            entry_name = entry.get("name") or f"{name}_ENTRY"
+            fields, end = _derive_fields(
+                _concat_versioned(entry["fields"]["ife_version"]), types, constants, 0
+            )
+            entry_size, entry_fields = end, tuple(fields)
 
         blocks[name] = BlockLayout(
             name=name,
-            kind=kind,
+            primitive=primitive_name,
             description=spec.get("description", ""),
             recovery_tag=recovery,
             recovery_value=constants.recovery_values[recovery],
             header_fields=tuple(header_fields),
             header_size=header_size,
-            from_sof=preamble_size + header_size if spec.get("fixed_location") else None,
+            from_sof=header_size if spec.get("fixed_location") else None,
             entry_name=entry_name,
             entry_size=entry_size,
             entry_fields=entry_fields,
         )
 
-    return LayoutResult(
-        preamble_fields=preamble_fields,
-        preamble_size=preamble_size,
-        block_header_fields=block_header_fields,
-        block_header_size=block_header_size,
-        array_header_fields=array_header_fields,
-        array_header_size=array_header_size,
-        blocks=blocks,
-    )
+    return LayoutResult(primitives=primitives, blocks=blocks)

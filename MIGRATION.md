@@ -566,8 +566,8 @@ Several fields were **renamed** (`ENTRY_SIZE`→`STRIDE`, `ENTRY_NUMBER`→`COUN
 `ATTRIBUTES_SIZES`→`ATTRIBUTE_SIZES`, `IMAGE_ARRAY`→`IMAGES`); names do not
 affect bytes and the new names are kept.
 
-**Divergent — 6 blocks. These are defects in `ife_fields.json`, not intended
-changes, and 4.0-H corrects them.**
+**Divergent — 6 blocks. ✅ All corrected by 4.0-H; the table below records
+what was wrong and is kept as the audit trail.**
 
 | Block | Shipped 1.0 | Currently generated | Divergence |
 |---|---|---|---|
@@ -730,10 +730,32 @@ its payload is part specified (an ASCII label of `TITLE_SIZE` bytes) and part
 external (the compressed stream), so a block-level marker would overclaim —
 prose covers it instead.
 
-#### 4.0-H — Wire-format parity correction (BLOCKING: do before 4.1)
+#### 4.0-H — Wire-format parity correction — ✅ DONE
 
-Every divergence above is a bug in the spec JSON. Until this lands, the
-generated layer would silently produce unreadable files.
+All six divergences corrected; the generated layout now equals shipped IFE
+1.0 in every field of every block. Verified two ways: an offset-by-offset
+comparison of all 18 structures against the hand-written vtables, and
+`tests/ife_wire_parity_tests.cpp` — **101 `static_assert`s** that compile
+clean and, when `FILE_REVISION` was deliberately widened `u32`→`u64` as a
+red-green check, failed the build naming each field that moved.
+
+What changed: `primitives` replaces the standalone `file_preamble`,
+`block_header` and `array_header` structures; every block names one
+(`kind` and `entry.blob` are gone); `derive_layout` walks the primitive
+chain instead of assuming a universal header and an always-present `STRIDE`;
+`FILE_HEADER` regains `EXTENSION_MAJOR`/`EXTENSION_MINOR` and the preamble is
+deleted. `recovery_codes` moved to the object form with all 17 members
+described, and `underlying_type` now resolves aliases like a sentinel's
+`type` always did.
+
+**Found while building the gate — carry into Phase 6:**
+`src/IrisCodecExtension.hpp:85` defines `MAGIC_BYTES` as a **preprocessor
+macro**, which clobbers the generated `constexpr std::uint32_t MAGIC_BYTES`.
+The two layers cannot coexist in one translation unit without an `#undef`.
+Harmless for the parity test, but a real obstacle for any consumer migrating
+gradually — retire the macro with the rest of the hand-written layer.
+
+The original task description follows, for the record.
 
 - **v1 precedent:** the six structs named in the table above, in
   `src/IrisCodecExtension.hpp` — `FILE_HEADER` `:421-462`,
@@ -972,12 +994,14 @@ know which fields are post-1.0. Fix the model before the emitter needs it.
   7. **Version gating.** Reproduce the v1 contract exactly (see "Version
      gating — the v1 mechanism, reverse-engineered" above). Two gates, and no
      third:
-     - **File version**, read **once** from the preamble
-       (`SPEC_MAJOR` u16 @4, `SPEC_MINOR` u16 @6) by the 4.4 runtime,
+     - **File version**, read **once** from `FILE_HEADER`
+       (`EXTENSION_MAJOR` u16 @14, `EXTENSION_MINOR` u16 @16) by the 4.4
+       runtime — exactly where shipped 1.0 keeps it and exactly what
+       `src/IrisCodecExtension.cpp:912-913` reads. There is no preamble;
        composed as `major<<16 | minor`, and propagated into every handle as
        `__version` — including into every `points_to` target constructed by
-       an accessor. There is no per-block version field in the v2 schema; do
-       not look for one, and do not add one. A field with `since != "1.0"`
+       an accessor. There is no per-block version field; do not look for one,
+       and do not add one. A field with `since != "1.0"`
        gets a `std::optional<T>` accessor yielding nothing when `__version`
        is below its `since`.
      - **Array stride**, read per array from the file. An entry accessor
@@ -1298,8 +1322,8 @@ must already exist, or adding it later breaks the ABI.
   both paths, and that a conformance violation is caught **only** when
   attached.
 
-**Ordering:** 4.0 (⚠ human, decisions A–G) → **4.0-H (blocking wire-format
-correction)** → 4.1 → 4.2a → 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
+**Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
+**4.1 (next)** → 4.2a → 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.

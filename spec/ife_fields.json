@@ -21,40 +21,54 @@
     "byte":     { "alias": "u8" }
   },
 
-  "// MARK: - STRUCTURAL PREFIXES": "The byte prefixes every block inherits. Offsets are derived by concatenating these ahead of a block's own fields.",
-  "file_preamble": {
-    "description": "Version-invariant first eight bytes of every IFE file; identifies the file and the specification version before any block is parsed.",
-    "fields": {
-      "ife_version": {
-        "1.0": [
-          { "name": "MAGIC",      "type": "u32", "constant": "MAGIC_BYTES", "description": "ASCII 'Iris' (0x49726973)." },
-          { "name": "SPEC_MAJOR", "type": "u16", "description": "IFE specification major version used to encode this file." },
-          { "name": "SPEC_MINOR", "type": "u16", "description": "IFE specification minor version used to encode this file." }
-        ]
+  "// MARK: - PRIMITIVE BLOCK TYPES": "The byte prefixes every block inherits. A block names one primitive; its own fields follow that primitive's chain. Offsets are derived by concatenation, never stated.",
+  "primitives": {
+    "file_header": {
+      "description": "Root primitive. The file header is the one block reached without an offset - it is at byte 0 - so it carries no VALIDATION field, which would only ever store zero. It opens with the magic number that identifies the file.",
+      "fields": {
+        "ife_version": {
+          "1.0": [
+            { "name": "MAGIC",    "type": "u32", "constant": "MAGIC_BYTES", "description": "ASCII 'Iris' (0x49726973). The first four bytes of every IFE file." },
+            { "name": "RECOVERY", "enum": "recovery_codes", "description": "Recovery tag identifying this block's type." }
+          ]
+        }
       }
-    }
-  },
+    },
 
-  "block_header": {
-    "description": "Universal header beginning every data-block: the block's own byte offset (validation) followed by its recovery tag.",
-    "fields": {
-      "ife_version": {
-        "1.0": [
-          { "name": "VALIDATION", "type": "offset",   "description": "Byte offset of this block from the start of file." },
-          { "name": "RECOVERY",   "enum": "recovery_codes", "description": "Recovery tag identifying this block's type." }
-        ]
+    "block": {
+      "description": "Universal primitive for every block reached through an offset field. VALIDATION stores the block's own byte offset, so a reader that arrived by pointer can confirm it landed where it intended, and a recovery scan can find the block by searching for a value equal to its own position.",
+      "fields": {
+        "ife_version": {
+          "1.0": [
+            { "name": "VALIDATION", "type": "offset", "description": "Byte offset of this block from the start of file." },
+            { "name": "RECOVERY",   "enum": "recovery_codes", "description": "Recovery tag identifying this block's type." }
+          ]
+        }
       }
-    }
-  },
+    },
 
-  "array_header": {
-    "description": "Uniform header following the universal block header on every array block. Decoders iterate entries by the stored stride.",
-    "fields": {
-      "ife_version": {
-        "1.0": [
-          { "name": "STRIDE", "type": "u16", "description": "Byte size of one array entry at the time of encoding; 1 for byte-blob arrays." },
-          { "name": "COUNT",  "type": "u32", "description": "Number of entries (byte count when STRIDE is 1)." }
-        ]
+    "array": {
+      "extends": "block",
+      "description": "A block carrying a sequence of fixed-width entries. STRIDE records the entry width at encoding time so a decoder steps by the stored value rather than its own compiled size; that is what lets a reader of one version traverse an array written by a later one.",
+      "fields": {
+        "ife_version": {
+          "1.0": [
+            { "name": "STRIDE", "type": "u16", "description": "Byte size of one array entry at the time of encoding." },
+            { "name": "COUNT",  "type": "u32", "description": "Number of entries." }
+          ]
+        }
+      }
+    },
+
+    "byte_array": {
+      "extends": "block",
+      "description": "A block carrying an opaque run of bytes. It stores no STRIDE: the stride of a byte array is intrinsically one, so recording it would encode no information. COUNT is therefore a byte count. Strings live here - every string in IFE is a byte range whose length comes from a size field elsewhere.",
+      "fields": {
+        "ife_version": {
+          "1.0": [
+            { "name": "COUNT", "type": "u32", "description": "Number of bytes in the array." }
+          ]
+        }
       }
     }
   },
@@ -64,7 +78,7 @@
 
     "// MARK: - HEADER BLOCKS": "Fixed-size blocks. FILE_HEADER is the root at byte 0; every other block is reached only through an offset field.",
     "FILE_HEADER": {
-      "kind": "header",
+      "primitive": "file_header",
       "recovery_tag": "RECOVER_FILE_HEADER",
       "fixed_location": true,
       "description": "Root of the file structure; its universal header immediately follows the file preamble at byte offset 8.",
@@ -72,6 +86,8 @@
         "ife_version": {
           "1.0": [
             { "name": "FILE_SIZE",         "type": "u64", "description": "Total file size in bytes; serves as the atomic write-head during encoding." },
+            { "name": "EXTENSION_MAJOR",   "type": "u16", "description": "IFE specification major version used to encode this file. Read once at the root and propagated to every block; this is the sole version source." },
+            { "name": "EXTENSION_MINOR",   "type": "u16", "description": "IFE specification minor version used to encode this file." },
             { "name": "FILE_REVISION",     "type": "u32", "description": "Monotonic modification counter for the file." },
             { "name": "TILE_TABLE_OFFSET", "type": "offset", "points_to": "TILE_TABLE", "nullable": false, "description": "Offset of the tile table block." },
             { "name": "METADATA_OFFSET",   "type": "offset", "points_to": "METADATA",   "nullable": false, "description": "Offset of the metadata block; required even when no optional metadata content is encoded." }
@@ -81,7 +97,7 @@
     },
 
     "TILE_TABLE": {
-      "kind": "header",
+      "primitive": "block",
       "recovery_tag": "RECOVER_TILE_TABLE",
       "description": "Information necessary to visually reconstruct the whole slide image.",
       "fields": {
@@ -100,7 +116,7 @@
     },
 
     "CIPHER": {
-      "kind": "header",
+      "primitive": "block",
       "recovery_tag": "RECOVER_CIPHER",
       "unspecified": "reserved",
       "description": "Reserved for future use by the Iris Codec. The block is claimed so its recovery tag and position in the inventory are fixed; encoders write nothing beyond the universal header and readers ignore its contents. TILE_TABLE.CIPHER_OFFSET is nullable and is NULL_OFFSET in every file written to date.",
@@ -112,7 +128,7 @@
     },
 
     "METADATA": {
-      "kind": "header",
+      "primitive": "block",
       "recovery_tag": "RECOVER_METADATA",
       "description": "Slide metadata: encoder identification, offsets of optional structures, and physical-space conversion coefficients.",
       "fields": {
@@ -133,7 +149,7 @@
     },
 
     "ATTRIBUTES": {
-      "kind": "header",
+      "primitive": "block",
       "recovery_tag": "RECOVER_ATTRIBUTES",
       "description": "Header for key-value (or tag-value) clinical and acquisition metadata attributes.",
       "fields": {
@@ -150,7 +166,7 @@
 
     "// MARK: - TILE DATA ARRAYS": "The pyramid geometry and the tile lookup table — everything needed to locate and reconstruct slide tiles.",
     "LAYER_EXTENTS": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_LAYER_EXTENTS",
       "description": "Pyramidal layer dimensions, ordered from lowest resolution (index 0) to highest.",
       "entry": {
@@ -168,7 +184,7 @@
     },
 
     "TILE_OFFSETS": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_TILE_OFFSETS",
       "description": "Byte offset and size of each compressed tile stream, indexed by the global tile indexing scheme.",
       "entry": {
@@ -186,7 +202,7 @@
 
     "// MARK: - ATTRIBUTE ARRAYS": "Clinical and acquisition key-value metadata: a slicing array and the packed byte array it slices.",
     "ATTRIBUTE_SIZES": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_ATTRIBUTE_SIZES",
       "description": "Slicing tuples converting the attribute byte array into key-value pairs.",
       "entry": {
@@ -203,15 +219,14 @@
     },
 
     "ATTRIBUTE_BYTES": {
-      "kind": "array",
+      "primitive": "byte_array",
       "recovery_tag": "RECOVER_ATTRIBUTE_BYTES",
-      "description": "Tightly packed key and value strings sliced by the attribute sizes array.",
-      "entry": { "blob": true }
+      "description": "Tightly packed key and value strings sliced by the attribute sizes array."
     },
 
     "// MARK: - ASSOCIATED IMAGES": "Ancillary images such as labels and thumbnails: the entry array and the per-image label-plus-stream block.",
     "IMAGES": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_IMAGES",
       "description": "Associated (ancillary) images such as labels and thumbnails.",
       "entry": {
@@ -232,36 +247,34 @@
     },
 
     "IMAGE_BYTES": {
-      "kind": "array",
+      "primitive": "block",
       "recovery_tag": "RECOVER_IMAGE_BYTES",
-      "description": "One associated image's ASCII label followed by its compressed byte stream.",
-      "header_fields": {
+      "description": "One associated image's ASCII label followed by its compressed byte stream. Not an array: the payload length is TITLE_SIZE + IMAGE_SIZE, so the block needs neither STRIDE nor COUNT. The label is specified (ASCII); the stream that follows is defined by the referencing IMAGE_ENTRY.ENCODING value.",
+      "fields": {
         "ife_version": {
           "1.0": [
             { "name": "TITLE_SIZE", "type": "u16", "description": "Byte length of the ASCII image label preceding the image bytes." },
             { "name": "IMAGE_SIZE", "type": "u32", "description": "Byte length of the compressed image stream following the label." }
           ]
         }
-      },
-      "entry": { "blob": true }
+      }
     },
 
     "// MARK: - ICC COLOR PROFILE": "An unmodified ICC colour profile, stored as an opaque byte array.",
     "ICC_PROFILE": {
-      "kind": "array",
+      "primitive": "byte_array",
       "recovery_tag": "RECOVER_ICC_PROFILE",
       "unspecified": "external",
       "specified_by": "ICC.1 colour profile specification (International Color Consortium)",
-      "description": "Serialized contents of an ICC (.icc) color profile without modification. IFE specifies only that the bytes are stored verbatim and their length; their internal structure is defined by the ICC specification and deliberately not constrained here.",
-      "entry": { "blob": true }
+      "description": "Serialized contents of an ICC (.icc) color profile without modification. IFE specifies only that the bytes are stored verbatim and their length; their internal structure is defined by the ICC specification and deliberately not constrained here."
     },
 
     "// MARK: - ANNOTATION ARRAYS": "On-slide annotation objects, their raw visual-object streams, and the group tables that name and collect them.",
     "ANNOTATIONS": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_ANNOTATIONS",
       "description": "On-slide annotation objects positioned and sized in slide space.",
-      "header_fields": {
+      "fields": {
         "ife_version": {
           "1.0": [
             { "name": "GROUP_SIZES_OFFSET", "type": "offset", "points_to": "ANNOTATION_GROUP_SIZES", "nullable": true, "description": "Offset of the annotation group sizes array, or NULL_OFFSET when no groups are encoded." },
@@ -291,16 +304,15 @@
     },
 
     "ANNOTATION_BYTES": {
-      "kind": "array",
+      "primitive": "byte_array",
       "recovery_tag": "RECOVER_ANNOTATION_BYTES",
       "unspecified": "external",
       "specified_by": "The annotation_types value carried by the referencing ANNOTATION_ENTRY.FORMAT field",
-      "description": "One annotation's raw visual-object byte stream. IFE specifies only where the bytes are and how many; their interpretation is determined by the annotation format the referencing entry declares, and is deliberately not constrained here.",
-      "entry": { "blob": true }
+      "description": "One annotation's raw visual-object byte stream. IFE specifies only where the bytes are and how many; their interpretation is determined by the annotation format the referencing entry declares, and is deliberately not constrained here."
     },
 
     "ANNOTATION_GROUP_SIZES": {
-      "kind": "array",
+      "primitive": "array",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_SIZES",
       "description": "Slicing tuples for decoding group titles and member-identifier lists from the group bytes array.",
       "entry": {
@@ -317,10 +329,9 @@
     },
 
     "ANNOTATION_GROUP_BYTES": {
-      "kind": "array",
+      "primitive": "byte_array",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_BYTES",
-      "description": "Tightly packed group label strings each followed by that group's 24-bit annotation identifier sequence.",
-      "entry": { "blob": true }
+      "description": "Tightly packed group label strings each followed by that group's 24-bit annotation identifier sequence."
     }
   }
 }
