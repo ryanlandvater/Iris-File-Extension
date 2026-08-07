@@ -14,6 +14,25 @@ Derivation rules:
     (stride 1);
   * FILE_HEADER is fixed at preamble + header size from SOF.
 """
+# ---------------------------------------------------------------------------
+# ROLE: computation only. This module turns the spec JSON into numbers —
+# offsets, widths, per-version sizes — and returns them as immutable structs.
+# It produces no text and performs no I/O. If you are looking for anything
+# that emits C++, it is in emit/; if you are looking for file handling, it is
+# in pipeline.py.
+#
+# For a C++ reader:
+#   * @dataclass(frozen=True) below is a struct whose members cannot be
+#     reassigned after construction. The constructor, ==, and repr are
+#     generated. `tuple[FieldLayout, ...]` is an immutable vector.
+#   * Nothing here mutates its inputs. derive_layout() takes the parsed JSON
+#     and returns a fresh LayoutResult; call it twice and you get two equal
+#     values.
+#   * The dicts returned preserve insertion order, and that order is the
+#     document order of the JSON — which is the byte order on the wire.
+#     Iterating a dict here is meaningful, not arbitrary.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -201,6 +220,9 @@ def _width_cpp(type_name: str, types: dict[str, Any]) -> tuple[int, str]:
         raise SpecError(f"type {type_name!r} resolves to unsupported canonical {canonical!r}") from None
 
 
+# Returns pairs, not a flat list: the version label travels with each field so
+# _derive_fields can stamp it as `since`. In C++ this would be a
+# std::vector<std::pair<std::string, Field>>.
 def _concat_versioned(groups: dict[str, list]) -> list[tuple[str, dict[str, Any]]]:
     """Flatten versioned field groups into (version, field) pairs, ascending.
 
@@ -298,6 +320,10 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
     }
     primitives: dict[str, PrimitiveLayout] = {}
 
+    # A nested function, closing over `types`, `constants` and `primitives`
+    # from the enclosing scope — the equivalent of a lambda capturing by
+    # reference. `seen` carries the ancestry down the recursion to detect a
+    # cycle; the default () means callers start with an empty chain.
     def resolve(name: str, seen: tuple[str, ...] = ()) -> PrimitiveLayout:
         if name in primitives:
             return primitives[name]

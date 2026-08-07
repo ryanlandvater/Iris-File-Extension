@@ -23,6 +23,17 @@ This is not a JSON Schema, deliberately: checks 1-4 are inexpressible in one
 remainder duplicates SpecError paths the model already raises. See
 MIGRATION.md Phase 2.
 """
+# ---------------------------------------------------------------------------
+# ROLE: checking only. Returns a list of human-readable problems; an empty
+# list means consistent. Nothing here raises on a bad spec — the caller
+# decides what a problem means, which is why the same function serves both
+# `--validate` and the check that runs before every generation.
+#
+# For a C++ reader: this is a pure predicate over the parsed documents. It
+# reads, compares, and appends strings. It never modifies the documents and
+# never touches the filesystem.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from typing import Any, Iterator
@@ -69,6 +80,9 @@ def _members(group: dict[str, Any]) -> Iterator[tuple[str, str, Any]]:
             yield version, name, raw
 
 
+# `yield` makes this a generator: it produces one pair at a time and computes
+# nothing until iterated. Equivalent to returning a lazy range. The caller can
+# only walk it once.
 def _member_values(group_name: str, group: dict[str, Any]) -> Iterator[tuple[str, int]]:
     """(member name, value) for an enum group, deriving where values are derived.
 

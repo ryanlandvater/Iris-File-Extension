@@ -5,6 +5,26 @@ blocks and groups, version-ascending for field groups) and no timestamps,
 so CI can diff-check regeneration. The one deliberate exception is the
 copyright year range in the banner, which rolls forward at year boundaries.
 """
+# ---------------------------------------------------------------------------
+# ROLE: formatting only. Every function here takes a already-computed layout
+# and returns a string of C++. No offset is calculated in this file — if you
+# find arithmetic on a byte position here, it belongs in model/layout.py.
+#
+# For a C++ reader, the emitter pattern used throughout:
+#
+#     out: list[str] = [...]        # a std::vector<std::string> of lines
+#     out.append(f"...{value}...")  # std::format into it
+#     return "\n".join(out)         # join once, at the end
+#
+# There is no stream and no incremental write. Building the whole file in
+# memory is what makes the output byte-stable: the same layout always yields
+# the same bytes, which is what `--check` compares.
+#
+# Functions prefixed with _ are file-local by convention (Python has no
+# `static`). The three public entry points are emit_constants_header,
+# emit_vtables_header and emit_blocks_header, one per generated file.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import struct
@@ -176,6 +196,31 @@ def _emit_size_offset(fields: tuple[FieldLayout, ...], indent: str = "    ") -> 
     return out
 
 
+# `out` is appended to in place — the caller sees the additions. Python passes
+# the list by reference, so this is the equivalent of taking
+# std::vector<std::string>& and pushing onto it. Several helpers below follow
+# the same convention and return None.
+def _emit_version_markers(
+    out: list[str], indent: str, total_name: str, sizes: tuple[tuple[str, int], ...]
+) -> None:
+    """Cumulative size per version, each closed by v1's boundary marker.
+
+    The form is copied from src/IrisCodecExtension.hpp:445-449: the size
+    constant, the "Version N.M ends here." line, a dashed rule, a blank line,
+    then the newest-version alias. The last group gets one too — the newest
+    version also ends somewhere, and that is exactly where an amendment
+    appends.
+    """
+    for version, size in sizes:
+        suffix = version.replace(".", "_")
+        out.append(f"{indent}inline constexpr std::size_t {total_name}_v{suffix} = {size};")
+        out.append(f"{indent}// Version {version} ends here.")
+        out.append(f"{indent}// -----------------------------------------------------------------------")
+        out.append("")
+    newest = sizes[-1][0].replace(".", "_")
+    out.append(f"{indent}inline constexpr std::size_t {total_name} = {total_name}_v{newest};")
+
+
 def _emit_structure(
     out: list[str], namespace: str, comment: str, fields: tuple[FieldLayout, ...], total_name: str, total: int
 ) -> None:
@@ -202,6 +247,10 @@ def emit_vtables_header(layout: LayoutResult, document: dict[str, Any]) -> str:
         "namespace vtables {",
     ]
 
+    # Primitives carry no version markers: a primitive can never gain a field.
+    # Appending to a prefix would shift the own-fields of every block deriving
+    # from it, moving bytes that already shipped. A marker there would promise
+    # an amendment point that cannot legally exist.
     for primitive in layout.primitives.values():
         inherits = f" (inherits {primitive.extends})" if primitive.extends else ""
         _emit_structure(
@@ -222,7 +271,7 @@ def emit_vtables_header(layout: LayoutResult, document: dict[str, Any]) -> str:
             f" = ::IFE::constants::{recovery_enum}::{block.recovery_tag};"
         )
         out.extend(_emit_size_offset(block.header_fields))
-        out.append(f"    inline constexpr std::size_t header_size = {block.header_size};")
+        _emit_version_markers(out, "    ", "header_size", block.header_sizes)
         if block.from_sof is not None:
             out.append(
                 f"    /// Fixed at byte 0; occupies the first {block.from_sof} B of the file."
@@ -236,8 +285,292 @@ def emit_vtables_header(layout: LayoutResult, document: dict[str, Any]) -> str:
                 out.extend(_emit_size_offset(block.entry_fields, indent="        "))
                 out.append("    }")
                 out.append("")
-                out.append(f"    inline constexpr std::size_t entry_size = {block.entry_size};")
+                _emit_version_markers(out, "    ", "entry_size", block.entry_sizes)
         out.append("}")
 
     out += ["", "} // namespace vtables", "} // namespace IFE", "", "#endif // IFE_VTables_hpp", ""]
+    return "\n".join(out)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# IFE_Blocks.hpp — typed handles over the wire
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+_RESERVED_ACCESSORS = frozenset({"type", "recovery", "header_size", "entry_size", "size"})
+
+
+def _accessor(field_name: str) -> str:
+    """Accessor name for a field: the field name, lower-cased.
+
+    RECOVERY would collide with the static `recovery` tag constant, so names
+    that clash with a struct-scope member take a `_field` suffix. The rule is
+    mechanical so a reader can predict the name from the spec.
+    """
+    name = field_name.lower()
+    return f"{name}_field" if name in _RESERVED_ACCESSORS else name
+
+
+def _version_of(since: str) -> int:
+    major, minor = version_key(since)
+    return (major << 16) | minor
+
+
+def _read_expression(field: FieldLayout, vtable: str, types: dict[str, Any]) -> tuple[str, str]:
+    """(return type, expression) for reading one field through IFE_Bytes."""
+    at = f"__base + __offset + ::IFE::vtables::{vtable}::offset::{field.name}"
+    if field.kind == "enum":
+        underlying = _cpp_of(field.type_name, types) if field.type_name in types else field.cpp_type
+        return (
+            f"::IFE::constants::{_pascal(field.type_name)}",
+            f"static_cast<::IFE::constants::{_pascal(field.type_name)}>("
+            f"::IFE::load<{underlying}>({at}))",
+        )
+    canonical = _canonical_type(field.type_name, types)
+    if canonical == "u24":
+        return "std::uint32_t", f"::IFE::load_u24({at})"
+    if canonical == "u40":
+        return "std::uint64_t", f"::IFE::load_u40({at})"
+    if canonical == "f16":
+        return "float", f"::IFE::load_f16({at})"
+    return field.cpp_type, f"::IFE::load<{field.cpp_type}>({at})"
+
+
+def _emit_field_accessors(
+    out: list[str],
+    fields: tuple[FieldLayout, ...],
+    vtable: str,
+    types: dict[str, Any],
+    blocks: dict[str, Any],
+    indent: str = "    ",
+    stride_gated: bool = False,
+    owner: str = "",
+    deferred: list[str] | None = None,
+) -> None:
+    """One accessor per field, in wire order, grouped by introducing version."""
+    current: str | None = None
+    for field in fields:
+        if current is not None and field.since != current:
+            out.append(f"{indent}// Version {current} ends here.")
+            out.append(f"{indent}// ---------------------------------------------------------------")
+            out.append("")
+        current = field.since
+
+        if field.kind == "constant":
+            out.append(
+                f"{indent}// {field.name} always holds {field.constant}; validated, not read."
+            )
+            continue
+
+        out.extend(_comment(field.description, f"{indent}///"))
+        name = _accessor(field.name)
+
+        if field.points_to:
+            target = field.points_to
+            optional = field.nullable
+            note = (
+                " Empty when the offset is NULL_OFFSET."
+                if optional
+                else " Required: never NULL_OFFSET in a valid file."
+            )
+            out.append(f"{indent}/// Handle to the {target} block this offset references.{note}")
+            # Declared here, defined after every struct exists: an offset field
+            # returns a handle by value, and the reference graph has cycles, so
+            # no ordering makes every target complete at its point of use.
+            out.append(f"{indent}[[nodiscard]] inline {target} {name}() const noexcept;")
+            if deferred is not None:
+                deferred.append(f"inline {target} {owner}::{name}() const noexcept {{")
+                deferred.append(
+                    f"    const ::IFE::Offset __at = ::IFE::load<::IFE::Offset>("
+                    f"__base + __offset + ::IFE::vtables::{vtable}::offset::{field.name});"
+                )
+                if optional:
+                    deferred.append(
+                        f"    if (__at == ::IFE::constants::NULL_OFFSET) return {target}{{}};"
+                    )
+                deferred.append(f"    return {target}{{__base, __at, __size, __version}};")
+                deferred.append("}")
+            continue
+
+        cpp, expression = _read_expression(field, vtable, types)
+        gated = field.since != "1.0"
+        if gated or stride_gated and field.since != "1.0":
+            guard = f"__version < {_version_of(field.since):#010x}u"
+            if stride_gated:
+                guard += (
+                    f" || __stride < ::IFE::vtables::{vtable}::offset::{field.name} + "
+                    f"::IFE::vtables::{vtable}::size::{field.name}"
+                )
+            out.append(
+                f"{indent}/// Added in {field.since}; empty when the file predates it."
+            )
+            out.append(
+                f"{indent}[[nodiscard]] inline std::optional<{cpp}> {name}() const noexcept {{"
+            )
+            out.append(f"{indent}    if ({guard}) return std::nullopt;")
+            out.append(f"{indent}    return {expression};")
+            out.append(f"{indent}}}")
+        else:
+            out.append(
+                f"{indent}[[nodiscard]] inline {cpp} {name}() const noexcept "
+                f"{{ return {expression}; }}"
+            )
+    if current is not None:
+        out.append(f"{indent}// Version {current} ends here.")
+        out.append(f"{indent}// ---------------------------------------------------------------")
+
+
+def emit_blocks_header(layout: LayoutResult, types: dict[str, Any], header: dict[str, Any]) -> str:
+    """IFE_Blocks.hpp — a typed handle per block, reading through IFE_Bytes.
+
+    Successor to the ``Serialization::`` structs in src/IrisCodecExtension.hpp:
+    same state members, same method roles, but the offset arithmetic comes from
+    the generated vtables and every read goes through the primitives rather
+    than an open-coded load. The primitive hierarchy the spec declares appears
+    here as real base classes, so what a reader sees matches what the schema
+    says.
+    """
+    out: list[str] = [
+        _banner(header),
+        "#ifndef IFE_Blocks_hpp",
+        "#define IFE_Blocks_hpp",
+        "",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        "#include <optional>",
+        "",
+        '#include "IFE_Constants.hpp"',
+        '#include "IFE_VTables.hpp"',
+        '#include "IFE_Bytes.hpp"',
+        "",
+        "namespace IFE {",
+        "namespace blocks {",
+        "",
+        "// Forward declarations: offset fields return handles to other blocks,",
+        "// and the reference graph has cycles no ordering would resolve.",
+    ]
+    for name in layout.blocks:
+        out.append(f"struct {name};")
+
+    # ---- primitive bases ------------------------------------------------ #
+    out.append("")
+    out.append("// ---- primitive block types ----")
+    out.append("// The hierarchy the schema declares, as real base classes. State and")
+    out.append("// behaviour common to a primitive live here once, not per block.")
+    out.append("// CRTP: a base needs the derived block's header_size for its bounds")
+    out.append("// check, which is the one thing that genuinely varies.")
+    for primitive in layout.primitives.values():
+        base = f" : public {primitive.extends}<Derived>" if primitive.extends else ""
+        out.append("")
+        out.extend(_comment(primitive.description))
+        out.append("template <typename Derived>")
+        out.append(f"struct {primitive.name}{base} {{")
+        if primitive.extends is not None:
+            # A dependent base hides its members from unqualified lookup, so
+            # name them explicitly. It also documents what this primitive
+            # inherits, which is the point of declaring the hierarchy.
+            parent = f"{primitive.extends}<Derived>"
+            for member in ("__base", "__offset", "__size", "__version"):
+                out.append(f"    using {parent}::{member};")
+            out.append("")
+        if primitive.extends is None:
+            out.append("    const ::IFE::BYTE* __base    = nullptr;")
+            out.append("    ::IFE::Offset      __offset  = ::IFE::constants::NULL_OFFSET;")
+            out.append("    ::IFE::Size        __size    = 0;   ///< total file size")
+            out.append("    std::uint32_t      __version = 0;   ///< major<<16 | minor, from FILE_HEADER")
+            out.append("")
+            out.append("    /// Stricter than v1's (IrisCodecExtension.cpp:774-777): the whole")
+            out.append("    /// header must fit, so a truncated file fails here rather than")
+            out.append("    /// part-way through a read.")
+            out.append("    constexpr explicit operator bool() const noexcept {")
+            out.append("        return __base != nullptr")
+            out.append("            && __offset != ::IFE::constants::NULL_OFFSET")
+            out.append("            && __offset + Derived::header_size <= __size;")
+            out.append("    }")
+            out.append("")
+        inherited = (
+            layout.primitives[primitive.extends].fields if primitive.extends else ()
+        )
+        introduced = tuple(f for f in primitive.fields if f not in inherited)
+        if introduced:
+            _emit_field_accessors(
+                out, introduced, primitive.name, types, layout.blocks, indent="    "
+            )
+        if primitive.name in ("array", "byte_array"):
+            out.append("")
+            out.append("    /// Entries begin where the block's own fields end.")
+            out.append("    [[nodiscard]] constexpr ::IFE::Offset entries_begin() const noexcept {")
+            out.append("        return __offset + Derived::header_size;")
+            out.append("    }")
+        out.append("};")
+
+    # ---- one struct per block ------------------------------------------- #
+    deferred: list[str] = []
+    for name, block in layout.blocks.items():
+        primitive = layout.primitives[block.primitive]
+        own = tuple(f for f in block.header_fields if f not in primitive.fields)
+
+        out.append("")
+        out.append(f"// ---- {name} ----")
+        out.extend(_comment(block.description))
+        out.append(f"struct {name} : public {block.primitive}<{name}> {{")
+        out.append(f'    static constexpr char type[] = "{name}";')
+        recovery_enum = _pascal("recovery_codes")
+        out.append(f"    static constexpr ::IFE::constants::{recovery_enum} recovery =")
+        out.append(f"        ::IFE::constants::{recovery_enum}::{block.recovery_tag};")
+        out.append(
+            f"    static constexpr ::IFE::Size header_size = ::IFE::vtables::{name}::header_size;"
+        )
+        if own:
+            out.append("")
+            _emit_field_accessors(
+                out, own, name, types, layout.blocks, indent="    ",
+                owner=name, deferred=deferred,
+            )
+
+        if block.entry_fields:
+            entry = block.entry_name or f"{name}_ENTRY"
+            out.append("")
+            out.append(f"    /// One {entry}, addressed by the array's stored stride.")
+            out.append(f"    struct {entry} {{")
+            out.append("        const ::IFE::BYTE* __base    = nullptr;")
+            out.append("        ::IFE::Offset      __offset  = 0;")
+            out.append("        ::IFE::Size        __size    = 0;   ///< total file size")
+            out.append("        std::uint16_t      __stride  = 0;   ///< as written, not as compiled")
+            out.append("        std::uint32_t      __version = 0;")
+            out.append("")
+            _emit_field_accessors(
+                out, block.entry_fields, f"{name}::entry", types, layout.blocks,
+                indent="        ", stride_gated=True,
+                owner=f"{name}::{entry}", deferred=deferred,
+            )
+            out.append("    };")
+            out.append("")
+            out.append("    /// Entry `i`, stepped by the STRIDE the encoder wrote - never by the")
+            out.append("    /// size this build was compiled with. That is what lets a reader")
+            out.append("    /// traverse an array written by a later version.")
+            out.append(f"    [[nodiscard]] inline {entry} entry(std::uint32_t __i) const noexcept {{")
+            out.append(
+                f"        return {entry}{{__base, entries_begin() + "
+                "static_cast<::IFE::Offset>(__i) * stride(), __size, stride(), __version};"
+            )
+            out.append("    }")
+        elif block.primitive == "byte_array":
+            out.append("")
+            out.append("    /// The whole byte run. Its interpretation is not this layer's")
+            out.append("    /// business: slicing comes from a sizes array elsewhere, and the")
+            out.append("    /// character encoding is normative prose.")
+            out.append("    [[nodiscard]] inline ::IFE::ByteSpan bytes() const noexcept {")
+            out.append("        return {__base + entries_begin(), count()};")
+            out.append("    }")
+        out.append("};")
+
+    if deferred:
+        out.append("")
+        out.append("// ---- offset accessors ----")
+        out.append("// Defined here because each returns a handle by value and the block")
+        out.append("// reference graph has cycles: no declaration order makes every target")
+        out.append("// complete at its point of use.")
+        out.append("")
+        out.extend(deferred)
+
+    out += ["", "}  // namespace blocks", "}  // namespace IFE", "", "#endif  // IFE_Blocks_hpp", ""]
     return "\n".join(out)

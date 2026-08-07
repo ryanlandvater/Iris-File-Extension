@@ -1,6 +1,7 @@
 /**
  * @file IFE_Bytes.hpp
  * @brief Scalar load/store primitives for the IFE byte stream.
+ * @copyright Iris Developers, 2025-2026
  *
  * This is the only place in the generated layer where byte order and packed
  * widths appear. Everything above it — the generated block readers, writers
@@ -58,6 +59,17 @@ static_assert(std::numeric_limits<float>::is_iec559,
 static_assert(std::numeric_limits<double>::is_iec559,
               "IFE requires IEEE 754 binary64 doubles");
 static_assert(sizeof(float) == 4 && sizeof(double) == 8);
+
+/// A view of a byte range in the mapped file: what a byte_array block yields.
+/// Deliberately not std::span — the generated headers stay compilable without
+/// <span>, and two members are the whole contract.
+struct ByteSpan {
+    const BYTE* data = nullptr;
+    Size        size = 0;
+
+    [[nodiscard]] constexpr bool empty() const noexcept { return size == 0; }
+    constexpr explicit operator bool() const noexcept { return data != nullptr; }
+};
 
 namespace detail {
 

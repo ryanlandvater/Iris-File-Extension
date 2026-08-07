@@ -947,7 +947,49 @@ know which fields are post-1.0. Fix the model before the emitter needs it.
   ```
   Both diffs empty, `--check` exits 0.
 
-##### 4.2b — Emitter scaffolding, block handles, readers
+##### 4.2b — Emitter scaffolding, block handles, readers — ✅ DONE
+
+`generated_source/IFE_Blocks.hpp` (≈40 KB) emits a typed handle per block.
+The primitive hierarchy the schema declares appears as **real base classes**
+via CRTP — the base needs the derived block's `header_size` for its bounds
+check, which is the one thing that genuinely varies. State and shared
+accessors live on the primitive once, not per block.
+
+Three things the implementation forced that the task text did not anticipate:
+
+- **Offset accessors are defined out of line.** Each returns a handle *by
+  value* and the block reference graph has cycles, so no declaration order
+  makes every target complete at its point of use. Forward declarations are
+  not enough; the definitions follow every struct.
+- **Entries carry `__size`.** An entry constructs child handles
+  (`IMAGES.IMAGE_ENTRY` → `IMAGE_BYTES`), and those need the file size for
+  their bounds check.
+- **A derived primitive names its inherited members explicitly.** A dependent
+  base hides them from unqualified lookup, so `array` declares
+  `using block<Derived>::__base;` and friends — which doubles as
+  documentation of what it inherits.
+
+**Version markers land at the structure level, not inside `_emit_size_offset`.**
+The task said to put them in that function so all six structure kinds got
+them from one implementation. Once written, that placed a marker inside both
+the `size` and `offset` namespaces — v1 has one enum and therefore one marker,
+and duplicating it added noise without information. The logic is still a
+single helper (`_emit_version_markers`), called once per structure, beside
+the cumulative size constants where the boundary actually means something.
+Primitives get none: a primitive can never gain a field, so a marker there
+would promise an amendment point that cannot legally exist.
+
+**The parity wall's latent bug is fixed here, as planned.** It compared
+`header_size` — the newest-version total — against v1's 1.0 total, so a legal
+append failed the build blaming the wrong thing. It now compares
+`header_size_v1_0` / `entry_size_v1_0`. Verified end to end: bumping the
+document to 1.1 and appending `TILE_TABLE.FOCUS_PLANES` produces a gated
+`std::optional<std::uint16_t> focus_planes()`, emits both boundary markers,
+and the wall **passes**.
+
+The original task description follows, for the record.
+
+##### 4.2b — Emitter scaffolding, block handles, readers (original)
 
 - **v1 precedent — the shape being generated:**
   `src/IrisCodecExtension.hpp:385-408` (`DATA_BLOCK`: the four state members,
@@ -1365,7 +1407,8 @@ must already exist, or adding it later breaks the ABI.
   attached.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
-~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → **4.2b (next)** →
+~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
+**4.2c (next)** →
 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on

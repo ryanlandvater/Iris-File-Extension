@@ -4,13 +4,24 @@ Loads the committed spec JSON, derives all layouts (generator/model),
 emits the C++ layer and doc tables (generator/emit), and supports
 --check for CI drift detection. No code-generation logic lives here.
 """
+# ---------------------------------------------------------------------------
+# ROLE: orchestration and the only file I/O in the generator. Loads the three
+# spec documents, validates them, asks model/ for a layout, asks emit/ for
+# text, and then either writes the result or compares it (--check).
+#
+# For a C++ reader: `outputs` is a map of relative path -> full file contents,
+# built entirely in memory before anything is written. Adding a generated file
+# means adding one entry to that map — _write_if_changed, _run_check and the
+# drift gate are already generic over it and need no change.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
 
-from .emit.cpp import emit_constants_header, emit_vtables_header
+from .emit.cpp import emit_blocks_header, emit_constants_header, emit_vtables_header
 from .emit.docs import emit_layout_markdown
 from .model.layout import LayoutResult, derive_layout
 from .validate import validate
@@ -29,6 +40,9 @@ def _render(
             constants_doc, fields_doc.get("types", {}), header
         ),
         f"{_CPP_ROOT}/IFE_VTables.hpp": emit_vtables_header(layout, header),
+        f"{_CPP_ROOT}/IFE_Blocks.hpp": emit_blocks_header(
+            layout, fields_doc.get("types", {}), header
+        ),
         f"{_DOCS_ROOT}/layout_tables.md": emit_layout_markdown(layout),
     }
     return outputs, layout
@@ -38,6 +52,8 @@ def _dest_dir(rel: str, out_dir: Path, docs_dir: Path) -> Path:
     return out_dir if rel.startswith(_CPP_ROOT) else docs_dir
 
 
+# Writes only when the content differs, so unchanged files keep their mtime and
+# CMake does not rebuild the world after a no-op regeneration.
 def _write_if_changed(path: Path, text: str) -> bool:
     """Write only when content differs so mtimes stay stable for CMake."""
     if path.exists() and path.read_text() == text:
