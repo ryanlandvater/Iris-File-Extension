@@ -49,6 +49,7 @@ option(IFE_BUILD_TESTS "Build IFE unit/stress tests (requires IFE_USE_FASTFHIR_S
 # compiles the new lock-free VMA layer alongside the legacy Abstraction::File
 # code. Phases 2-6 progressively replace the legacy paths.
 option(IFE_USE_FASTFHIR_SUBSTRATE "Compile the new FastFHIR-style substrate (IFE_Memory, etc.)" OFF)
+option(IFE_RUN_GENERATOR "Regenerate generated_source/ at configure (requires generator/)" OFF)
 if(IRIS_EXTENSION_BUILD_ALL)
     set (IFE_BUILD_SHARED ON)
     set (IFE_BUILD_STATIC ON)
@@ -97,10 +98,52 @@ set (
     IFE_Dependencies
     IrisHeaders
 )
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Generated source (generated_source/) and generated docs
+# (generated_docs/) — Phase 3 pipeline output. Both are gitignored and
+# freely regenerable; the committed spec JSON is the source of truth.
+# Generation runs only when the pipeline exists, and only then if
+# IFE_RUN_GENERATOR=ON or the anchor file is missing.
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+set(IFE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_source")
+set(IFE_DOCS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/generated_docs")
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/generator/pipeline.py)
+    if(IFE_RUN_GENERATOR OR NOT EXISTS "${IFE_GENERATED_DIR}/IFE_VTables.hpp")
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} -m generator
+                    --out-dir ${IFE_GENERATED_DIR}
+                    --docs-dir ${IFE_DOCS_DIR}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            RESULT_VARIABLE IFE_GEN_RESULT
+        )
+        if(NOT IFE_GEN_RESULT EQUAL 0)
+            message(FATAL_ERROR "IFE code generator failed — see output above")
+        endif()
+    endif()
+endif()
+# Single GLOB per configure, always after the generator block so a fresh
+# checkout with an empty generated_source/ still compiles what the
+# generator just produced.
+file(GLOB IFE_GENERATED_SOURCES CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.cpp)
+file(GLOB IFE_GENERATED_HEADERS CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.hpp)
+if(IFE_GENERATED_SOURCES OR IFE_GENERATED_HEADERS)
+    list(APPEND IFE_SourcesPriv   ${IFE_GENERATED_SOURCES})
+    list(APPEND IFE_SourcesExport ${IFE_GENERATED_HEADERS})
+    list(APPEND IFE_IncludeDir    ${IFE_GENERATED_DIR})
+    message(STATUS "IFE: compiling generated sources from ${IFE_GENERATED_DIR}")
+endif()
+# Generated headers live under their own base dir for the FILE_SET; keep
+# the base list conditional so an empty generated_source/ (pre-Phase 3)
+# never references a nonexistent directory.
+set(IFE_FILE_SET_BASE_DIRS ${IFE_SOURCE_DIR})
+if(IFE_GENERATED_HEADERS)
+    list(APPEND IFE_FILE_SET_BASE_DIRS ${IFE_GENERATED_DIR})
+endif()
 add_library(IrisFileExtensionLib OBJECT)
 target_sources (
     IrisFileExtensionLib INTERFACE FILE_SET HEADERS
-    BASE_DIRS ${IFE_SOURCE_DIR} FILES
+    BASE_DIRS ${IFE_FILE_SET_BASE_DIRS} FILES
     ${IFE_SourcesExport}
 )
 target_sources (

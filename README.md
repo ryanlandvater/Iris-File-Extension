@@ -3,17 +3,17 @@
 This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This repository has a very limited scope; it provies the byte-offset vtables and enumerations referenced by the Iris Codec specification and validates files against the published IFE specification. This is an advanced repository. **If this is your first foray into Iris, the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) is a much better choice**. 
 
 > [!IMPORTANT]
-> **IFE 2.x migration in progress.** A multi-phase migration to a FastFHIR-style
-> lock-free VMA substrate (with schema-driven codegen and a universal
-> `DATA_BLOCK` header) is underway. The new substrate is gated behind the
-> CMake option `IFE_USE_FASTFHIR_SUBSTRATE` (default **OFF**); the existing
-> `Abstraction::File` API is unaffected until Phase 6. See
+> **Schema-driven refactoring in progress.** The byte-offset vtables and
+> enumerations are being re-expressed as a JSON specification that generates
+> both the C++ serialization layer and the specification document itself
+> (LaTeX/HTML). The hand-written byte-offset tables will be retired when the
+> ecosystem (including Iris-Codec) cuts over. See
 > [`MIGRATION.md`](./MIGRATION.md) for the phase plan and current status.
 
 Example Iris slide files are hosted to test decoding are hosted at [the Iris-Example-Files repository](https://github.com/IrisDigitalPathology/Iris-Example-Files). 
 
 > [!CAUTION]
-> **This repository is primarily for scanner device manufacturers and programmers wishing to write custom encoders and decoders. If this does not describe your goals, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) into your project**. This repository allows for low-level manipulation of the Iris File Extension file structure in a very narrow scope: it just provides byte offsets and validation checks against the current IFE standard. Most programmers (particularly for research) attempting to access Iris files **should not use this repository** and use Iris Codec instead. 
+> **This repository is primarily for scanner device manufacturers and programmers wishing to write custom encoders and decoders. If this does not describe your goals, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) into your project**. This repository allows for low-level manipulation of the Iris File Extension file structure in a very narrow scope: it just provides byte offsets and validation checks against the current IFE standard. Most programmers (particularly for research) attempting to access Iris files **should not use this repository** and use Iris Codec instead.
 
 > [!NOTE]
 > The scope of this repository is only serializing or deserializing Iris slide files. Compression and decompression are **NOT** components of this repository. The WSI tile byte arrays will be referenced in their on-disk compressed forms and it is up to your implementation to compress or decompress tiles. If you would like a system that performs image compression and decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which incorporates this repository for Iris slide file serialization.

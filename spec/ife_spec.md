@@ -1,0 +1,385 @@
+<!--
+  IFE Specification Basis Document
+  ================================
+  Hand-written narrative and normative content of the IFE specification.
+  The document pipeline (Phase 5) renders this file to LaTeX/HTML,
+  replacing {{...}} anchors with content generated from ife_fields.json
+  and ife_constants.json:
+
+    {{layout:<BLOCK>}}      derived layout table (parameter | type | offset | value)
+    {{entry_layout:<BLOCK>}} derived entry layout table for an array block
+    {{constants:<group>}}   value table for a constants group
+    {{preamble}} {{block_header}} {{array_header}}  shared structure tables
+
+  Requirement keywords follow the v1.0 definitions: **shall** = mandatory,
+  **should** = recommended, **may** = optional.
+-->
+
+# Iris Digital Slide File Extension — File Structure Technical Specification
+
+Version 1.0 (draft) — Copyright © 2025–2026 Iris Developers — CC BY-ND 4.0
+
+## 1 Introduction
+
+### 1.1 Purpose
+
+<!-- Narrative carried from the ratified v1.0 specification. -->
+The Iris Digital Slide file structure specification defines a portable
+serialization format for digital pathology whole slide image (WSI) pixel data
+and metadata: a highly performant binary structure amenable to massively
+multi-threaded encoding and immediate multi-threaded random access; a
+dynamically defined file layout that delegates information ordering to the
+encoder, allows optional data-blocks and unobtrusive file updates, and
+provides complete bi-directional file and encoder version compatibility; and
+a secure format that validates structures, prevents file-bound and buffer
+overflow violations, and recovers the file structure if header metadata is
+corrupted.
+
+### 1.2 Definitions
+
+Terms (implementation, atomic, offset pointer, slide tile, slide layer,
+magnification vs. scale, slide space / fractional tile location), symbols,
+and abbreviations follow the v1.0 specification, Section 1.3.
+<!-- TODO(draft): migrate the full v1 definitions text here. -->
+
+### 1.3 Technical Requirements
+
+* All multi-byte values **shall** be stored in little-endian byte ordering
+  without exception.
+* Floating point values **shall** be encoded per the IEEE-754/IEC-559
+  standard (f16 half, f32 single, f64 double precision).
+* Data-blocks are tightly packed: every parameter's byte offset within a
+  block is derived from the cumulative widths of the fields preceding it.
+  Encoders **may** place blocks at any byte location within the file
+  (alignment padding between blocks is permitted but never required).
+* Metadata attribute keys **should** be encoded as ASCII with UTF-8 values;
+  DICOM tag-value encoding **shall** follow NEMA character-set requirements.
+
+## 2 File Structure Elements
+
+### 2.1 Overview
+
+The file is a series of floating, tightly packed data-blocks within a sea of
+bytes. Statically sized *header blocks* contain data parameters and offsets
+to other blocks, forming the offset-chain; dynamically sized *array blocks*
+carry repeated entries or raw byte blobs. Entry into the structure is the
+*file preamble* and *file header* at the start of file; every other block is
+located exclusively through offset fields.
+
+### 2.2 Statically Defined Values
+
+{{constants:statically_defined_values}}
+
+Null-type constants indicate an optional data-element is not present and
+**should** be used to indicate an unused optional parameter rather than
+creating a data-block with zero entries.
+
+### 2.3 File Preamble
+
+{{preamble}}
+
+The first eight bytes of every IFE file are version-invariant: their layout
+will never change in any future IFE version, so a reader can always identify
+an Iris file and select the correct specification before parsing any block.
+
+* The first four bytes of the file **shall** be the magic bytes 0x49726973
+  ('Iris') in little-endian order.
+* SPEC_MAJOR **shall** encode the major version of the IFE specification to
+  which the file conforms. A decoder whose supported major version is less
+  than the encoded major version **shall not** attempt to read the file
+  structure and **should** report the version mismatch.
+* SPEC_MINOR **shall** encode the minor version. A decoder whose supported
+  minor version is less than the encoded minor version **shall** read the
+  file, restricting itself to the fields defined by its own minor version,
+  and **should** surface a warning that later-version content is present but
+  inaccessible.
+* IFE v1.0 files are distinguished by the two bytes at offset 4 reading
+  0x5501 (the v1.0 recovery code position); readers **should** detect
+  this pattern and report a v1 file rather than a version mismatch.
+
+### 2.4 Universal Block Header
+
+{{block_header}}
+
+Every data-block begins with the universal header. The validation field
+stores the block's own byte offset, so a reader arriving at offset *x* can
+confirm *read(x) = x* before trusting any content; the recovery tag then
+confirms the block type. Together they enable computationally trivial deep
+validation and corruption-recovery scans.
+
+* The validation field **shall** encode the byte offset, from the start of
+  file, of the first byte of the block's universal header.
+* The recovery field **shall** encode the recovery code assigned to the
+  block type.
+
+#### 2.4.1 Recovery Codes
+
+{{constants:recovery_codes}}
+
+Recovery codes **shall** be encoded as 16-bit little-endian values. The
+numerical recovery sequence co-occurs with the high-entropy byte 0x55
+(0b01010101) to avoid spurious matches during recovery routines. Tags are
+stable forever once assigned; tags of retired blocks are never reused.
+
+### 2.5 Array Header
+
+{{array_header}}
+
+Every array block begins with the universal block header followed by the
+array header. Block-specific header fields, where defined, follow the array
+header; entries follow the complete header region.
+
+* The stride **shall** encode the byte size of each array entry at the time
+  of encoding, and **shall** be used by decoders for entry iteration
+  regardless of the entry size defined by the decoder's specification
+  version. This is the mechanism of forward compatibility: future versions
+  may expand an entry, and prior decoders skip the appended bytes as padding.
+* The count **shall** encode the number of stride-sized entries within the
+  array. Byte-blob arrays use a stride of one (1), making the count a byte
+  count.
+
+## 3 Header Blocks
+
+### 3.1 File Header
+
+{{layout:FILE_HEADER}}
+
+The file header is the root of the file structure and the only block with a
+statically defined location.
+
+* The file header block **shall** begin at byte offset 8, immediately
+  following the file preamble (its validation field therefore always encodes
+  the value 8).
+* FILE_SIZE **shall** encode the size of the file in bytes, identical to the
+  value returned by an operating system file-size query, at all times other
+  than during active encoding. Validation **shall** fail, and file recovery
+  is indicated, when the encoded file size differs from the
+  operating-system-reported size. During encoding, this slot serves as the
+  atomic write-head (stream cursor) for lock-free space reservation and is
+  sealed to the final file size when encoding completes.
+* FILE_REVISION **shall** be incremented each time a file modification has
+  occurred.
+* TILE_TABLE_OFFSET **shall** contain a valid offset to the tile table
+  block; it **shall not** be NULL_OFFSET.
+* METADATA_OFFSET **shall** contain a valid offset to the metadata block
+  even if no optional metadata elements are encoded; it **shall not** be
+  NULL_OFFSET.
+
+### 3.2 Tile Table
+
+{{layout:TILE_TABLE}}
+
+* ENCODING **shall** be one of the tile encoding values
+  ({{constants:tile_encodings}}), excluding the undefined value (0).
+* FORMAT **should** describe the pixel channel ordering and bits per channel
+  ({{constants:pixel_formats}}); it **may** encode the undefined value (0)
+  when the original encoding information is unavailable.
+* CIPHER_OFFSET **shall** be NULL_OFFSET unless the tile encoding is
+  TILE_ENCODING_IRIS.
+* TILE_OFFSETS_OFFSET **shall** contain a valid offset to the tile offsets
+  array.
+* LAYER_EXTENTS_OFFSET **shall** contain a valid offset to the layer extents
+  array.
+
+### 3.3 Codec Cipher
+
+{{layout:CIPHER}}
+
+The codec cipher is a reserved data-block for future use in the Iris Codec.
+Its offset in the tile table **shall** be encoded as NULL_OFFSET when unused.
+
+### 3.4 Metadata
+
+{{layout:METADATA}}
+
+* The codec version entries **should** correspond with the major, minor, and
+  build numbers of the Iris Codec implementation that wrote the slide file;
+  they **may** be zero if an Iris Codec module, or derived tool, did not
+  write the file.
+* ATTRIBUTES_OFFSET **should** point to a valid attributes block and
+  **shall** be NULL_OFFSET if no attributes are encoded.
+* IMAGES_OFFSET **should** point to an images array and **shall** be
+  NULL_OFFSET if no associated images are encoded.
+* ICC_COLOR_OFFSET **may** point to an ICC color profile byte array and
+  **shall** be NULL_OFFSET if no ICC color space is encoded.
+* ANNOTATIONS_OFFSET **may** point to an annotations array and **shall** be
+  NULL_OFFSET if no annotations are present.
+* MICRONS_PIXEL **should** encode a floating point coefficient describing
+  the number of microns of physical space each pixel occupies, normalized to
+  relative layer scale 1, and **may** encode zero (0.f) if no value is
+  available. <!-- TODO(draft): migrate Equations 2.1/2.2 (MpP and Mc
+  normalization) from v1.0 Section 2.3.4. -->
+* MAGNIFICATION **should** encode a floating point coefficient that converts
+  layer scale to optical magnification and **may** encode zero (0.f) if no
+  value is available.
+
+### 3.5 Attributes
+
+{{layout:ATTRIBUTES}}
+
+* FORMAT **shall** be one of the metadata format values
+  ({{constants:metadata_formats}}), excluding the undefined value (0).
+* VERSION **should** encode the version of the metadata standard for which
+  the file claims conformance (for DICOM, the encoding year). Files not
+  conforming to a clinical metadata standard **shall** use
+  METADATA_FREE_TEXT and **shall** encode zero (0x0000).
+* SIZES_OFFSET **shall** encode a valid offset to the attribute sizes array.
+* BYTES_OFFSET **shall** encode a valid offset to the attribute byte array.
+
+The IFE is not intended to validate clinical interoperability metadata
+specification conformance; that is outside the scope of this specification.
+
+## 4 Array Blocks
+
+### 4.1 Layer Extents Array
+
+{{layout:LAYER_EXTENTS}}
+{{entry_layout:LAYER_EXTENTS}}
+
+* The number of layers **shall** be greater than zero.
+* X_TILES / Y_TILES **shall** encode the number of 256-pixel tiles in the
+  horizontal / vertical direction and **shall** be greater than zero.
+* SCALE **shall** have a value greater than zero and any subsequent layer
+  **shall** have a scale greater than the previous layer's scale.
+
+<!-- TODO(draft): migrate the global tile indexing scheme narrative,
+     Equations 2.3/2.4, and Figure 2.6 from v1.0 Sections 2.4.1-2.4.2. -->
+
+### 4.2 Tile Offsets Array
+
+{{layout:TILE_OFFSETS}}
+{{entry_layout:TILE_OFFSETS}}
+
+* The count **shall** equal the total number of global tile indices derived
+  from the layer extents array.
+* OFFSET **shall** encode the byte offset location relative to the SOF where
+  the corresponding compressed tile byte-stream is located and **shall not**
+  exceed the 40-bit maximum value (1.0995 TB), or **shall** encode NULL_TILE
+  when the tile is not encoded.
+* SIZE **shall** encode the number of bytes the compressed tile byte-stream
+  consumes and **shall not** exceed the 24-bit maximum value (16.777 MB).
+
+### 4.3 Tile Pixel Data
+
+The compressed tile byte streams referenced by the tile offsets array are
+deliberately **not** framed blocks: streams carry no per-tile header, may
+appear anywhere in the file, in any order (including fully stochastic order
+from parallel encoding), and may be interrupted by intervening data. Each
+stream is located and sized exclusively by its tile offsets entry.
+
+* Each compressed byte stream **shall** be comprised of one or more bytes
+  encoded according to the encoding algorithm and pixel format encoded in
+  the tile table.
+* The ordering **may** follow the global tile indexing scheme or **may**
+  follow no indexing scheme, arranged in any order the encoder chooses.
+
+### 4.4 Attribute Sizes Array
+
+{{layout:ATTRIBUTE_SIZES}}
+{{entry_layout:ATTRIBUTE_SIZES}}
+
+* The number of attributes **should** be greater than zero but **may** be
+  zero.
+* Entry order **shall** match the attribute byte array's packing order: each
+  key immediately precedes its corresponding value.
+* KEY_SIZE **shall** contain the size, in bytes, of the attribute key
+  string; if encoded according to the DICOM standard this value **shall**
+  be 4.
+* VALUE_SIZE **shall** contain the size, in bytes, of the UTF-8 value string
+  corresponding to the key or tag.
+
+### 4.5 Attribute Byte Array
+
+{{layout:ATTRIBUTE_BYTES}}
+
+* The count **shall** encode the total byte size of the attribute byte
+  array.
+* Key byte sequences **shall** contain ASCII strings (or 4-byte DICOM tag
+  values); value byte sequences **shall** contain UTF-8 strings corresponding
+  to the immediately preceding key or tag.
+
+### 4.6 Images Array
+
+{{layout:IMAGES}}
+{{entry_layout:IMAGES}}
+
+* BYTES_OFFSET **shall** encode the offset of the variable-length image data
+  in an image bytes block.
+* WIDTH / HEIGHT **shall** be greater than zero and less than the 32-bit
+  maximum value.
+* ENCODING **shall** be one of the image encoding values
+  ({{constants:image_encodings}}), excluding the undefined value (0).
+* FORMAT **shall** be one of the pixel format values, excluding the
+  undefined value (0).
+* ORIENTATION **shall** encode the intended degree of rotation as an IEEE
+  half-precision float interpreted modulo 360, and **should** encode a value
+  < 360. Any degree value is legal; the `ORIENTATION_*` convenience
+  constants are listed with the statically defined values in section 2.2.
+
+### 4.7 Image Bytes
+
+{{layout:IMAGE_BYTES}}
+
+* TITLE_SIZE **shall** encode a size greater than zero of a valid and unique
+  image title/label; label bytes **shall** be ASCII and **shall** precede
+  the image bytes.
+* IMAGE_SIZE **shall** encode a size greater than zero of a valid image byte
+  stream encoded per the entry's image encoding.
+* The count **shall** equal the sum of TITLE_SIZE and IMAGE_SIZE.
+
+### 4.8 ICC Color Profile
+
+{{layout:ICC_PROFILE}}
+
+* The count **shall** be greater than zero and **shall** encode the byte
+  size of the contained ICC profile, stored without modification.
+
+### 4.9 Annotations Array
+
+{{layout:ANNOTATIONS}}
+{{entry_layout:ANNOTATIONS}}
+
+Annotations are positioned and sized at fractional tile locations within the
+slide-space convention (v1.0 Section 1.3 definitions).
+<!-- TODO(draft): migrate slide-space narrative and Figure 2.7. -->
+
+* GROUP_SIZES_OFFSET / GROUP_BYTES_OFFSET **shall** be NULL_OFFSET when no
+  annotation groups are encoded.
+* IDENTIFIER **shall** encode a 24-bit tag uniquely identifying the
+  annotation and **shall not** be NULL_ID.
+* BYTES_OFFSET **shall** be a valid offset to the corresponding annotation
+  byte array.
+* FORMAT **shall** be one of the annotation type values
+  ({{constants:annotation_types}}), excluding the undefined value (0).
+* PIXEL_WIDTH / PIXEL_HEIGHT **shall** be greater than zero and less than
+  the 32-bit maximum value.
+* PARENT_ID **may** encode a parent annotation identifier and **should**
+  encode NULL_ID when no parent is referenced.
+
+### 4.10 Annotation Byte Array
+
+{{layout:ANNOTATION_BYTES}}
+
+* The count **shall** encode the total byte size of the annotation byte
+  stream, encoded per the owning entry's annotation type.
+
+### 4.11 Annotation Group Sizes
+
+{{layout:ANNOTATION_GROUP_SIZES}}
+{{entry_layout:ANNOTATION_GROUP_SIZES}}
+
+* Ordering **shall** match the annotation group bytes array: each title
+  immediately precedes its identifier sequence.
+* TITLE_SIZE **shall** contain the byte size of the group title string.
+* MEMBER_COUNT **shall** contain the number of 24-bit annotation identifiers
+  within the group.
+
+### 4.12 Annotation Group Bytes
+
+{{layout:ANNOTATION_GROUP_BYTES}}
+
+* Label byte sequences **shall** contain ASCII strings; identifier sequences
+  **shall** contain 24-bit annotation identifiers; each label **shall**
+  immediately precede the identifier sequence it describes.
+* The count **shall** encode the total byte size of the array: for each
+  group, the label character bytes plus three bytes per member identifier.

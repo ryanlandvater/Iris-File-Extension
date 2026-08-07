@@ -1,0 +1,175 @@
+{
+  "// MARK: - DOCUMENT IDENTITY": "Name and version of the specification these constants belong to. Must match ife_fields.json byte for byte.",
+  "spec": {
+    "name": "Iris File Extension",
+    "abbreviation": "IFE",
+    "version": { "major": 1, "minor": 0 },
+    "status": "draft",
+    "copyright": "Copyright 2025-2026 Iris Developers",
+    "license": "CC BY-ND 4.0"
+  },
+
+  "// MARK: - STATICALLY DEFINED VALUES": "Sentinels and named convenience constants. Each carries its own type; this is not an enumeration.",
+  "statically_defined_values": {
+    "description": "Constants defined by the specification and reserved for use in the designated contexts. Null-type constants indicate an optional data-element is not present and should be used to indicate an unused optional parameter rather than creating a data-block with zero entries.",
+    "ife_version": {
+      "1.0": {
+        "MAGIC_BYTES": {
+          "type": "u32",
+          "value": "0x49726973",
+          "description": "ASCII 'Iris' (49 72 69 73). The first four bytes of every IFE file."
+        },
+        "NULL_OFFSET": {
+          "type": "offset",
+          "value": "0xFFFFFFFFFFFFFFFF",
+          "description": "Indicates an optional offset field references nothing."
+        },
+        "NULL_TILE": {
+          "type": "u40",
+          "value": "0xFFFFFFFFFF",
+          "description": "Indicates a tile offset slot with no encoded tile data.",
+          "errata": "IFE v1.0 published this constant as 0xFFFFFFFFFFFF (48-bit), which cannot fit the 40-bit tile-offset field; this schema corrects the sentinel to the 40-bit maximum."
+        },
+        "NULL_ID": {
+          "type": "u24",
+          "value": "0xFFFFFF",
+          "description": "Indicates an absent annotation identifier (e.g. an annotation with no parent).",
+          "errata": "IFE v1.0 published this constant as 0xFFFFFFFFFFFF (48-bit), which cannot fit the 24-bit identifier field; this schema corrects the sentinel to the 24-bit maximum."
+        },
+        "ORIENTATION_0": {
+          "type": "f16",
+          "value": "0x0000",
+          "description": "No rotation. Convenience constant for the associated-image ORIENTATION field."
+        },
+        "ORIENTATION_90": {
+          "type": "f16",
+          "value": "0x55A0",
+          "description": "90 degree clockwise rotation."
+        },
+        "ORIENTATION_180": {
+          "type": "f16",
+          "value": "0x59A0",
+          "description": "Rotational inversion."
+        },
+        "ORIENTATION_270": {
+          "type": "f16",
+          "value": "0x5C38",
+          "description": "270 degree clockwise rotation."
+        },
+        "ORIENTATION_MINUS_90": {
+          "type": "f16",
+          "value": "0xD5A0",
+          "description": "90 degree counter-clockwise rotation."
+        },
+        "ORIENTATION_MINUS_180": {
+          "type": "f16",
+          "value": "0xD9A0",
+          "description": "Rotational inversion (negative)."
+        },
+        "ORIENTATION_MINUS_270": {
+          "type": "f16",
+          "value": "0xDC38",
+          "description": "270 degree counter-clockwise rotation."
+        }
+      }
+    }
+  },
+
+  "// MARK: - STRUCTURAL ENUMERATIONS": "Values that describe the file's own structure rather than its content. Every block declares one recovery tag; the corruption-recovery scan matches against this set.",
+  "recovery_codes": {
+    "description": "Recovery tags identify the type of a data-block during validation and corruption-recovery scans. The 0x55 high byte is a deliberately high-entropy pattern (0b01010101) that reduces spurious matches when scanning a damaged file. Tags are stable forever once assigned; new blocks receive new tags, and tags of retired blocks are never reused.",
+    "underlying_type": "u16",
+    "ife_version": {
+      "1.0": {
+        "RECOVER_UNDEFINED":              "0x5500",
+        "RECOVER_FILE_HEADER":            "0x5501",
+        "RECOVER_TILE_TABLE":             "0x5502",
+        "RECOVER_CIPHER":                 "0x5503",
+        "RECOVER_METADATA":               "0x5504",
+        "RECOVER_ATTRIBUTES":             "0x5505",
+        "RECOVER_LAYER_EXTENTS":          "0x5506",
+        "RECOVER_TILE_OFFSETS":           "0x5507",
+        "RECOVER_ATTRIBUTE_SIZES":        "0x5508",
+        "RECOVER_ATTRIBUTE_BYTES":        "0x5509",
+        "RECOVER_IMAGES":                 "0x550A",
+        "RECOVER_IMAGE_BYTES":            "0x550B",
+        "RECOVER_ICC_PROFILE":            "0x550C",
+        "RECOVER_ANNOTATIONS":            "0x550D",
+        "RECOVER_ANNOTATION_BYTES":       "0x550E",
+        "RECOVER_ANNOTATION_GROUP_SIZES": "0x550F",
+        "RECOVER_ANNOTATION_GROUP_BYTES": "0x5510"
+      }
+    }
+  },
+
+  "// MARK: - CONTENT ENUMERATIONS": "Value domains for block fields describing slide content: codecs, pixel layout, metadata standards, annotation and image kinds.",
+  "tile_encodings": {
+    "description": "The compressed byte-stream format of slide tile pixel data within the tile pixel data region.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "TILE_ENCODING_UNDEFINED": { "value": 0, "description": "Invalid encoding." },
+        "TILE_ENCODING_IRIS":      { "value": 1, "description": "Iris Codec encoding (reserved, unused)." },
+        "TILE_ENCODING_JPEG":      { "value": 2, "description": "JPEG compressed tiles." },
+        "TILE_ENCODING_AVIF":      { "value": 3, "description": "AVIF compressed tiles." }
+      }
+    }
+  },
+
+  "pixel_formats": {
+    "description": "Pixel channel ordering and bits per channel, following the channel-then-bit-count notation.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "FORMAT_UNDEFINED": { "value": 0, "description": "Invalid format." },
+        "FORMAT_B8G8R8":    { "value": 1, "description": "8-bit blue-green-red." },
+        "FORMAT_R8G8B8":    { "value": 2, "description": "8-bit red-green-blue." },
+        "FORMAT_B8G8R8A8":  { "value": 3, "description": "8-bit blue-green-red-alpha." },
+        "FORMAT_R8G8B8A8":  { "value": 4, "description": "8-bit red-green-blue-alpha." }
+      }
+    }
+  },
+
+  "metadata_formats": {
+    "description": "The attribute key-value encoding standard claimed by the file.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "METADATA_UNDEFINED": { "value": 0, "description": "Invalid format." },
+        "METADATA_I2S":       { "value": 1, "description": "Iris Interoperability Standard key-value pairs (ASCII keys, UTF-8 values)." },
+        "METADATA_DICOM":     { "value": 2, "description": "DICOM PS3.3 tag-value pairs (32-bit tags, UTF-8 values per NEMA character-set requirements)." },
+        "METADATA_FREE_TEXT": {
+          "value": 3,
+          "description": "Key-value pairs following the I2S byte structure without claiming conformance to any clinical standard.",
+          "errata": "v1.0 defined METADATA_FREE_TEXT as an alias of METADATA_I2S's value; this schema assigns it a distinct value so conformance claims are unambiguous."
+        }
+      }
+    }
+  },
+
+  "annotation_types": {
+    "description": "The byte format of an annotation visual-object byte stream. Encoded streams shall follow the corresponding external specification (e.g. PNG, SVG).",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "ANNOTATION_UNDEFINED": { "value": 0, "description": "Invalid annotation." },
+        "ANNOTATION_PNG":       { "value": 1, "description": "PNG image annotation." },
+        "ANNOTATION_SVG":       { "value": 2, "description": "SVG vector annotation." },
+        "ANNOTATION_TEXT":      { "value": 3, "description": "Text-only annotation." }
+      }
+    }
+  },
+
+  "image_encodings": {
+    "description": "Compression codec of an associated (ancillary) image. Distinct from tile_encodings, which governs WSI tiles.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "IMAGE_ENCODING_UNDEFINED": { "value": 0, "description": "Invalid encoding." },
+        "IMAGE_ENCODING_PNG":       { "value": 1, "description": "PNG image." },
+        "IMAGE_ENCODING_JPEG":      { "value": 2, "description": "JPEG image." },
+        "IMAGE_ENCODING_AVIF":      { "value": 3, "description": "AVIF image." }
+      }
+    }
+  }
+}
