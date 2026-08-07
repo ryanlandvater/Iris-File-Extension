@@ -9,10 +9,10 @@ emits the C++ layer and doc tables (generator/emit), and supports
 # spec documents, validates them, asks model/ for a layout, asks emit/ for
 # text, and then either writes the result or compares it (--check).
 #
-# For a C++ reader: `outputs` is a map of relative path -> full file contents,
-# built entirely in memory before anything is written. Adding a generated file
-# means adding one entry to that map — _write_if_changed, _run_check and the
-# drift gate are already generic over it and need no change.
+# `outputs` maps relative path -> full file contents, built entirely in memory
+# before anything is written. Adding a generated file means adding one entry
+# to that map: _write_if_changed, _run_check and the drift gate are already
+# generic over it and need no change.
 # ---------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -21,7 +21,12 @@ import json
 import sys
 from pathlib import Path
 
-from .emit.cpp import emit_blocks_header, emit_constants_header, emit_vtables_header
+from .emit.cpp import (
+    emit_blocks_header,
+    emit_blocks_source,
+    emit_constants_header,
+    emit_vtables_header,
+)
 from .emit.docs import emit_layout_markdown
 from .model.layout import LayoutResult, derive_layout
 from .validate import validate
@@ -41,6 +46,9 @@ def _render(
         ),
         f"{_CPP_ROOT}/IFE_VTables.hpp": emit_vtables_header(layout, header),
         f"{_CPP_ROOT}/IFE_Blocks.hpp": emit_blocks_header(
+            layout, fields_doc.get("types", {}), header
+        ),
+        f"{_CPP_ROOT}/IFE_Blocks.cpp": emit_blocks_source(
             layout, fields_doc.get("types", {}), header
         ),
         f"{_DOCS_ROOT}/layout_tables.md": emit_layout_markdown(layout),

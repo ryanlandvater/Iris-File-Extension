@@ -10,25 +10,19 @@ copyright year range in the banner, which rolls forward at year boundaries.
 # and returns a string of C++. No offset is calculated in this file — if you
 # find arithmetic on a byte position here, it belongs in model/layout.py.
 #
-# For a C++ reader, the emitter pattern used throughout:
+# Every emitter accumulates lines and joins once at the end. There is no
+# stream and no incremental write: building each file whole, in memory, is
+# what makes output byte-stable — the same layout always yields the same
+# bytes, which is exactly what `--check` compares.
 #
-#     out: list[str] = [...]        # a std::vector<std::string> of lines
-#     out.append(f"...{value}...")  # std::format into it
-#     return "\n".join(out)         # join once, at the end
-#
-# There is no stream and no incremental write. Building the whole file in
-# memory is what makes the output byte-stable: the same layout always yields
-# the same bytes, which is what `--check` compares.
-#
-# Functions prefixed with _ are file-local by convention (Python has no
-# `static`). The three public entry points are emit_constants_header,
-# emit_vtables_header and emit_blocks_header, one per generated file.
+# Three public entry points, one per generated file: emit_constants_header,
+# emit_vtables_header, emit_blocks_header.
 # ---------------------------------------------------------------------------
 
 from __future__ import annotations
 
 import struct
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..model.layout import RECOVERY_PREFIX, FieldLayout, LayoutResult, SpecError, _TYPE_CPP, _canonical_type, is_banner, parse_int, version_key
 
@@ -196,10 +190,8 @@ def _emit_size_offset(fields: tuple[FieldLayout, ...], indent: str = "    ") -> 
     return out
 
 
-# `out` is appended to in place — the caller sees the additions. Python passes
-# the list by reference, so this is the equivalent of taking
-# std::vector<std::string>& and pushing onto it. Several helpers below follow
-# the same convention and return None.
+# Appends to `out` in place rather than returning lines; several helpers below
+# share that convention.
 def _emit_version_markers(
     out: list[str], indent: str, total_name: str, sizes: tuple[tuple[str, int], ...]
 ) -> None:
@@ -295,15 +287,53 @@ def emit_vtables_header(layout: LayoutResult, document: dict[str, Any]) -> str:
 # IFE_Blocks.hpp — typed handles over the wire
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# IFE_Blocks.hpp / .cpp — typed handles over the wire
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+# The header declares; the source defines. Both are produced from the same
+# list of Member records in the same order, so the two files scroll in
+# parallel — the structure IrisCodecExtension.hpp/.cpp has by hand, here by
+# construction rather than by discipline.
+
 _RESERVED_ACCESSORS = frozenset({"type", "recovery", "header_size", "entry_size", "size"})
+
+
+class Member(NamedTuple):
+    """One member function, rendered as a declaration and as a definition.
+
+    Splitting the signature into parts is what lets the source qualify it
+    (`Status FILE_HEADER::validate() const noexcept`) from the same record the
+    header prints unqualified. Nothing may render one without the other.
+    """
+
+    doc: tuple[str, ...]        # /// lines, declaration only
+    attrs: str                  # [[nodiscard]] and the like, declaration only
+    ret: str
+    name: str
+    params: str
+    quals: str                  # "const noexcept"
+    body: tuple[str, ...]       # definition lines, without the braces
+
+
+def _declare(out: list[str], member: Member, indent: str = "    ") -> None:
+    out.extend(f"{indent}{line}" for line in member.doc)
+    attrs = f"{member.attrs} " if member.attrs else ""
+    out.append(f"{indent}{attrs}{member.ret} {member.name}({member.params}) {member.quals};")
+
+
+def _define(out: list[str], owner: str, member: Member) -> None:
+    out.append("")
+    out.append(f"{member.ret} {owner}::{member.name}({member.params}) {member.quals} {{")
+    out.extend(member.body)
+    out.append("}")
 
 
 def _accessor(field_name: str) -> str:
     """Accessor name for a field: the field name, lower-cased.
 
     RECOVERY would collide with the static `recovery` tag constant, so names
-    that clash with a struct-scope member take a `_field` suffix. The rule is
-    mechanical so a reader can predict the name from the spec.
+    clashing with a struct-scope member take a `_field` suffix. Mechanical, so
+    the name is predictable from the spec.
     """
     name = field_name.lower()
     return f"{name}_field" if name in _RESERVED_ACCESSORS else name
@@ -318,12 +348,9 @@ def _read_expression(field: FieldLayout, vtable: str, types: dict[str, Any]) -> 
     """(return type, expression) for reading one field through IFE_Bytes."""
     at = f"__base + __offset + ::IFE::vtables::{vtable}::offset::{field.name}"
     if field.kind == "enum":
+        enum = f"::IFE::constants::{_pascal(field.type_name)}"
         underlying = _cpp_of(field.type_name, types) if field.type_name in types else field.cpp_type
-        return (
-            f"::IFE::constants::{_pascal(field.type_name)}",
-            f"static_cast<::IFE::constants::{_pascal(field.type_name)}>("
-            f"::IFE::load<{underlying}>({at}))",
-        )
+        return enum, f"static_cast<{enum}>(::IFE::load<{underlying}>({at}))"
     canonical = _canonical_type(field.type_name, types)
     if canonical == "u24":
         return "std::uint32_t", f"::IFE::load_u24({at})"
@@ -334,100 +361,334 @@ def _read_expression(field: FieldLayout, vtable: str, types: dict[str, Any]) -> 
     return field.cpp_type, f"::IFE::load<{field.cpp_type}>({at})"
 
 
-def _emit_field_accessors(
-    out: list[str],
+def _field_members(
     fields: tuple[FieldLayout, ...],
     vtable: str,
     types: dict[str, Any],
-    blocks: dict[str, Any],
-    indent: str = "    ",
     stride_gated: bool = False,
-    owner: str = "",
-    deferred: list[str] | None = None,
-) -> None:
-    """One accessor per field, in wire order, grouped by introducing version."""
-    current: str | None = None
+) -> list[Member]:
+    """One Member per readable field, in wire order."""
+    members: list[Member] = []
     for field in fields:
-        if current is not None and field.since != current:
-            out.append(f"{indent}// Version {current} ends here.")
-            out.append(f"{indent}// ---------------------------------------------------------------")
-            out.append("")
-        current = field.since
-
         if field.kind == "constant":
-            out.append(
-                f"{indent}// {field.name} always holds {field.constant}; validated, not read."
-            )
-            continue
-
-        out.extend(_comment(field.description, f"{indent}///"))
-        name = _accessor(field.name)
+            continue  # always holds its sentinel; validated, never read
+        doc = tuple(f"/// {line}" for line in field.description.splitlines() if line.strip())
 
         if field.points_to:
             target = field.points_to
-            optional = field.nullable
             note = (
-                " Empty when the offset is NULL_OFFSET."
-                if optional
-                else " Required: never NULL_OFFSET in a valid file."
+                "Empty when the offset is NULL_OFFSET."
+                if field.nullable
+                else "Required: never NULL_OFFSET in a valid file."
             )
-            out.append(f"{indent}/// Handle to the {target} block this offset references.{note}")
-            # Declared here, defined after every struct exists: an offset field
-            # returns a handle by value, and the reference graph has cycles, so
-            # no ordering makes every target complete at its point of use.
-            out.append(f"{indent}[[nodiscard]] inline {target} {name}() const noexcept;")
-            if deferred is not None:
-                deferred.append(f"inline {target} {owner}::{name}() const noexcept {{")
-                deferred.append(
-                    f"    const ::IFE::Offset __at = ::IFE::load<::IFE::Offset>("
-                    f"__base + __offset + ::IFE::vtables::{vtable}::offset::{field.name});"
-                )
-                if optional:
-                    deferred.append(
-                        f"    if (__at == ::IFE::constants::NULL_OFFSET) return {target}{{}};"
-                    )
-                deferred.append(f"    return {target}{{__base, __at, __size, __version}};")
-                deferred.append("}")
+            body = [
+                f"    const ::IFE::Offset __at = ::IFE::load<::IFE::Offset>(",
+                f"        __base + __offset + ::IFE::vtables::{vtable}::offset::{field.name});",
+            ]
+            if field.nullable:
+                body.append(f"    if (__at == ::IFE::constants::NULL_OFFSET) return {target}{{}};")
+            body.append(f"    return {target}{{__base, __at, __size, __version}};")
+            members.append(Member(
+                doc=doc + (f"/// Handle to the {target} block this offset references. {note}",),
+                attrs="[[nodiscard]]", ret=target, name=_accessor(field.name),
+                params="", quals="const noexcept", body=tuple(body),
+            ))
             continue
 
         cpp, expression = _read_expression(field, vtable, types)
-        gated = field.since != "1.0"
-        if gated or stride_gated and field.since != "1.0":
+        if field.since != "1.0":
             guard = f"__version < {_version_of(field.since):#010x}u"
             if stride_gated:
                 guard += (
-                    f" || __stride < ::IFE::vtables::{vtable}::offset::{field.name} + "
-                    f"::IFE::vtables::{vtable}::size::{field.name}"
+                    f"\n        || __stride < ::IFE::vtables::{vtable}::offset::{field.name}"
+                    f" + ::IFE::vtables::{vtable}::size::{field.name}"
                 )
-            out.append(
-                f"{indent}/// Added in {field.since}; empty when the file predates it."
-            )
-            out.append(
-                f"{indent}[[nodiscard]] inline std::optional<{cpp}> {name}() const noexcept {{"
-            )
-            out.append(f"{indent}    if ({guard}) return std::nullopt;")
-            out.append(f"{indent}    return {expression};")
-            out.append(f"{indent}}}")
+            members.append(Member(
+                doc=doc + (f"/// Added in {field.since}; empty when the file predates it.",),
+                attrs="[[nodiscard]]", ret=f"std::optional<{cpp}>", name=_accessor(field.name),
+                params="", quals="const noexcept",
+                body=(f"    if ({guard}) return std::nullopt;", f"    return {expression};"),
+            ))
         else:
-            out.append(
-                f"{indent}[[nodiscard]] inline {cpp} {name}() const noexcept "
-                f"{{ return {expression}; }}"
-            )
-    if current is not None:
-        out.append(f"{indent}// Version {current} ends here.")
-        out.append(f"{indent}// ---------------------------------------------------------------")
+            members.append(Member(
+                doc=doc, attrs="[[nodiscard]]", ret=cpp, name=_accessor(field.name),
+                params="", quals="const noexcept", body=(f"    return {expression};",),
+            ))
+    return members
 
 
-def emit_blocks_header(layout: LayoutResult, types: dict[str, Any], header: dict[str, Any]) -> str:
-    """IFE_Blocks.hpp — a typed handle per block, reading through IFE_Bytes.
+def _version_boundaries(fields: tuple[FieldLayout, ...]) -> dict[int, str]:
+    """Index -> version whose last readable field sits there."""
+    marks: dict[int, str] = {}
+    readable = [f for f in fields if f.kind != "constant"]
+    for i, field in enumerate(readable):
+        if i + 1 == len(readable) or readable[i + 1].since != field.since:
+            marks[i] = field.since
+    return marks
 
-    Successor to the ``Serialization::`` structs in src/IrisCodecExtension.hpp:
-    same state members, same method roles, but the offset arithmetic comes from
-    the generated vtables and every read goes through the primitives rather
-    than an open-coded load. The primitive hierarchy the spec declares appears
-    here as real base classes, so what a reader sees matches what the schema
-    says.
+
+def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
+    """The block's own structural checks, in the order v1 performs them.
+
+    Reproduces DATA_BLOCK::validate_offset (IrisCodecExtension.cpp:778-803) and
+    the array bounds check from LAYER_EXTENTS::validate_full (:1641-1686).
+    Deliberately absent is anything semantic: FILE_SIZE agreeing with the size
+    the OS reports is a fact about the file, not the layout, and belongs to the
+    runtime.
     """
+    primitive = layout.primitives[block.primitive]
+    vt = f"::IFE::vtables::{name}"
+    body: list[str] = [
+        "    if (!*this)",
+        '        return {Check::NOT_CONSTRUCTED, type, "", __offset, __size, __offset};',
+    ]
+    by_name = {f.name: f for f in primitive.fields}
+    if "VALIDATION" in by_name:
+        body += [
+            "    // A block stores its own offset, so a pointer that landed here can",
+            "    // prove it landed where it meant to.",
+            "    if (const ::IFE::Offset __v = validation(); __v != __offset)",
+            '        return {Check::BAD_VALIDATION, type, "VALIDATION", __v, __offset, __offset};',
+        ]
+    for field in primitive.fields:
+        if field.kind == "constant":
+            body += [
+                f"    if (const auto __c = ::IFE::load<{field.cpp_type}>(",
+                f"            __base + __offset + {vt}::offset::{field.name});",
+                f"        __c != ::IFE::constants::{field.constant})",
+                f'        return {{Check::BAD_CONSTANT, type, "{field.name}", __c,',
+                f"                ::IFE::constants::{field.constant}, __offset}};",
+            ]
+    body += [
+        "    if (const auto __r = recovery_field(); __r != recovery)",
+        '        return {Check::BAD_RECOVERY, type, "RECOVERY",',
+        "                static_cast<std::uint64_t>(__r),",
+        "                static_cast<std::uint64_t>(recovery), __offset};",
+    ]
+    if block.primitive in ("array", "byte_array"):
+        if block.entry_fields:
+            floor = block.entry_sizes[0][1] if block.entry_sizes else block.entry_size
+            body += [
+                "",
+                "    // The stride the encoder wrote must at least hold the entry this",
+                "    // build knows; a wider one is a later version and is fine.",
+                f"    if (const std::uint16_t __st = stride(); __st < {floor})",
+                f'        return {{Check::BAD_STRIDE, type, "STRIDE", __st, {floor}, __offset}};',
+            ]
+            span = "static_cast<std::uint64_t>(stride()) * count()"
+        else:
+            body += ["", "    // A byte array stores no stride; its stride is one by definition."]
+            span = "static_cast<std::uint64_t>(count())"
+        body += [
+            "",
+            "    // Expressed as a subtraction so the multiplication cannot wrap:",
+            "    // u16 * u32 fits a u64 comfortably.",
+            "    const ::IFE::Offset __begin = entries_begin();",
+            f"    const std::uint64_t __span = {span};",
+            "    if (__begin > __size || __span > __size - __begin)",
+            '        return {Check::ARRAY_OVERRUN, type, "COUNT", __span,',
+            "                __size - (__begin > __size ? __size : __begin), __offset};",
+        ]
+    body.append("    return {};")
+    return Member(
+        doc=("/// Structural checks on this block alone. Never allocates or throws.",),
+        attrs="[[nodiscard]]", ret="Status", name="validate", params="",
+        quals="const noexcept", body=tuple(body),
+    )
+
+
+def _validate_deep_member(name: str, block: Any) -> Member:
+    """Recurse the offset graph. Successor to v1's hand-threaded validate_full.
+
+    v1 chained each block's check into its children by hand (:869-900), which
+    is why a block added later is easy to forget. Here the walk is derived from
+    `points_to`, so every edge in the schema is followed by construction —
+    including edges leaving array *entries*, which a header-only walk would
+    skip and which is exactly where IMAGE_BYTES and ANNOTATION_BYTES hang.
+    """
+    body: list[str] = [
+        "    if (const Status __s = validate(); !__s) return __s;",
+        "    if (__path.contains(__offset))",
+        '        return {Check::CYCLE, type, "", __offset, 0, __offset};',
+        "    if (!__path.push(__offset))",
+        '        return {Check::CYCLE, type, "", __path.depth, MAX_BLOCK_DEPTH, __offset};',
+    ]
+
+    def walk(field, source: str, indent: str) -> list[str]:
+        handle = f"__t_{field.name.lower()}"
+        lines = [f"{indent}{{", f"{indent}    const auto {handle} = {source};"]
+        if field.nullable:
+            lines += [
+                f"{indent}    // Optional: NULL_OFFSET means absent and is legal; any",
+                f"{indent}    // other unusable value is not.",
+                f"{indent}    if ({handle}.__offset != ::IFE::constants::NULL_OFFSET) {{",
+            ]
+        else:
+            lines.append(f"{indent}    {{")
+        inner = indent + "        "
+        lines += [
+            f"{inner}if (!{handle})",
+            f'{inner}    return {{Check::OUT_OF_BOUNDS, type, "{field.name}",',
+            f"{inner}            {handle}.__offset, __size, __offset}};",
+            f"{inner}if (const Status __s = {handle}.validate_deep(__path); !__s) return __s;",
+            f"{indent}    }}",
+            f"{indent}}}",
+        ]
+        return lines
+
+    for field in (f for f in block.header_fields if f.points_to):
+        body += walk(field, f"{_accessor(field.name)}()", "    ")
+    entry_edges = [f for f in block.entry_fields if f.points_to]
+    if entry_edges:
+        body += ["", "    // Edges that leave from entries, one per entry.",
+                 "    for (std::uint32_t __i = 0; __i < count(); ++__i) {",
+                 "        const auto __e = entry(__i);"]
+        for field in entry_edges:
+            body += walk(field, f"__e.{_accessor(field.name)}()", "        ")
+        body.append("    }")
+    body += ["    __path.pop();", "    return {};"]
+    return Member(
+        doc=("/// validate(), then every block this one reaches, transitively.",),
+        attrs="[[nodiscard]]", ret="Status", name="validate_deep",
+        params="VisitPath& __path", quals="const noexcept", body=tuple(body),
+    )
+
+
+_STATUS_PREAMBLE = """
+// ---- validation vocabulary ----
+// Generated validators never allocate, never throw and never format a string.
+// They report a code plus the operands v1 interpolated into its messages
+// (IrisCodecExtension.cpp:784-800) and leave the wording to the runtime, which
+// has the JSON descriptions and is not on the hot path.
+
+enum class Check : std::uint8_t {
+    OK = 0,
+    NOT_CONSTRUCTED,   ///< no base pointer, null offset, or header past EOF
+    OUT_OF_BOUNDS,     ///< an offset field points outside the file
+    BAD_VALIDATION,    ///< VALIDATION does not equal the block's own offset
+    BAD_RECOVERY,      ///< RECOVERY is not this block's tag
+    BAD_CONSTANT,      ///< a constant field does not hold its sentinel
+    BAD_STRIDE,        ///< STRIDE is zero, or narrower than the entry it must hold
+    ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
+    VERSION_TOO_NEW,   ///< reserved for the runtime; see below
+    CYCLE,             ///< an offset chain returns to a block already on the path
+};
+
+/// Everything needed to describe a failure, unformatted.
+struct Status {
+    Check         code     = Check::OK;
+    const char*   block    = "";
+    const char*   field    = "";
+    std::uint64_t found    = 0;
+    std::uint64_t expected = 0;
+    ::IFE::Offset at       = 0;
+
+    constexpr explicit operator bool() const noexcept { return code == Check::OK; }
+};
+
+/// A newer file is never a structural failure: append-only guarantees its 1.0
+/// prefix is readable, so VERSION_TOO_NEW is never returned by a generated
+/// validator. It exists for the runtime to raise as a warning, matching v1
+/// (IrisCodecExtension.cpp:853-865), which warns and continues.
+
+inline constexpr std::size_t MAX_BLOCK_DEPTH = 16;
+
+/// The chain of offsets from the root to the block being checked.
+///
+/// Cycle detection needs the *ancestry*, not every block ever seen: a file may
+/// hold thousands of annotations each with its own byte array, all legitimate
+/// separate visits, and a global set would reject the second of two entries
+/// pointing at one target. A cycle is an offset that reappears on the current
+/// path, bounded by the block graph's depth.
+struct VisitPath {
+    ::IFE::Offset entries[MAX_BLOCK_DEPTH]{};
+    std::size_t   depth = 0;
+
+    [[nodiscard]] constexpr bool contains(::IFE::Offset __o) const noexcept {
+        for (std::size_t __i = 0; __i < depth; ++__i)
+            if (entries[__i] == __o) return true;
+        return false;
+    }
+    [[nodiscard]] constexpr bool push(::IFE::Offset __o) noexcept {
+        if (depth == MAX_BLOCK_DEPTH) return false;
+        entries[depth++] = __o;
+        return true;
+    }
+    constexpr void pop() noexcept { if (depth) --depth; }
+};
+"""
+
+
+def _block_members(
+    name: str, block: Any, layout: LayoutResult, types: dict[str, Any]
+) -> list[Member]:
+    """Every member of one block struct, declaration order == definition order."""
+    primitive = layout.primitives[block.primitive]
+    own = tuple(f for f in block.header_fields if f not in primitive.fields)
+    members = _field_members(own, name, types)
+    members.append(_validate_member(name, block, layout))
+    members.append(_validate_deep_member(name, block))
+    return members
+
+
+def _entry_members(name: str, block: Any, types: dict[str, Any]) -> list[Member]:
+    return _field_members(block.entry_fields, f"{name}::entry", types, stride_gated=True)
+
+
+def _emit_primitive_bases(out: list[str], layout: LayoutResult, types: dict[str, Any]) -> None:
+    """The schema's primitive hierarchy, as plain structs.
+
+    Not templates: v1 keeps DATA_BLOCK a plain base by passing the per-type
+    data down as arguments (IrisCodecExtension.hpp:405 —
+    validate_offset(__base, type, recovery)) rather than encoding it in the
+    type. The same trick applies to the bounds check, so `fits` takes the
+    derived block's header_size instead of the base having to know it. Plain
+    bases are what let every body live in the .cpp.
+    """
+    for primitive in layout.primitives.values():
+        base = f" : public {primitive.extends}" if primitive.extends else ""
+        out.append("")
+        out.extend(_comment(primitive.description))
+        out.append(f"struct {primitive.name}{base} {{")
+        if primitive.extends is None:
+            out += [
+                "    const ::IFE::BYTE* __base    = nullptr;",
+                "    ::IFE::Offset      __offset  = ::IFE::constants::NULL_OFFSET;",
+                "    ::IFE::Size        __size    = 0;   ///< total file size",
+                "    std::uint32_t      __version = 0;   ///< major<<16 | minor, from FILE_HEADER",
+                "",
+                "    /// Whether a block of `__header_size` bytes fits here. Stricter than",
+                "    /// v1's operator bool (IrisCodecExtension.cpp:774-777), which checks",
+                "    /// only that the offset is in range: requiring the whole header to fit",
+                "    /// makes a truncated file fail at construction rather than mid-read.",
+                "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
+                "        return __base != nullptr",
+                "            && __offset != ::IFE::constants::NULL_OFFSET",
+                "            && __offset + __header_size <= __size;",
+                "    }",
+            ]
+        inherited = layout.primitives[primitive.extends].fields if primitive.extends else ()
+        introduced = tuple(f for f in primitive.fields if f not in inherited)
+        for member in _field_members(introduced, primitive.name, types):
+            out.append("")
+            _declare(out, member)
+        if primitive.name in ("array", "byte_array"):
+            out += [
+                "",
+                "    /// Where the entry run starts. Takes the derived block's header size",
+                "    /// for the same reason `fits` does.",
+                "    [[nodiscard]] constexpr ::IFE::Offset entries_at(",
+                "            ::IFE::Size __header_size) const noexcept {",
+                "        return __offset + __header_size;",
+                "    }",
+            ]
+        out.append("};")
+
+
+def emit_blocks_header(
+    layout: LayoutResult, types: dict[str, Any], header: dict[str, Any]
+) -> str:
+    """IFE_Blocks.hpp — declarations only, readable as an outline of the format."""
     out: list[str] = [
         _banner(header),
         "#ifndef IFE_Blocks_hpp",
@@ -441,77 +702,33 @@ def emit_blocks_header(layout: LayoutResult, types: dict[str, Any], header: dict
         '#include "IFE_VTables.hpp"',
         '#include "IFE_Bytes.hpp"',
         "",
+        "// Definitions live in IFE_Blocks.cpp, which follows this file section for",
+        "// section. Define IFE_HEADER_ONLY before including this header to fold them",
+        "// in at the bottom and use the generated layer without linking anything.",
+        "",
         "namespace IFE {",
         "namespace blocks {",
         "",
-        "// Forward declarations: offset fields return handles to other blocks,",
-        "// and the reference graph has cycles no ordering would resolve.",
+        "// Forward declarations: offset fields return handles to other blocks, and",
+        "// the reference graph has cycles no ordering would resolve.",
     ]
     for name in layout.blocks:
         out.append(f"struct {name};")
 
-    # ---- primitive bases ------------------------------------------------ #
+    out.append("")
+    out.extend(_STATUS_PREAMBLE.strip("\n").splitlines())
+
     out.append("")
     out.append("// ---- primitive block types ----")
-    out.append("// The hierarchy the schema declares, as real base classes. State and")
-    out.append("// behaviour common to a primitive live here once, not per block.")
-    out.append("// CRTP: a base needs the derived block's header_size for its bounds")
-    out.append("// check, which is the one thing that genuinely varies.")
-    for primitive in layout.primitives.values():
-        base = f" : public {primitive.extends}<Derived>" if primitive.extends else ""
-        out.append("")
-        out.extend(_comment(primitive.description))
-        out.append("template <typename Derived>")
-        out.append(f"struct {primitive.name}{base} {{")
-        if primitive.extends is not None:
-            # A dependent base hides its members from unqualified lookup, so
-            # name them explicitly. It also documents what this primitive
-            # inherits, which is the point of declaring the hierarchy.
-            parent = f"{primitive.extends}<Derived>"
-            for member in ("__base", "__offset", "__size", "__version"):
-                out.append(f"    using {parent}::{member};")
-            out.append("")
-        if primitive.extends is None:
-            out.append("    const ::IFE::BYTE* __base    = nullptr;")
-            out.append("    ::IFE::Offset      __offset  = ::IFE::constants::NULL_OFFSET;")
-            out.append("    ::IFE::Size        __size    = 0;   ///< total file size")
-            out.append("    std::uint32_t      __version = 0;   ///< major<<16 | minor, from FILE_HEADER")
-            out.append("")
-            out.append("    /// Stricter than v1's (IrisCodecExtension.cpp:774-777): the whole")
-            out.append("    /// header must fit, so a truncated file fails here rather than")
-            out.append("    /// part-way through a read.")
-            out.append("    constexpr explicit operator bool() const noexcept {")
-            out.append("        return __base != nullptr")
-            out.append("            && __offset != ::IFE::constants::NULL_OFFSET")
-            out.append("            && __offset + Derived::header_size <= __size;")
-            out.append("    }")
-            out.append("")
-        inherited = (
-            layout.primitives[primitive.extends].fields if primitive.extends else ()
-        )
-        introduced = tuple(f for f in primitive.fields if f not in inherited)
-        if introduced:
-            _emit_field_accessors(
-                out, introduced, primitive.name, types, layout.blocks, indent="    "
-            )
-        if primitive.name in ("array", "byte_array"):
-            out.append("")
-            out.append("    /// Entries begin where the block's own fields end.")
-            out.append("    [[nodiscard]] constexpr ::IFE::Offset entries_begin() const noexcept {")
-            out.append("        return __offset + Derived::header_size;")
-            out.append("    }")
-        out.append("};")
+    out.append("// The hierarchy the schema declares, as real base classes.")
+    _emit_primitive_bases(out, layout, types)
 
-    # ---- one struct per block ------------------------------------------- #
-    deferred: list[str] = []
     for name, block in layout.blocks.items():
         primitive = layout.primitives[block.primitive]
-        own = tuple(f for f in block.header_fields if f not in primitive.fields)
-
         out.append("")
         out.append(f"// ---- {name} ----")
         out.extend(_comment(block.description))
-        out.append(f"struct {name} : public {block.primitive}<{name}> {{")
+        out.append(f"struct {name} : public {block.primitive} {{")
         out.append(f'    static constexpr char type[] = "{name}";')
         recovery_enum = _pascal("recovery_codes")
         out.append(f"    static constexpr ::IFE::constants::{recovery_enum} recovery =")
@@ -519,58 +736,171 @@ def emit_blocks_header(layout: LayoutResult, types: dict[str, Any], header: dict
         out.append(
             f"    static constexpr ::IFE::Size header_size = ::IFE::vtables::{name}::header_size;"
         )
-        if own:
-            out.append("")
-            _emit_field_accessors(
-                out, own, name, types, layout.blocks, indent="    ",
-                owner=name, deferred=deferred,
-            )
+        out.append("")
+        out.append("    constexpr explicit operator bool() const noexcept { return fits(header_size); }")
 
         if block.entry_fields:
             entry = block.entry_name or f"{name}_ENTRY"
             out.append("")
             out.append(f"    /// One {entry}, addressed by the array's stored stride.")
             out.append(f"    struct {entry} {{")
-            out.append("        const ::IFE::BYTE* __base    = nullptr;")
-            out.append("        ::IFE::Offset      __offset  = 0;")
-            out.append("        ::IFE::Size        __size    = 0;   ///< total file size")
-            out.append("        std::uint16_t      __stride  = 0;   ///< as written, not as compiled")
-            out.append("        std::uint32_t      __version = 0;")
-            out.append("")
-            _emit_field_accessors(
-                out, block.entry_fields, f"{name}::entry", types, layout.blocks,
-                indent="        ", stride_gated=True,
-                owner=f"{name}::{entry}", deferred=deferred,
-            )
+            out += [
+                "        const ::IFE::BYTE* __base    = nullptr;",
+                "        ::IFE::Offset      __offset  = 0;",
+                "        ::IFE::Size        __size    = 0;   ///< total file size",
+                "        std::uint16_t      __stride  = 0;   ///< as written, not as compiled",
+                "        std::uint32_t      __version = 0;",
+            ]
+            marks = _version_boundaries(block.entry_fields)
+            for index, member in enumerate(_entry_members(name, block, types)):
+                out.append("")
+                _declare(out, member, indent="        ")
+                if index in marks:
+                    out.append(f"        // Version {marks[index]} ends here.")
+                    out.append("        // -------------------------------------------------------")
             out.append("    };")
             out.append("")
-            out.append("    /// Entry `i`, stepped by the STRIDE the encoder wrote - never by the")
-            out.append("    /// size this build was compiled with. That is what lets a reader")
-            out.append("    /// traverse an array written by a later version.")
-            out.append(f"    [[nodiscard]] inline {entry} entry(std::uint32_t __i) const noexcept {{")
-            out.append(
-                f"        return {entry}{{__base, entries_begin() + "
-                "static_cast<::IFE::Offset>(__i) * stride(), __size, stride(), __version};"
-            )
-            out.append("    }")
+            out.append("    /// Entry `i`, stepped by the STRIDE the encoder wrote — never by the")
+            out.append("    /// size this build was compiled with.")
+            out.append(f"    [[nodiscard]] {entry} entry(std::uint32_t __i) const noexcept;")
+            out.append("    [[nodiscard]] ::IFE::Offset entries_begin() const noexcept;")
         elif block.primitive == "byte_array":
             out.append("")
             out.append("    /// The whole byte run. Its interpretation is not this layer's")
-            out.append("    /// business: slicing comes from a sizes array elsewhere, and the")
+            out.append("    /// business: slicing comes from a sizes array elsewhere and the")
             out.append("    /// character encoding is normative prose.")
-            out.append("    [[nodiscard]] inline ::IFE::ByteSpan bytes() const noexcept {")
-            out.append("        return {__base + entries_begin(), count()};")
-            out.append("    }")
+            out.append("    [[nodiscard]] ::IFE::ByteSpan bytes() const noexcept;")
+            out.append("    [[nodiscard]] ::IFE::Offset entries_begin() const noexcept;")
+
+        own = tuple(f for f in block.header_fields if f not in primitive.fields)
+        marks = _version_boundaries(own)
+        for index, member in enumerate(_block_members(name, block, layout, types)):
+            out.append("")
+            _declare(out, member)
+            if index in marks:
+                out.append(f"    // Version {marks[index]} ends here.")
+                out.append("    // ---------------------------------------------------------------")
+        out.append("")
+        out.append("    /// Convenience: deep validation from a fresh path.")
+        out.append("    [[nodiscard]] Status validate_deep() const noexcept;")
         out.append("};")
 
-    if deferred:
-        out.append("")
-        out.append("// ---- offset accessors ----")
-        out.append("// Defined here because each returns a handle by value and the block")
-        out.append("// reference graph has cycles: no declaration order makes every target")
-        out.append("// complete at its point of use.")
-        out.append("")
-        out.extend(deferred)
+    out += [
+        "",
+        "}  // namespace blocks",
+        "}  // namespace IFE",
+        "",
+        "#ifdef IFE_HEADER_ONLY",
+        "// Header-only mode: fold the definitions in. The include is a no-op on the",
+        "// way back through this file's guard, so the recursion terminates.",
+        '#include "IFE_Blocks.cpp"',
+        "#endif",
+        "",
+        "#endif  // IFE_Blocks_hpp",
+        "",
+    ]
+    return "\n".join(out)
 
-    out += ["", "}  // namespace blocks", "}  // namespace IFE", "", "#endif  // IFE_Blocks_hpp", ""]
+
+def emit_blocks_source(
+    layout: LayoutResult, types: dict[str, Any], header: dict[str, Any]
+) -> str:
+    """IFE_Blocks.cpp — definitions, in the header's order, section for section."""
+    out: list[str] = [
+        _banner(header),
+        "#ifndef IFE_Blocks_cpp",
+        "#define IFE_Blocks_cpp",
+        "",
+        "// Compiled as its own translation unit by default; included from",
+        "// IFE_Blocks.hpp when IFE_HEADER_ONLY is defined, in which case every",
+        "// definition needs internal-or-inline linkage so more than one TU may",
+        "// include it. IFE_BLOCKS_INLINE is what makes both work.",
+        '#include "IFE_Blocks.hpp"',
+        "",
+        "#ifdef IFE_HEADER_ONLY",
+        "#  define IFE_BLOCKS_INLINE inline",
+        "#else",
+        "#  define IFE_BLOCKS_INLINE",
+        "#endif",
+        "",
+        "namespace IFE {",
+        "namespace blocks {",
+    ]
+
+    for primitive in layout.primitives.values():
+        inherited = layout.primitives[primitive.extends].fields if primitive.extends else ()
+        introduced = tuple(f for f in primitive.fields if f not in inherited)
+        members = _field_members(introduced, primitive.name, types)
+        if not members:
+            continue
+        out.append("")
+        out.append(f"// ---- {primitive.name} (primitive) ----")
+        for member in members:
+            out.append("")
+            out.append(
+                f"IFE_BLOCKS_INLINE {member.ret} {primitive.name}::{member.name}"
+                f"({member.params}) {member.quals} {{"
+            )
+            out.extend(member.body)
+            out.append("}")
+
+    for name, block in layout.blocks.items():
+        out.append("")
+        out.append(f"// ---- {name} ----")
+
+        if block.entry_fields:
+            entry = block.entry_name or f"{name}_ENTRY"
+            for member in _entry_members(name, block, types):
+                out.append("")
+                out.append(
+                    f"IFE_BLOCKS_INLINE {member.ret} {name}::{entry}::{member.name}"
+                    f"({member.params}) {member.quals} {{"
+                )
+                out.extend(member.body)
+                out.append("}")
+            out.append("")
+            out.append(f"IFE_BLOCKS_INLINE ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append("    return entries_at(header_size);")
+            out.append("}")
+            out.append("")
+            out.append(
+                f"IFE_BLOCKS_INLINE {name}::{entry} {name}::entry(std::uint32_t __i) const noexcept {{"
+            )
+            out.append(f"    return {entry}{{__base,")
+            out.append("                 entries_begin() + static_cast<::IFE::Offset>(__i) * stride(),")
+            out.append("                 __size, stride(), __version};")
+            out.append("}")
+        elif block.primitive == "byte_array":
+            out.append("")
+            out.append(f"IFE_BLOCKS_INLINE ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append("    return entries_at(header_size);")
+            out.append("}")
+            out.append("")
+            out.append(f"IFE_BLOCKS_INLINE ::IFE::ByteSpan {name}::bytes() const noexcept {{")
+            out.append("    return {__base + entries_begin(), count()};")
+            out.append("}")
+
+        for member in _block_members(name, block, layout, types):
+            out.append("")
+            out.append(
+                f"IFE_BLOCKS_INLINE {member.ret} {name}::{member.name}"
+                f"({member.params}) {member.quals} {{"
+            )
+            out.extend(member.body)
+            out.append("}")
+
+        out.append("")
+        out.append(f"IFE_BLOCKS_INLINE Status {name}::validate_deep() const noexcept {{")
+        out.append("    VisitPath __path;")
+        out.append("    return validate_deep(__path);")
+        out.append("}")
+
+    out += [
+        "",
+        "}  // namespace blocks",
+        "}  // namespace IFE",
+        "",
+        "#endif  // IFE_Blocks_cpp",
+        "",
+    ]
     return "\n".join(out)

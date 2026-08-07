@@ -1,6 +1,16 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
-> **Status:** broad plan. Each phase below gets a granular checklist
+> **Status (2026-08-07):** Phase 4 is under way. Tasks 4.0 (decisions A–H),
+> 4.0-H, 4.1, 4.2a, 4.2b and 4.2c are **done**; 4.2d is next, then 4.3 and
+> 4.4. The generated layer reads and validates; it does not yet write, and
+> nothing outside the tests consumes it — `IrisFileExtensionLib` still
+> compiles the hand-written `IrisCodecExtension.cpp`, and the cutover is
+> Phase 6. Two decisions are open: **4.0-D** (visibility of generated symbols,
+> reopened by the `.hpp`/`.cpp` split) and **4.0-E part 3** is closed but its
+> sibling work is not. Gates in force: `--validate`, `--check`, the
+> `static_assert` parity wall, and four test binaries under ASan+UBSan.
+>
+> **Broad plan below.** Each phase below gets a granular checklist
 > (`plans/phase-N-*.md`) during a refinement pass **before** implementation
 > begins. Implementation tasks are then executed by directed (flash-class)
 > models working from those checklists; this document is the map, not the
@@ -480,12 +490,30 @@ sentinel set, decision A).
         for two of the three — adjust the 4.2b compile check accordingly.
       - `4.1`'s `IFE_Bytes.hpp` uses the Iris scalar types too; it does not
         declare its own `Byte`/`Offset`/`Size`.
-- [x] **D. `IFE_EXPORT` — DECIDED: no visibility macros in generated code.**
-      Generated block code is header-only `inline`/`constexpr`, so there is no
-      symbol to export — each TU compiles its own copy, which is also safer
-      across a Windows DLL boundary than exporting the types. Only the
-      hand-written 4.4 runtime carries `IFE_EXPORT`, using the existing scheme
-      at `src/IrisCodecExtension.hpp:55-74`.
+- [ ] **D. `IFE_EXPORT` — ⚠ REOPENED. The premise no longer holds.** The
+      original decision was that generated block code is header-only
+      `inline`/`constexpr`, so there is no symbol to export. Since 4.2b's
+      `.hpp`/`.cpp` split (see "Generated code ships as a header and a source")
+      the definitions are compiled into the library, and the library is built
+      with `CXX_VISIBILITY_PRESET hidden`.
+      **Measured:** a shared build exports **zero** `IFE::blocks` symbols
+      (`nm -gU libIrisFileExtension.dylib | grep IFE6blocks` → 0). A consumer
+      linking the shared library today cannot call a generated accessor.
+      Nothing consumes the generated layer yet, so this is latent rather than
+      broken — but it must be settled before the Phase 6 cutover. Three ways:
+      1. **Emit `IFE_EXPORT` on generated definitions**, reusing the scheme at
+         `src/IrisCodecExtension.hpp:55-74`. Matches how v1's
+         `Serialization::` structs are consumed today; a consumer links and
+         calls, exactly as now.
+      2. **Consumers use `IFE_HEADER_ONLY`** (or compile
+         `generated_source/IFE_Blocks.cpp` into their own target). No exported
+         ABI at all, and each consumer inlines everything — arguably the right
+         answer for a layer that is pure field arithmetic.
+      3. Both: export by default, header-only available.
+      *Recommendation:* (1), because it keeps the Iris-Codec cutover a
+      re-point rather than a build-system change — but it is a distribution
+      decision, not a code one.
+
 - [x] **E. `f16` — DECIDED, and half-applied.** The earlier "fail loudly"
       decision was made on a false premise: `image_orientations` declared
       `"underlying_type": "f16"` and `IMAGES.IMAGE_ENTRY.ORIENTATION`
@@ -741,6 +769,47 @@ its payload is part specified (an ASCII label of `TITLE_SIZE` bytes) and part
 external (the compressed stream), so a block-level marker would overclaim —
 prose covers it instead.
 
+#### Generated code ships as a header and a source
+
+`IFE_Blocks.hpp` declares; `IFE_Blocks.cpp` defines. Both are emitted from the
+same list of member records, in the same order, under the same section
+banners, so the two files scroll in parallel — the structure
+`IrisCodecExtension.hpp`/`.cpp` has by hand, here by construction rather than
+by discipline. Neither can drift from the other without the emitter changing.
+
+**Why, having started header-only.** One file of 1,515 lines put each block's
+declaration inside its own bodies, so the header could not be read as an
+outline of the format — which is most of what a reader wants from it. Only 47
+of those lines were trivial accessors; the rest were `validate()`,
+`validate_deep()` and offset-accessor bodies that belong out of sight.
+
+**What had to change to allow it.** The primitive bases were CRTP templates,
+because `operator bool` needs the derived block's `header_size` and a template
+body cannot live in a `.cpp`. v1 has the same problem and solves it without
+templates: `DATA_BLOCK::validate_offset(__base, type, recovery)`
+(`src/IrisCodecExtension.hpp:405`) takes the per-type data as *arguments*
+rather than encoding it in the type. Applying the same trick — `fits(header_size)`,
+`entries_at(header_size)` — makes the bases plain structs, each block's
+`operator bool` a one-line forward, and every body movable. Generated code now
+contains no templates at all.
+
+**`IFE_HEADER_ONLY` keeps both options open.** Defining it before including
+`IFE_Blocks.hpp` folds the source in at the bottom; the `.cpp` includes the
+header back, which the include guard turns into a no-op, so the recursion
+terminates. Linkage is switched by `IFE_BLOCKS_INLINE` — `inline` in
+header-only mode, empty when compiled as its own translation unit, so the
+library still emits real symbols.
+
+Verified rather than asserted: compiled mode builds and links; header-only
+builds; and **two translation units both including it header-only link with no
+duplicate symbols**, which is the case the macro exists for and the one that
+would bite a consumer. CMake builds `tests/ife_blocks_tests.cpp` twice, once
+each way, so both consumption paths are covered by the build.
+
+**Consequence:** decision 4.0-D (no visibility macros on generated symbols)
+was taken on the header-only premise and is reopened above. A shared build
+currently exports zero `IFE::blocks` symbols.
+
 #### 4.0-H — Wire-format parity correction — ✅ DONE
 
 All six divergences corrected; the generated layout now equals shipped IFE
@@ -822,7 +891,8 @@ The original task description follows, for the record.
 
 #### 4.1 — `src/IFE_Bytes.hpp` — load/store primitives — ✅ DONE
 
-Header-only, `namespace IFE`, self-contained (it includes `IrisTypes.hpp` and
+Header-only (genuinely: it is all templates and `constexpr`), `namespace IFE`,
+self-contained (it includes `IrisTypes.hpp` and
 `IrisCodecTypes.hpp` itself rather than inheriting v1's include-order
 fragility). Covers every width in `_TYPE_WIDTH`: `load<T>`/`store<T>` for the
 whole-width scalars, `load_u24`/`store_u24`, `load_u40`/`store_u40`, and
@@ -949,35 +1019,30 @@ know which fields are post-1.0. Fix the model before the emitter needs it.
 
 ##### 4.2b — Emitter scaffolding, block handles, readers — ✅ DONE
 
-`generated_source/IFE_Blocks.hpp` (≈40 KB) emits a typed handle per block.
-The primitive hierarchy the schema declares appears as **real base classes**
-via CRTP — the base needs the derived block's `header_size` for its bounds
-check, which is the one thing that genuinely varies. State and shared
-accessors live on the primitive once, not per block.
+Emits **two** files: `IFE_Blocks.hpp` (828 lines, declarations) and
+`IFE_Blocks.cpp` (1,185 lines, definitions). See "Generated code ships as a
+header and a source" below for why, and for the `IFE_HEADER_ONLY` mode.
+
+The primitive hierarchy the schema declares appears as real base classes.
+State and shared accessors live on the primitive once, not per block.
 
 Three things the implementation forced that the task text did not anticipate:
 
 - **Offset accessors are defined out of line.** Each returns a handle *by
   value* and the block reference graph has cycles, so no declaration order
-  makes every target complete at its point of use. Forward declarations are
-  not enough; the definitions follow every struct.
+  makes every target complete at its point of use.
 - **Entries carry `__size`.** An entry constructs child handles
   (`IMAGES.IMAGE_ENTRY` → `IMAGE_BYTES`), and those need the file size for
   their bounds check.
-- **A derived primitive names its inherited members explicitly.** A dependent
-  base hides them from unqualified lookup, so `array` declares
-  `using block<Derived>::__base;` and friends — which doubles as
-  documentation of what it inherits.
-
-**Version markers land at the structure level, not inside `_emit_size_offset`.**
-The task said to put them in that function so all six structure kinds got
-them from one implementation. Once written, that placed a marker inside both
-the `size` and `offset` namespaces — v1 has one enum and therefore one marker,
-and duplicating it added noise without information. The logic is still a
-single helper (`_emit_version_markers`), called once per structure, beside
-the cumulative size constants where the boundary actually means something.
-Primitives get none: a primitive can never gain a field, so a marker there
-would promise an amendment point that cannot legally exist.
+- **Version markers land at the structure level, not inside
+  `_emit_size_offset`.** The task said to put them in that function so all six
+  structure kinds got them from one implementation. Once written, that placed
+  a marker inside both the `size` and `offset` namespaces — v1 has one enum
+  and therefore one marker, and duplicating it added noise without
+  information. The logic is still a single helper, called once per structure,
+  beside the cumulative size constants where the boundary means something.
+  Primitives get none: a primitive can never gain a field, so a marker there
+  would promise an amendment point that cannot legally exist.
 
 **The parity wall's latent bug is fixed here, as planned.** It compared
 `header_size` — the newest-version total — against v1's 1.0 total, so a legal
@@ -1023,9 +1088,8 @@ The original task description follows, for the record.
   3. Emit `#include "IFE_Constants.hpp"`, `#include "IFE_VTables.hpp"`,
      `#include "../src/IFE_Bytes.hpp"`, and — per decision 4.0-C — the Iris
      header providing `Offset`/`Size`/`BYTE`/`Result`, so the generated header
-     is self-contained. Header-only: every function `inline` or `constexpr`.
-     No `.cpp` is emitted in 4.2 (the CMake GLOB will pick one up
-     automatically if a later task needs it).
+     is self-contained. *(Superseded: 4.2 emits both a header and a source —
+     see "Generated code ships as a header and a source".)*
   4. Per block, in `namespace IFE { namespace blocks {`, emit one struct named
      exactly as the JSON block and **deriving from its primitive base**
      (see "Primitive block types"), carrying:
@@ -1138,7 +1202,46 @@ The original task description follows, for the record.
   beyond `generated_source`. Running the generator twice produces
   byte-identical output.
 
-##### 4.2c — Generated validators
+##### 4.2c — Generated validators — ✅ DONE
+
+`validate()` per block reproduces v1's checks (`IrisCodecExtension.cpp:778-803`
+and the array bounds check at `:1641-1686`), and `validate_deep()` walks the
+`points_to` graph — **including edges that leave from array entries**, which is
+where `IMAGE_BYTES` and `ANNOTATION_BYTES` hang and which v1's hand-threaded
+chains made easy to forget. Codes, operands and offsets are reported
+unformatted; no generated validator allocates, throws or builds a string.
+
+Gated by `tests/ife_blocks_tests.cpp`, which assembles a complete 202-byte
+file, reads every field back, then breaks it one byte at a time. Passes under
+`-fsanitize=address,undefined`.
+
+Three things the implementation settled that the task text had wrong:
+
+- **`VisitPath`, not a visited set.** The task specified a fixed-capacity set
+  of every visited offset. That is both too small and semantically wrong: a
+  file may hold thousands of annotations each with its own byte array, all
+  legitimate separate visits, and a global set would reject the second of two
+  entries pointing at one target. A cycle is an offset that reappears on the
+  *ancestry*, which is bounded by graph depth — 16 entries, no allocation.
+- **`VERSION_TOO_NEW` is never returned.** Append-only guarantees a newer
+  file's 1.0 prefix is readable, and 4.0-G forbids adding a rejection path.
+  The code stays in the enum for the runtime to raise as a *warning*, matching
+  v1 (`:853-865`), which warns and continues.
+- **`FILE_SIZE` vs. the size the OS reports is not checked here.** v1 does it
+  in `validate_header` (`:842-848`), but it is a fact about the file rather
+  than about the layout. It belongs to the 4.4 runtime, which knows what the
+  OS said.
+
+**A cycle is unreachable in this schema, and the test says so.** Pointing an
+offset at the wrong block type is caught by the recovery tag first, so a chain
+can only revisit an offset if every tag along it matches — and no block type
+appears twice on any path. `Check::CYCLE` is defence in depth for a corrupted
+file whose tags happen to line up; `VisitPath` is therefore tested directly
+rather than through a crafted file.
+
+The original task description follows, for the record.
+
+##### 4.2c — Generated validators (original)
 
 - **v1 precedent — the checks to reproduce, and the one thing to change:**
   `src/IrisCodecExtension.cpp:778-803` (`DATA_BLOCK::validate_offset` — the
@@ -1408,11 +1511,59 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-**4.2c (next)** →
+~~4.2c (validators)~~ → **4.2d (next)** →
 4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
+
+### Phase 4 — state of play (2026-08-07)
+
+**Done.** 4.0 decisions A–H; 4.0-H wire parity; 4.1 byte primitives; 4.2a
+version threading; 4.2b block handles; 4.2c validators.
+
+**What exists.** The generated layer reads and validates a file: typed handles
+per block over `IFE_Bytes` primitives, structural validation per block, and a
+`points_to` walk that follows edges leaving array entries as well as headers.
+Three generated artifacts plus one hand-written header, all reproducible from
+`spec/` alone.
+
+**What does not exist yet.** Writers (4.2d), the byte-window abstraction
+(4.3), the semantic runtime and public API (4.4), and the validation layer
+(4.6). **Nothing outside the tests consumes any of it** —
+`IrisFileExtensionLib` still compiles `src/IrisCodecExtension.cpp`, which
+remains the implementation that does the work. The cutover is Phase 6.
+
+**Gates in force.**
+
+| Gate | What it pins |
+|---|---|
+| `python3 -m generator --validate` | tag and enum conflicts, dangling references, type vocabulary, sequence integrity, block/tag order |
+| `python3 -m generator --check` | generated artifacts match a fresh render |
+| `ife_wire_parity_tests` | ~100 `static_assert`s: the **1.0 prefix** of every block equals shipped IFE 1.0 |
+| `ife_bytes_tests` | scalar and packed load/store, half precision exhaustively over all 65,536 patterns |
+| `ife_blocks_tests` (×2, compiled and header-only) | handles read what was written; corruption produces the specific `Check` code |
+
+All four binaries pass under `-fsanitize=address,undefined`.
+
+**Open, and both need a human.**
+
+1. **4.0-D — visibility of generated symbols.** Reopened by the `.hpp`/`.cpp`
+   split; a shared build exports zero `IFE::blocks` symbols today. Latent, not
+   broken, but it must be settled before Phase 6.
+2. **No test reads bytes written by the shipped encoder.** Everything so far
+   compares the generated layer against *descriptions* of the format — the
+   hand-written vtables, or buffers the tests themselves assembled. The
+   strongest available check is to drive v1's `STORE_*` functions, which are
+   linkable today, and read the result back through `IFE_Blocks`. That is the
+   only gate that would catch a correct-offset/wrong-load error, and the
+   parity wall structurally cannot. It belongs with 4.2d, which needs a writer
+   anyway.
+
+**Verified for this sign-off:** `--validate` clean; `--check` clean and
+regeneration byte-stable; 4/4 tests pass in both the normal and
+ASan+UBSan builds; all 18 structures match shipped IFE 1.0; generated output
+reproduces from a clean tree.
 
 ## Phase 5 — Specification document pipeline (AsciiDoc)
 

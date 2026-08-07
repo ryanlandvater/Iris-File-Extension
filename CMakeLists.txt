@@ -276,5 +276,33 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_bytes_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_bytes_tests COMMAND ife_bytes_tests)
 
+    # Generated block handles: reading and validation executed against a real
+    # byte buffer, which compiling the header cannot tell you.
+    add_executable(
+        ife_blocks_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_blocks_tests.cpp
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_blocks_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_blocks_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_blocks_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_blocks_tests COMMAND ife_blocks_tests)
+
+    # The same test compiled with IFE_HEADER_ONLY, so both ways of consuming
+    # the generated layer are covered by the build rather than by assertion.
+    add_executable(
+        ife_blocks_header_only_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_blocks_tests.cpp
+    )
+    target_compile_definitions(ife_blocks_header_only_tests PRIVATE IFE_HEADER_ONLY)
+    target_include_directories(
+        ife_blocks_header_only_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_blocks_header_only_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_blocks_header_only_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_blocks_header_only_tests COMMAND ife_blocks_header_only_tests)
+
 endif()
 

@@ -29,9 +29,8 @@ MIGRATION.md Phase 2.
 # decides what a problem means, which is why the same function serves both
 # `--validate` and the check that runs before every generation.
 #
-# For a C++ reader: this is a pure predicate over the parsed documents. It
-# reads, compares, and appends strings. It never modifies the documents and
-# never touches the filesystem.
+# Pure: reads the parsed documents, compares, appends strings. Modifies
+# nothing and touches no files.
 # ---------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -80,9 +79,8 @@ def _members(group: dict[str, Any]) -> Iterator[tuple[str, str, Any]]:
             yield version, name, raw
 
 
-# `yield` makes this a generator: it produces one pair at a time and computes
-# nothing until iterated. Equivalent to returning a lazy range. The caller can
-# only walk it once.
+# Lazy: produces one pair at a time and computes nothing until iterated, so a
+# caller may walk it only once.
 def _member_values(group_name: str, group: dict[str, Any]) -> Iterator[tuple[str, int]]:
     """(member name, value) for an enum group, deriving where values are derived.
 
