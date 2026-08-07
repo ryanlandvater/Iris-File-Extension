@@ -62,6 +62,18 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 if (NOT DEFINED irisheaders_SOURCE_DIR)
+    # Fetch dependencies into a fixed, gitignored directory in the source tree
+    # rather than inside whichever build directory happens to be in use.  The
+    # headers are then always at .deps/irisheaders-src/include, so a syntax
+    # check, an editor, or a one-off compiler invocation can find them without
+    # knowing where the build lives -- while .gitignore guarantees they can
+    # never be committed.
+    #
+    # Only when IFE is the top-level project: a parent consuming this repo owns
+    # its own dependency layout and must not have it redirected underneath it.
+    if (PROJECT_IS_TOP_LEVEL)
+        set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.deps")
+    endif()
     FetchContent_Declare (
         IrisHeaders
         GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-Headers.git

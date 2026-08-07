@@ -854,6 +854,39 @@ the only thing standing between this class of bug and a silent return. 4.5's
 CI item must build the test targets with `-fsanitize=address,undefined`, not
 just the corruption tests.
 
+#### Toolchain decisions (settled 2026-08-07)
+
+- **C++20 stays; C++23 is not adopted.** The two features that would apply
+  were measured rather than assumed. `std::byteswap` compiles to the same
+  single instruction as the hand-written shift/mask form — both emit
+  `rev w0, w0` at `-O2` on arm64, and the compiler recognises the idiom — and
+  in any case the swap sits behind `if constexpr (endian::native == big)`, so
+  on every little-endian host it is discarded before codegen. `std::float16_t`
+  from `<stdfloat>` would have replaced `half_to_float`/`float_to_half`, but
+  the header does not exist on this project's own toolchain (Apple clang 21:
+  *'stdfloat' file not found*), and those functions are now exhaustively
+  tested across all 65,536 half patterns. Against that, raising the language
+  baseline costs downstream implementers — scanner vendors and independent
+  encoder authors — for whom `src/IrisCodecExtension.cpp:31-35` explicitly
+  says this code must be "completely independently implementable". Revisit
+  only if a concrete need appears, not on general principle.
+- **Dependencies fetch into a gitignored `.deps/`.** Iris-Headers lands at
+  `.deps/irisheaders-src/include`, a fixed path in the source tree, so a
+  syntax check or editor can find it without knowing which build directory is
+  in use — while `/.deps` in `.gitignore` guarantees it is never committed.
+  Preferred over a git submodule: a submodule adds a gitlink that every clone
+  and CI job must remember to initialise, and this project already uses
+  FetchContent, so a second mechanism would be the redundancy the style guide
+  forbids. The redirect applies only when IFE is the top-level project;
+  a parent consuming this repo keeps its own dependency layout.
+- **⚠ Iris-Headers is unpinned — `GIT_TAG "origin/main"`.** A push to that
+  repository can change this build with no change here, which means the
+  parity wall can fail for reasons unrelated to the schema and the published
+  document cannot be reproduced from a tag. Pinning is a one-word change
+  (`GIT_TAG <sha>`), deliberately left as a decision: both repositories share
+  a maintainer, so following `main` may be intentional. If the specification
+  is ever ratified from a build, pin first.
+
 #### 4.2 — `generated_source/IFE_Blocks.hpp` — generated block I/O
 
 Four sub-tasks, executed in order. Each ends green before the next begins.
