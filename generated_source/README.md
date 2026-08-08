@@ -6,9 +6,16 @@ regenerated from the committed JSON specification — never hand-edited.
 
 | Path | Contract |
 |------|----------|
-| `spec/ife_fields.json`, `spec/ife_constants.json` | **Source of truth. Committed.** Every field, type, and value. |
+| `spec/ife_header.json`, `spec/ife_fields.json`, `spec/ife_constants.json` | **Source of truth. Committed.** Every field, type, and value. |
 | `generator/` (Phase 3) | Stdlib-only Python package, `python -m generator`. |
-| `generated_source/` (this dir) | **Freely regenerable. Gitignored.** vtables, enums, PODs, field keys, validation tables. |
+| `generated_source/` (this dir) | **Freely regenerable. Gitignored.** The four files below. |
+
+| File | Content |
+|------|---------|
+| `IFE_Constants.hpp` | Enumerations and statically defined values. Dependency-free. |
+| `IFE_VTables.hpp` | Derived byte offsets and cumulative sizes, per block and per array entry, per version group. Dependency-free. |
+| `IFE_Blocks.hpp` | Typed block handles: accessors, `points_to` navigation, structural validators. Declarations only; includes the Iris headers itself. |
+| `IFE_Blocks.cpp` | Their definitions. Compiled into the library, or folded into the header by `#define IFE_HEADER_ONLY`. |
 
 ## Regenerate
 

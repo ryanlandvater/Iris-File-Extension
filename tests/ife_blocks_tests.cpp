@@ -295,6 +295,190 @@ void test_visit_path() {
     IFE_CHECK(!deep.push(999));
 }
 
+// ---- fixtures that pin the three hand-written-layer bug classes ---------- //
+//
+// The extended file exercises, against the generated layer, the defects that
+// shipped in src/IrisCodecExtension.cpp and were corrected alongside these
+// tests:
+//   1. a blob length stored through a narrower width than its field (the ICC
+//      store wrote the u32 byte count through STORE_U16, so profiles >= 64 KiB
+//      came back truncated);
+//   2. a block whose payload was sized as title * bytes instead of
+//      title + bytes (IMAGE_BYTES::size());
+//   3. array entries read from the block header instead of from each entry
+//      (the ANNOTATION_GROUP_SIZES readers).
+constexpr std::uint16_t IMG_TITLE          = 300;    // 300 * 500 != 300 + 500
+constexpr std::uint32_t IMG_DATA           = 500;
+constexpr std::uint32_t ICC_BYTE_COUNT     = 70000;  // > 0xFFFF: truncation would read 4464
+constexpr std::uint32_t ANNOTATION_BYTES_COUNT = 12;
+constexpr std::uint32_t GROUP_PAYLOAD      = 15;     // (1 + 2*3) + (5 + 1*3)
+
+// Head-to-tail offsets of the extended file's appended blocks, derived the
+// same way make_extended_file lays them out so the tests can reference them.
+constexpr Offset IMAGES_AT      = FILE_END;          // 202: end of make_file()
+constexpr Offset IMAGE_BYTES_AT = IMAGES_AT + vt::IMAGES::header_size + vt::IMAGES::entry_size;
+constexpr Offset ANNOTATIONS_AT = IMAGE_BYTES_AT + vt::IMAGE_BYTES::header_size + IMG_TITLE + IMG_DATA;
+constexpr Offset ANNOTATION_BYTES_AT = ANNOTATIONS_AT + vt::ANNOTATIONS::header_size + vt::ANNOTATIONS::entry_size;
+constexpr Offset GROUP_SIZES_AT  = ANNOTATION_BYTES_AT + vt::ANNOTATION_BYTES::header_size + ANNOTATION_BYTES_COUNT;
+constexpr Offset GROUP_BYTES_AT  = GROUP_SIZES_AT + vt::ANNOTATION_GROUP_SIZES::header_size
+                                   + 2 * vt::ANNOTATION_GROUP_SIZES::entry_size;
+constexpr Offset ICC_AT          = GROUP_BYTES_AT + vt::ANNOTATION_GROUP_BYTES::header_size + GROUP_PAYLOAD;
+constexpr Offset FILE_END2       = ICC_AT + vt::ICC_PROFILE::header_size + ICC_BYTE_COUNT;
+
+std::vector<BYTE> make_extended_file() {
+    auto f = make_file();  // skeleton: header, tile table, extents, offsets, metadata
+
+    f.resize(FILE_END2, 0);
+    BYTE* p = f.data();
+    auto at = [p](Offset block, std::size_t field) { return p + block + field; };
+
+    // ---- IMAGES: one entry -> IMAGE_BYTES ------------------------------- //
+    ::IFE::store<std::uint64_t>(at(IMAGES_AT, vt::IMAGES::offset::VALIDATION), IMAGES_AT);
+    ::IFE::store<std::uint16_t>(at(IMAGES_AT, vt::IMAGES::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_IMAGES));
+    ::IFE::store<std::uint16_t>(at(IMAGES_AT, vt::IMAGES::offset::STRIDE), vt::IMAGES::entry_size);
+    ::IFE::store<std::uint32_t>(at(IMAGES_AT, vt::IMAGES::offset::COUNT), 1);
+    BYTE* ie = p + IMAGES_AT + vt::IMAGES::header_size;
+    ::IFE::store<std::uint64_t>(ie + vt::IMAGES::entry::offset::BYTES_OFFSET, IMAGE_BYTES_AT);
+    ::IFE::store<std::uint32_t>(ie + vt::IMAGES::entry::offset::WIDTH, 256);
+    ::IFE::store<std::uint32_t>(ie + vt::IMAGES::entry::offset::HEIGHT, 512);
+    ::IFE::store<std::uint8_t>(ie + vt::IMAGES::entry::offset::ENCODING,
+                               static_cast<std::uint8_t>(k::ImageEncodings::IMAGE_ENCODING_JPEG));
+    ::IFE::store<std::uint8_t>(ie + vt::IMAGES::entry::offset::FORMAT,
+                               static_cast<std::uint8_t>(k::PixelFormats::FORMAT_R8G8B8A8));
+    ::IFE::store<std::uint16_t>(ie + vt::IMAGES::entry::offset::ORIENTATION, 0x55A0);  // 90.0f
+
+    // ---- IMAGE_BYTES: 300 B label + 500 B stream (sum, not product) ----- //
+    ::IFE::store<std::uint64_t>(at(IMAGE_BYTES_AT, vt::IMAGE_BYTES::offset::VALIDATION), IMAGE_BYTES_AT);
+    ::IFE::store<std::uint16_t>(at(IMAGE_BYTES_AT, vt::IMAGE_BYTES::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_IMAGE_BYTES));
+    ::IFE::store<std::uint16_t>(at(IMAGE_BYTES_AT, vt::IMAGE_BYTES::offset::TITLE_SIZE), IMG_TITLE);
+    ::IFE::store<std::uint32_t>(at(IMAGE_BYTES_AT, vt::IMAGE_BYTES::offset::IMAGE_SIZE), IMG_DATA);
+    std::memset(p + IMAGE_BYTES_AT + vt::IMAGE_BYTES::header_size, 'L', IMG_TITLE);
+    std::memset(p + IMAGE_BYTES_AT + vt::IMAGE_BYTES::header_size + IMG_TITLE, 0xAB, IMG_DATA);
+
+    // ---- ANNOTATIONS: one entry -> ANNOTATION_BYTES, two groups --------- //
+    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::VALIDATION), ANNOTATIONS_AT);
+    ::IFE::store<std::uint16_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATIONS));
+    ::IFE::store<std::uint16_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::STRIDE), vt::ANNOTATIONS::entry_size);
+    ::IFE::store<std::uint32_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::COUNT), 1);
+    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::GROUP_SIZES_OFFSET), GROUP_SIZES_AT);
+    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, vt::ANNOTATIONS::offset::GROUP_BYTES_OFFSET), GROUP_BYTES_AT);
+    BYTE* ae = p + ANNOTATIONS_AT + vt::ANNOTATIONS::header_size;
+    ::IFE::store_u24(ae + vt::ANNOTATIONS::entry::offset::IDENTIFIER, 42);
+    ::IFE::store<std::uint64_t>(ae + vt::ANNOTATIONS::entry::offset::BYTES_OFFSET, ANNOTATION_BYTES_AT);
+    ::IFE::store<std::uint8_t>(ae + vt::ANNOTATIONS::entry::offset::FORMAT,
+                               static_cast<std::uint8_t>(k::AnnotationTypes::ANNOTATION_PNG));
+    ::IFE::store<float>(ae + vt::ANNOTATIONS::entry::offset::X_LOCATION, 1.5f);
+    ::IFE::store<float>(ae + vt::ANNOTATIONS::entry::offset::Y_LOCATION, 2.5f);
+    ::IFE::store<float>(ae + vt::ANNOTATIONS::entry::offset::X_SIZE, 3.5f);
+    ::IFE::store<float>(ae + vt::ANNOTATIONS::entry::offset::Y_SIZE, 4.5f);
+    ::IFE::store<std::uint32_t>(ae + vt::ANNOTATIONS::entry::offset::PIXEL_WIDTH, 100);
+    ::IFE::store<std::uint32_t>(ae + vt::ANNOTATIONS::entry::offset::PIXEL_HEIGHT, 200);
+    ::IFE::store_u24(ae + vt::ANNOTATIONS::entry::offset::PARENT_ID, 0xFFFFFF);
+
+    // ---- ANNOTATION_BYTES: 12 B stream ---------------------------------- //
+    ::IFE::store<std::uint64_t>(at(ANNOTATION_BYTES_AT, vt::ANNOTATION_BYTES::offset::VALIDATION), ANNOTATION_BYTES_AT);
+    ::IFE::store<std::uint16_t>(at(ANNOTATION_BYTES_AT, vt::ANNOTATION_BYTES::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_BYTES));
+    ::IFE::store<std::uint32_t>(at(ANNOTATION_BYTES_AT, vt::ANNOTATION_BYTES::offset::COUNT), ANNOTATION_BYTES_COUNT);
+    std::memset(p + ANNOTATION_BYTES_AT + vt::ANNOTATION_BYTES::header_size, 0xCD, ANNOTATION_BYTES_COUNT);
+
+    // ---- GROUP_SIZES: two entries ('A' + 2 members, "ZEBRA" + 1 member) - //
+    ::IFE::store<std::uint64_t>(at(GROUP_SIZES_AT, vt::ANNOTATION_GROUP_SIZES::offset::VALIDATION), GROUP_SIZES_AT);
+    ::IFE::store<std::uint16_t>(at(GROUP_SIZES_AT, vt::ANNOTATION_GROUP_SIZES::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_SIZES));
+    ::IFE::store<std::uint16_t>(at(GROUP_SIZES_AT, vt::ANNOTATION_GROUP_SIZES::offset::STRIDE), vt::ANNOTATION_GROUP_SIZES::entry_size);
+    ::IFE::store<std::uint32_t>(at(GROUP_SIZES_AT, vt::ANNOTATION_GROUP_SIZES::offset::COUNT), 2);
+    BYTE* g0 = p + GROUP_SIZES_AT + vt::ANNOTATION_GROUP_SIZES::header_size;
+    ::IFE::store<std::uint16_t>(g0 + vt::ANNOTATION_GROUP_SIZES::entry::offset::TITLE_SIZE, 1);
+    ::IFE::store<std::uint32_t>(g0 + vt::ANNOTATION_GROUP_SIZES::entry::offset::MEMBER_COUNT, 2);
+    ::IFE::store<std::uint16_t>(g0 + vt::ANNOTATION_GROUP_SIZES::entry_size + vt::ANNOTATION_GROUP_SIZES::entry::offset::TITLE_SIZE, 5);
+    ::IFE::store<std::uint32_t>(g0 + vt::ANNOTATION_GROUP_SIZES::entry_size + vt::ANNOTATION_GROUP_SIZES::entry::offset::MEMBER_COUNT, 1);
+
+    // ---- GROUP_BYTES: 'A' + 2 members, "ZEBRA" + 1 member = 15 B ------- //
+    ::IFE::store<std::uint64_t>(at(GROUP_BYTES_AT, vt::ANNOTATION_GROUP_BYTES::offset::VALIDATION), GROUP_BYTES_AT);
+    ::IFE::store<std::uint16_t>(at(GROUP_BYTES_AT, vt::ANNOTATION_GROUP_BYTES::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_BYTES));
+    ::IFE::store<std::uint32_t>(at(GROUP_BYTES_AT, vt::ANNOTATION_GROUP_BYTES::offset::COUNT), GROUP_PAYLOAD);
+    BYTE* gb = p + GROUP_BYTES_AT + vt::ANNOTATION_GROUP_BYTES::header_size;
+    *gb = 'A';
+    std::memset(gb + 1, 1, 6);          // two 3-byte member identifiers
+    std::memcpy(gb + 7, "ZEBRA", 5);
+    std::memset(gb + 12, 2, 3);         // one 3-byte member identifier
+
+    // ---- ICC_PROFILE: 70,000 B (the u16-truncation class) -------------- //
+    ::IFE::store<std::uint64_t>(at(ICC_AT, vt::ICC_PROFILE::offset::VALIDATION), ICC_AT);
+    ::IFE::store<std::uint16_t>(at(ICC_AT, vt::ICC_PROFILE::offset::RECOVERY),
+                                static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ICC_PROFILE));
+    ::IFE::store<std::uint32_t>(at(ICC_AT, vt::ICC_PROFILE::offset::COUNT), ICC_BYTE_COUNT);
+    std::memset(p + ICC_AT + vt::ICC_PROFILE::header_size, 0xEE, ICC_BYTE_COUNT);
+
+    // ---- point METADATA at the new blocks, fix the file size ------------ //
+    ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::IMAGES_OFFSET), IMAGES_AT);
+    ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ICC_COLOR_OFFSET), ICC_AT);
+    ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ANNOTATIONS_OFFSET), ANNOTATIONS_AT);
+    // FILE_END2, not make_file()'s FILE_END: handles bound against the buffer
+    // length today, but 4.4 validates against this field, and a header
+    // declaring 202 bytes over an 86 KB file would fail there instead of here.
+    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), FILE_END2);
+    return f;
+}
+
+void test_large_blob_length_reads_full_u32() {
+    const auto f = make_extended_file();
+    const auto h = root(f);
+    const auto icc = h.metadata_offset().icc_color_offset();
+    IFE_CHECK(static_cast<bool>(icc));
+    const auto span = icc.bytes();
+    // The v1 store wrote this u32 length through STORE_U16; 70000 & 0xFFFF
+    // is 4464, so a truncated reader reports 4464 and validates against it.
+    IFE_CHECK(span.size == ICC_BYTE_COUNT);
+    IFE_CHECK(span.data == f.data() + ICC_AT + vt::ICC_PROFILE::header_size);
+}
+
+void test_image_bytes_is_sum_not_product() {
+    const auto f = make_extended_file();
+    const auto h = root(f);
+    const auto im = h.metadata_offset().images_offset();
+    IFE_CHECK(im.count() == 1);
+    const auto ib = im.entry(0).bytes_offset();
+    IFE_CHECK(static_cast<bool>(ib));
+    IFE_CHECK(ib.title_size() == IMG_TITLE);
+    IFE_CHECK(ib.image_size() == IMG_DATA);
+    // The fixture only fits because payload = title + data (816 B here); a
+    // title * data reading would claim 150,016 B past the header. The block
+    // ends exactly where the next block begins.
+    IFE_CHECK(IMAGE_BYTES_AT + vt::IMAGE_BYTES::header_size + IMG_TITLE + IMG_DATA == ANNOTATIONS_AT);
+    IFE_CHECK(im.entry(0).orientation() == 90.0f);  // 0x55A0 through load_f16
+}
+
+void test_annotation_groups_read_from_entries() {
+    const auto f = make_extended_file();
+    const auto h = root(f);
+    const auto an = h.metadata_offset().annotations_offset();
+    IFE_CHECK(an.count() == 1);
+    const auto e0 = an.entry(0);
+    IFE_CHECK(e0.identifier() == 42);
+    IFE_CHECK(e0.format() == k::AnnotationTypes::ANNOTATION_PNG);
+    IFE_CHECK(e0.parent_id() == 0xFFFFFF);
+    IFE_CHECK(e0.bytes_offset().bytes().size == ANNOTATION_BYTES_COUNT);
+
+    // The v1 readers pulled every entry's sizes from the block header; a
+    // regenerated version of that bug would make these read VALIDATION bytes.
+    const auto gs = an.group_sizes_offset();
+    IFE_CHECK(gs.count() == 2);
+    IFE_CHECK(gs.entry(0).title_size() == 1);
+    IFE_CHECK(gs.entry(0).member_count() == 2);
+    IFE_CHECK(gs.entry(1).title_size() == 5);
+    IFE_CHECK(gs.entry(1).member_count() == 1);
+    IFE_CHECK(an.group_bytes_offset().bytes().size == GROUP_PAYLOAD);
+
+    // The whole extended file — entries, groups, blob — deep-validates.
+    IFE_CHECK(static_cast<bool>(h.validate_deep()));
+}
+
 }  // namespace
 
 int main() {
@@ -304,6 +488,9 @@ int main() {
     test_corruption_is_caught();
     test_truncation();
     test_wider_stride_is_read_not_rejected();
+    test_large_blob_length_reads_full_u32();
+    test_image_bytes_is_sum_not_product();
+    test_annotation_groups_read_from_entries();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

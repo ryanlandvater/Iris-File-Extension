@@ -214,10 +214,17 @@ entry 39, group size 6.
 
 ## Not yet present (later phases)
 
-* `ife.meta.schema.json` + CI validator: unique recovery tags, unique field
-  names per block, `points_to`/`enum`/`constant` references resolve,
-  append-only version groups, every block referenced by `{{layout:...}}`
-  in `ife_spec.md`.
+* **The append-only check.** `--validate` catches conflicts and dangling
+  references *within* one revision; nothing yet compares a revision against
+  its predecessor, which is the only way to catch a `1.0` field being moved,
+  resized or retyped. It is a property of the **diff**, so no check over a
+  single document can see it. See MIGRATION.md Phase 2, validator item 1.
+  (A `ife.meta.schema.json` meta-schema was written and **deleted** — JSON
+  Schema cannot express this check, nor uniqueness over object values, nor
+  cross-document agreement, and it would add a dependency to a deliberately
+  stdlib-only toolchain. Do not re-propose it.)
+* **Normative clause tagging.** No field carries a shall/should/may predicate
+  yet; MIGRATION.md 4.6 step 2 adds them, drawn from the capped vocabulary.
 * v1 narrative not yet migrated into `ife_spec.md` (marked `TODO(draft)`):
   full definitions, MpP/Mc equations, global tile indexing equations and
   figures, slide-space figure.

@@ -112,7 +112,12 @@ void test_packed_widths_touch_exact_bytes() {
         IFE_CHECK(IFE::load_u24(g.field()) == v);
         IFE_CHECK(g.guards_intact());
     }
-    for (std::uint64_t v : {0ull, 1ull, 0x000000FFFFFFFFFEull, IFE::U40_MAX}) {
+    // Named array rather than a braced list: uint64_t is `unsigned long` on
+    // LP64 targets such as s390x and `unsigned long long` elsewhere, so mixing
+    // a `ull` literal with U40_MAX in one initializer_list fails to deduce
+    // there while compiling cleanly here.
+    constexpr std::uint64_t u40_cases[] = {0, 1, 0x000000FFFFFFFFFEull, IFE::U40_MAX};
+    for (std::uint64_t v : u40_cases) {
         Guarded g(5);
         IFE::store_u40(g.field(), v);
         IFE_CHECK(IFE::load_u40(g.field()) == v);
@@ -154,6 +159,73 @@ void test_packed_loads_do_not_over_read() {
         IFE_CHECK(IFE::load_u40(file_end.get())     <= IFE::U40_MAX);
         IFE_CHECK(IFE::load_u24(file_end.get() + 5) <= IFE::U24_MAX);
     }
+}
+
+// The wire contract, stated as literal bytes.
+//
+// Every other test in this file round-trips store through load, which cancels
+// a byte-order error exactly when there is one to catch: if both halves agree
+// on the wrong order, the round-trip still passes. This is the only test that
+// says what a byte on disk must actually be, in both directions, and it is
+// what pins "little endian on disk, at every version" (MIGRATION.md Phase 1,
+// field type system) rather than merely "self-consistent on this host".
+//
+// It caught nothing on a little-endian host by luck: the primitives compose
+// values arithmetically and so have no host-dependent path left. Before that,
+// the big-endian branch stored a u24 as `BB AA 00` and loaded it back shifted
+// left by 8 — invisible to a round-trip test on the only hosts available.
+void test_wire_byte_order() {
+    BYTE buf[8];
+
+    // Whole widths.
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store<std::uint16_t>(buf, 0xAABB);
+    IFE_CHECK(buf[0] == 0xBB && buf[1] == 0xAA);
+
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store<std::uint32_t>(buf, 0xAABBCCDDu);
+    IFE_CHECK(buf[0] == 0xDD && buf[1] == 0xCC && buf[2] == 0xBB && buf[3] == 0xAA);
+
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store<std::uint64_t>(buf, 0x1122334455667788ull);
+    IFE_CHECK(buf[0] == 0x88 && buf[1] == 0x77 && buf[2] == 0x66 && buf[3] == 0x55 &&
+              buf[4] == 0x44 && buf[5] == 0x33 && buf[6] == 0x22 && buf[7] == 0x11);
+
+    // Packed widths — the pair that was wrong, and the reason this test exists.
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store_u24(buf, 0xAABBCCu);
+    IFE_CHECK(buf[0] == 0xCC && buf[1] == 0xBB && buf[2] == 0xAA);
+
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store_u40(buf, 0xAABBCCDDEEull);
+    IFE_CHECK(buf[0] == 0xEE && buf[1] == 0xDD && buf[2] == 0xCC &&
+              buf[3] == 0xBB && buf[4] == 0xAA);
+
+    // float is an IEEE binary32 bit pattern in the same order: 2.5f is
+    // 0x40200000, so the wire reads 00 00 20 40.
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store<float>(buf, 2.5f);
+    IFE_CHECK(buf[0] == 0x00 && buf[1] == 0x00 && buf[2] == 0x20 && buf[3] == 0x40);
+
+    // f16 likewise: ORIENTATION_90 is the wire pattern 0x55A0.
+    std::memset(buf, 0, sizeof(buf));
+    IFE::store_f16(buf, 90.0f);
+    IFE_CHECK(buf[0] == 0xA0 && buf[1] == 0x55);
+
+    // The load direction, from bytes this test wrote by hand rather than
+    // through the store it is checking.
+    const BYTE u16_wire[2] = {0xBB, 0xAA};
+    const BYTE u24_wire[3] = {0xCC, 0xBB, 0xAA};
+    const BYTE u32_wire[4] = {0xDD, 0xCC, 0xBB, 0xAA};
+    const BYTE u40_wire[5] = {0xEE, 0xDD, 0xCC, 0xBB, 0xAA};
+    const BYTE u64_wire[8] = {0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
+    const BYTE f16_wire[2] = {0xA0, 0x55};
+    IFE_CHECK(IFE::load<std::uint16_t>(u16_wire) == 0xAABB);
+    IFE_CHECK(IFE::load_u24(u24_wire)            == 0xAABBCCu);
+    IFE_CHECK(IFE::load<std::uint32_t>(u32_wire) == 0xAABBCCDDu);
+    IFE_CHECK(IFE::load_u40(u40_wire)            == 0xAABBCCDDEEull);
+    IFE_CHECK(IFE::load<std::uint64_t>(u64_wire) == 0x1122334455667788ull);
+    IFE_CHECK(IFE::load_f16(f16_wire)            == 90.0f);
 }
 
 // The tile table is where the packed widths actually live: a u40 offset
@@ -255,6 +327,7 @@ int main() {
     test_unaligned();
     test_packed_widths_touch_exact_bytes();
     test_packed_loads_do_not_over_read();
+    test_wire_byte_order();
     test_tile_offset_entry_shape();
     test_half_exhaustive();
     test_orientation_constants();

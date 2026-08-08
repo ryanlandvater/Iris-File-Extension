@@ -14,14 +14,15 @@
  *
  * Invariants:
  *   - A load reads exactly the field's width and never a byte more.
- *   - Byte order is resolved at compile time; there is no runtime dispatch.
- *   - Every access is a memcpy. No pointer is ever reinterpreted and
- *     dereferenced, so unaligned fields — which IFE has, because packing is
- *     dense — are well defined rather than merely working in practice.
+ *   - Loads never branch on host byte order; stores branch at compile time,
+ *     and only because it is worth 6 instructions there (see store_bytes).
+ *   - No pointer is ever reinterpreted and dereferenced — access is either
+ *     byte-at-a-time or by memcpy — so unaligned fields, which IFE has because
+ *     packing is dense, are well defined rather than merely working in
+ *     practice.
  *   - Nothing here allocates or throws.
  *
- * IFE stores little-endian on the wire at every version. A big-endian host
- * byte-swaps on load and store; that is the only reason the swap exists.
+ * IFE stores little-endian on the wire at every version.
  */
 
 #ifndef IFE_Bytes_hpp
@@ -60,6 +61,15 @@ static_assert(std::numeric_limits<double>::is_iec559,
               "IFE requires IEEE 754 binary64 doubles");
 static_assert(sizeof(float) == 4 && sizeof(double) == 8);
 
+/// The integer paths below are independent of host byte order, but the float
+/// paths are not quite: they bit_cast an integer whose value is the IEEE
+/// pattern, which assumes floats and integers share a byte order. A
+/// mixed-endian host is the one place that fails, so it is rejected here
+/// rather than silently mis-reading every float in a slide.
+static_assert(std::endian::native == std::endian::little ||
+              std::endian::native == std::endian::big,
+              "IFE does not support mixed-endian hosts");
+
 /// A view of a byte range in the mapped file: what a byte_array block yields.
 /// Deliberately not std::span — the generated headers stay compilable without
 /// <span>, and two members are the whole contract.
@@ -73,68 +83,77 @@ struct ByteSpan {
 
 namespace detail {
 
-/// Compile-time byte-order decision. v1 selected between little- and
-/// big-endian readers through `static std::function` objects
-/// (IrisCodecExtension.cpp:166-177): an indirect call for every field access
-/// and a static-initialisation-order hazard for the price of a branch the
-/// compiler can fold away.
-inline constexpr bool swap_needed = (std::endian::native == std::endian::big);
-
-static_assert(std::endian::native == std::endian::little ||
-              std::endian::native == std::endian::big,
-              "IFE does not support mixed-endian hosts");
-
-/// std::byteswap is C++23; IFE targets C++20.
-[[nodiscard]] constexpr std::uint16_t bswap(std::uint16_t v) noexcept {
-    return static_cast<std::uint16_t>((v << 8) | (v >> 8));
-}
-[[nodiscard]] constexpr std::uint32_t bswap(std::uint32_t v) noexcept {
-    return ((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) |
-           ((v & 0x00FF0000u) >> 8)  | ((v & 0xFF000000u) >> 24);
-}
-[[nodiscard]] constexpr std::uint64_t bswap(std::uint64_t v) noexcept {
-    return ((v & 0x00000000000000FFull) << 56) | ((v & 0x000000000000FF00ull) << 40) |
-           ((v & 0x0000000000FF0000ull) << 24) | ((v & 0x00000000FF000000ull) << 8)  |
-           ((v & 0x000000FF00000000ull) >> 8)  | ((v & 0x0000FF0000000000ull) >> 24) |
-           ((v & 0x00FF000000000000ull) >> 40) | ((v & 0xFF00000000000000ull) >> 56);
-}
-[[nodiscard]] constexpr std::uint8_t bswap(std::uint8_t v) noexcept { return v; }
-
-/// Read exactly `N` bytes into the low end of a zeroed integer, correcting
-/// byte order. `N` may be narrower than `sizeof(T)` — that is what makes the
-/// packed widths safe.
+/// Read exactly `N` wire bytes into the low end of a zeroed integer. `N` may
+/// be narrower than `sizeof(T)` — that is what makes the packed widths safe.
+///
+/// **There is no big-endian branch, deliberately.** Wire byte `i` carries bits
+/// `8i..8i+7` of the value, which is the whole of what "little endian on disk,
+/// at every version" means; composing arithmetically makes that true on any
+/// host, so the host's own byte order never enters. v1 instead selected
+/// between two readers through `static std::function` objects
+/// (IrisCodecExtension.cpp:166-177) — an indirect call per field access.
+///
+/// An earlier version of this header kept a compile-time branch: on a
+/// big-endian host it reversed the N wire bytes and memcpy'd them into the
+/// *front* of the integer. That is correct only when `N == sizeof(T)`. For
+/// `u24`/`u40` the field landed in the most-significant bytes, so a big-endian
+/// host loaded `value << 8` / `value << 24`, wrote `BB AA 00` where the wire
+/// wanted `CC BB AA`, and could not read back what it had just written. No
+/// available host executes that branch, so no test could catch it — which is
+/// the argument for having no branch rather than a fixed one.
 template <typename T, std::size_t N = sizeof(T)>
 [[nodiscard]] inline T load_bytes(const BYTE* __p) noexcept {
     static_assert(std::is_unsigned_v<T> && N <= sizeof(T));
     T raw{};
-    if constexpr (swap_needed) {
-        BYTE tmp[N];
-        std::memcpy(tmp, __p, N);
-        for (std::size_t i = 0; i < N / 2; ++i) {
-            const BYTE t = tmp[i];
-            tmp[i] = tmp[N - 1 - i];
-            tmp[N - 1 - i] = t;
-        }
-        std::memcpy(&raw, tmp, N);
-    } else {
-        std::memcpy(&raw, __p, N);
-    }
+    for (std::size_t i = 0; i < N; ++i)
+        raw = static_cast<T>(raw | (static_cast<T>(__p[i]) << (8 * i)));
     return raw;
 }
 
-/// Write exactly `N` low-order bytes of `v`, correcting byte order.
+/// std::byteswap is C++23; IFE targets C++20. Used only by store_bytes.
+template <typename T>
+[[nodiscard]] constexpr T bswap(T v) noexcept {
+    static_assert(std::is_unsigned_v<T>);
+    if constexpr (sizeof(T) == 1) {
+        return v;
+    } else if constexpr (sizeof(T) == 2) {
+        return static_cast<T>((v << 8) | (v >> 8));
+    } else if constexpr (sizeof(T) == 4) {
+        return static_cast<T>(((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) |
+                              ((v & 0x00FF0000u) >> 8)  | ((v & 0xFF000000u) >> 24));
+    } else {
+        return static_cast<T>(
+            ((v & 0x00000000000000FFull) << 56) | ((v & 0x000000000000FF00ull) << 40) |
+            ((v & 0x0000000000FF0000ull) << 24) | ((v & 0x00000000FF000000ull) << 8)  |
+            ((v & 0x000000FF00000000ull) >> 8)  | ((v & 0x0000FF0000000000ull) >> 24) |
+            ((v & 0x00FF000000000000ull) >> 40) | ((v & 0xFF00000000000000ull) >> 56));
+    }
+}
+
+/// Write exactly `N` low-order bytes of `v` in wire order.
+///
+/// Unlike load_bytes this *does* branch on host order, because here it pays:
+/// a memcpy of the value's own representation lowers to `strh`+`strb` (u24) or
+/// `str`+`strb` (u40), where composing byte by byte costs 5 and 9 instructions.
+/// The load side gains nothing from the same treatment — both forms emit three
+/// instructions — so it stays branchless, where nothing can go wrong.
+///
+/// **The swap is over the whole `T`, never over `N`.** The wire bytes are then
+/// the leading `N` bytes of the swapped value's representation. Swapping over
+/// `N` is the defect that shipped twice here: once in v1's `__BE_LOAD_U24`, and
+/// once in this header's original big-endian branch. If that distinction is
+/// ever unclear, the branch is not worth keeping — delete it and compose
+/// arithmetically, which is correct on every host.
+///
+/// This branch runs on no developer machine, so it is covered by the
+/// big-endian CI job (`.github/workflows/ci.yml`) rather than by reasoning.
+/// Removing that job silently removes the only thing testing this code.
 template <typename T, std::size_t N = sizeof(T)>
 inline void store_bytes(BYTE* __p, T v) noexcept {
     static_assert(std::is_unsigned_v<T> && N <= sizeof(T));
-    if constexpr (swap_needed) {
-        BYTE tmp[sizeof(T)];
-        std::memcpy(tmp, &v, sizeof(T));
-        for (std::size_t i = 0; i < N / 2; ++i) {
-            const BYTE t = tmp[i];
-            tmp[i] = tmp[N - 1 - i];
-            tmp[N - 1 - i] = t;
-        }
-        std::memcpy(__p, tmp, N);
+    if constexpr (std::endian::native == std::endian::big) {
+        const T swapped = bswap(v);
+        std::memcpy(__p, &swapped, N);
     } else {
         std::memcpy(__p, &v, N);
     }

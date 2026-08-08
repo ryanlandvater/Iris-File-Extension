@@ -1,0 +1,83 @@
+name: CI
+
+# The gates MIGRATION.md calls for, in one place. Four jobs, each pinning a
+# property nothing else can:
+#
+#   spec        the JSON is self-consistent, and generated_source/ is what the
+#               current spec produces (Phase 3's drift gate)
+#   tests       the generated layer and the primitives behave
+#   sanitizers  the packed loads read exactly 3 and exactly 5 bytes. Without
+#               ASan those tests are ordinary passing round-trips and prove
+#               nothing -- see MIGRATION.md 4.1
+#   big-endian  IFE is little-endian on disk at every version, which is a
+#               claim about every host, not about the one you build on
+
+on:
+  push:
+    branches: [main, 'spec/**']
+  pull_request:
+
+jobs:
+  spec:
+    name: spec documents and drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m generator --validate
+      - run: python3 -m generator
+      - run: python3 -m generator --check
+
+  tests:
+    name: build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure
+
+  sanitizers:
+    name: address and undefined behaviour
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with ASan + UBSan
+        run: >
+          cmake -B build-asan -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - run: cmake --build build-asan -j
+      - run: ctest --test-dir build-asan --output-on-failure
+
+  big-endian:
+    name: big-endian (s390x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+
+      # Native configure first: it fetches Iris-Headers into .deps/ and renders
+      # generated_source/, so the emulated container only has to compile. Doing
+      # the fetch and the generation under emulation would cost minutes for no
+      # extra coverage -- neither step is architecture dependent.
+      - name: Fetch dependencies and generate (native)
+        run: cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+
+      # The two suites that touch bytes. ife_wire_parity_tests is a wall of
+      # static_asserts over generated constants and cannot vary by host, so it
+      # is left to the native job.
+      - name: Compile and run on s390x
+        run: |
+          docker run --rm --platform linux/s390x -v "$PWD":/repo -w /repo alpine:latest sh -c '
+            set -e
+            apk add --no-cache g++ >/dev/null
+            echo "arch: $(uname -m)"
+            INC="-I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
+            g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
+            /tmp/bytes
+            /tmp/blocks
+          '

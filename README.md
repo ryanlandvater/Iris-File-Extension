@@ -80,7 +80,7 @@ if (result != IRIS_SUCCESS) {
     ...handle the validation error
 }
 ```
-This method performs a chain of `validate_full(uint8_t*)` methods on the component parts of slides. If you prefer to validate individual data blocks, you may individually call the `validate_offset(uint8_t*)` and `validate_full(uint8_t*)` methods that are defined in all data blocks. See the more in-depth [README](./src/README.md) associated with the source directory. 
+This method performs a chain of `validate_full(uint8_t*)` methods on the component parts of slides. If you prefer to validate individual data blocks, you may individually call the `validate_offset(uint8_t*)` and `validate_full(uint8_t*)` methods that are defined in all data blocks. Each data block declares both alongside its layout in [`IrisCodecExtension.hpp`](./src/IrisCodecExtension.hpp). 
 
 
 ### Using Slide Abstraction
@@ -121,7 +121,7 @@ try {
 ```
 
 ### Manually *without* File Abstraction 
-Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the `Serialization::DATA_BLOCK` structure defined below. These data blocks reside within the `Serialization:: namespace` and are **always** fully capitalized. They are accessed by retrieval from parent data blocks using methods that begin with "get" followed by the name of any derived data blocks. Data block information is read using the "read" methods. These methods generate structures within the `Abstraction:: namespace`. This method for manually reading data from within the IFE will be covered in greater detail within the [README](./src/README.md) associated with the source directory. 
+Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the `Serialization::DATA_BLOCK` structure defined below. These data blocks reside within the `Serialization:: namespace` and are **always** fully capitalized. They are accessed by retrieval from parent data blocks using methods that begin with "get" followed by the name of any derived data blocks. Data block information is read using the "read" methods. These methods generate structures within the `Abstraction:: namespace`. The full set of data blocks, their `get`/`read` methods, and their byte layouts are declared in [`IrisCodecExtension.hpp`](./src/IrisCodecExtension.hpp). 
 ```cpp
 struct DATA_BLOCK {
     // Each datablock has an vtable

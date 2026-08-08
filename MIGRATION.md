@@ -5,9 +5,10 @@
 > 4.4. The generated layer reads and validates; it does not yet write, and
 > nothing outside the tests consumes it — `IrisFileExtensionLib` still
 > compiles the hand-written `IrisCodecExtension.cpp`, and the cutover is
-> Phase 6. Two decisions are open: **4.0-D** (visibility of generated symbols,
-> reopened by the `.hpp`/`.cpp` split) and **4.0-E part 3** is closed but its
-> sibling work is not. Gates in force: `--validate`, `--check`, the
+> Phase 6. One decision is open: **4.0-D** (visibility of generated symbols,
+> reopened by the `.hpp`/`.cpp` split — a shared build exports zero
+> `IFE::blocks` symbols). 4.0-E is fully closed: part 1 in the decision,
+> parts 2–3 with 4.1 and the emitter. Gates in force: `--validate`, `--check`, the
 > `static_assert` parity wall, and four test binaries under ASan+UBSan.
 >
 > **Broad plan below.** Each phase below gets a granular checklist
@@ -183,8 +184,18 @@ spec will encode. Broad checklist:
 
 ## Phase 2 — JSON specification
 
+**Status (2026-08-07): delivered except two items, both named below.** The
+documents are authored and the validator runs before every generation. What is
+*not* built: **the append-only diff check** (validator item 1 — the invariant
+every compatibility guarantee in this document rests on is still unenforced),
+and the **normative shall/should/may clauses** in the JSON, which 4.6 needs and
+which no field currently carries. Neither blocks Phase 4; the first blocks
+Phase 6.
+
 - [ ] **Spec validator** — `python -m generator --validate`, stdlib-only,
-      run in CI beside `--check`. Checks, in rough order of importance:
+      run in CI beside `--check`. **Built, minus item 1** —
+      `generator/validate.py` implements 2–5, and `.github/workflows/ci.yml`
+      runs it. Checks, in rough order of importance:
       1. **The append-only invariant**: no field removed, retyped, resized or
          reordered against the previous committed spec; retirement only via
          `deprecated`. Without this the invariant is a convention that one
@@ -207,14 +218,19 @@ spec will encode. Broad checklist:
       source of truth for the same question. Do not re-propose it. The
       `$schema` keys that referenced it have been removed from both instance
       documents.
-- [ ] **`spec/ife_fields.json` + `spec/ife_constants.json`** authored per Phase 1 decisions, covering:
+- [x] **`spec/ife_fields.json` + `spec/ife_constants.json`** authored per Phase 1 decisions, covering:
       constants/sentinels, enumerations, header blocks, array blocks and
-      entry layouts, versioning semantics, validation rules.
+      entry layouts, versioning semantics, validation rules. Plus
+      `ife_header.json`, which Phase 1 did not anticipate: specification
+      identity stated once so two documents cannot disagree about it.
 - [ ] **Doc-generation fields baked in from the start:** per-item `description`,
       normative clauses tagged shall/should/may, section anchors, cross
       references, units/ranges, equation hooks — everything Phase 5 needs so
-      the schema never needs a redesign for documentation.
-- [ ] **Derivation rule:** byte offsets and block sizes are *never* stated in
+      the schema never needs a redesign for documentation. **Partial:**
+      `description`, `errata` and `unspecified` are carried; **no normative
+      clause tagging exists yet** — 4.6 step 2 is where it lands, and it must
+      stay inside the capped predicate vocabulary.
+- [x] **Derivation rule:** byte offsets and block sizes are *never* stated in
       the JSON; they are derived from field order and type by consumers
       (generator and doc pipeline), eliminating transcription drift.
 
@@ -223,17 +239,25 @@ spec will encode. Broad checklist:
 
 ## Phase 3 — Code generator
 
-- [ ] **`generator/`** — Python stdlib-only package run as `python -m generator`, deterministic output (stable
-      ordering, no timestamps), self-tested.
-- [ ] **Emitted C++** (regenerable, gitignored under `generated_source/`): enumerations;
+**Status (2026-08-07): the generator is built and feeding Phase 4.** Five
+artifacts emit from `spec/` alone and regeneration is byte-stable. Outstanding:
+**binding surfaces** (nothing emitted for Python or WASM) and the `--check`
+parity redesign, which was always future work.
+
+- [x] **`generator/`** — Python stdlib-only package run as `python -m generator`, deterministic output (stable
+      ordering, no timestamps). Gated by `--validate` and `--check` rather than
+      by unit tests of its own; the C++ test binaries are what execute its output.
+- [x] **Emitted C++** (regenerable, gitignored under `generated_source/`): enumerations;
       layout/vtable constants; POD data types; field keys; validation and
       recovery tables; version-aware block sizes (per-`since` gating data so
       runtime version checks are table-driven, not hand-threaded).
+      `IFE_Constants.hpp`, `IFE_VTables.hpp`, `IFE_Blocks.hpp` + `.cpp`.
 - [ ] **Emitted binding surfaces** (stubs acceptable initially): field-key
-      tables for Python and WASM/Emscripten.
-- [ ] **Build integration:** configure-time generation when `generated_source/`
+      tables for Python and WASM/Emscripten. **Not started** — Phase 6.
+- [x] **Build integration:** configure-time generation when `generated_source/`
       is absent or `-DIFE_RUN_GENERATOR=ON`; CI check that
       regeneration is diff-clean; generator is stdlib-only Python.
+      `CMakeLists.txt:110-137` and `.github/workflows/ci.yml`.
 - [ ] **`--check` parity, not byte-equality (future).** The current
       `--check` is exact character equivalence: regenerate in memory, diff
       against the on-disk files byte-for-byte. That gate is brittle — it
@@ -531,14 +555,11 @@ sentinel set, decision A).
          `ORIENTATION` still 2 B at entry offset 18, `IMAGE_ENTRY` still
          20 B. The dangling `{{constants:image_orientations}}` anchor in
          `spec/ife_spec.md` was repointed at section 2.2.
-      2. **`f16` accessors still need implementing — belongs to 4.1.**
-         `generator/model/layout.py:42` maps `f16` → `std::uint16_t`, so the
-         generated `ORIENTATION` accessor would hand back raw bits. Port
-         v1's `F16_CONVERT_NON_IEEE` helpers
-         (`src/IrisCodecExtension.cpp:180-195`) into `IFE_Bytes.hpp` and
-         return `float`. Width is 2 B either way — an accessor-typing fix,
-         not a format change.
-      3. **Consequence to fix in the same change as (2):** the seven
+      2. **`f16` accessors — DONE, landed with 4.1.** `load_f16`/`store_f16`
+         in `IFE_Bytes.hpp` return `float`, converting from the wire's
+         binary16 bit pattern. Width is 2 B either way — an accessor-typing
+         fix, not a format change.
+      3. **Consequence — DONE (landed with the emitter):** the seven
          constants now emit as `inline constexpr std::uint16_t
          ORIENTATION_90 = 0x55A0;` — bit patterns. Once the accessor returns
          `float`, comparing it against a `uint16_t` bit pattern silently
@@ -814,8 +835,8 @@ currently exports zero `IFE::blocks` symbols.
 
 All six divergences corrected; the generated layout now equals shipped IFE
 1.0 in every field of every block. Verified two ways: an offset-by-offset
-comparison of all 18 structures against the hand-written vtables, and
-`tests/ife_wire_parity_tests.cpp` — **101 `static_assert`s** that compile
+comparison of all 16 blocks against the hand-written vtables, and
+`tests/ife_wire_parity_tests.cpp` — **103 `static_assert`s** that compile
 clean and, when `FILE_REVISION` was deliberately widened `u32`→`u64` as a
 red-green check, failed the build naming each field that moved.
 
@@ -1462,10 +1483,14 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
       `abstract_file_structure`, compare field-by-field to the input;
       `generate_file_map` ordering; `recover_file_structure` against a file
       with a clobbered `FILE_HEADER`.
-- [ ] **CI:** keep the `python3 -m generator --check` drift gate; add a job
-      that configures with `-DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON` and
-      runs `ctest`, so an emission bug fails before merge rather than at the
-      next regeneration.
+- [x] **CI — done, `.github/workflows/ci.yml`.** Four jobs: `--validate` plus
+      the `--check` drift gate; a `-DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON`
+      build running `ctest`, so an emission bug fails before merge rather than
+      at the next regeneration; the same under `-fsanitize=address,undefined`,
+      **which is load-bearing rather than hygiene** (4.1); and a **big-endian
+      s390x job** under qemu. The last is not optional polish: every
+      hand-written big-endian path in this project's history has been wrong,
+      and it is the only gate that executes one.
 
 #### 4.6 — Validation layer (generated; implements decision 4.0-B)
 
@@ -1511,8 +1536,7 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-~~4.2c (validators)~~ → **4.2d (next)** →
-4.2b → 4.2c → 4.2d → 4.3 → 4.4 → 4.6,
+~~4.2c (validators)~~ → **4.2d (next)** → 4.3 → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1525,8 +1549,9 @@ version threading; 4.2b block handles; 4.2c validators.
 **What exists.** The generated layer reads and validates a file: typed handles
 per block over `IFE_Bytes` primitives, structural validation per block, and a
 `points_to` walk that follows edges leaving array entries as well as headers.
-Three generated artifacts plus one hand-written header, all reproducible from
-`spec/` alone.
+Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
+`IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
+(`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
 **What does not exist yet.** Writers (4.2d), the byte-window abstraction
 (4.3), the semantic runtime and public API (4.4), and the validation layer
@@ -1543,8 +1568,22 @@ remains the implementation that does the work. The cutover is Phase 6.
 | `ife_wire_parity_tests` | ~100 `static_assert`s: the **1.0 prefix** of every block equals shipped IFE 1.0 |
 | `ife_bytes_tests` | scalar and packed load/store, half precision exhaustively over all 65,536 patterns |
 | `ife_blocks_tests` (×2, compiled and header-only) | handles read what was written; corruption produces the specific `Check` code |
+| `ife_bytes_tests::test_wire_byte_order` | the literal bytes a field occupies on disk, both directions — the only test that does not round-trip `store` through `load`, which cancels a byte-order error exactly when there is one |
+| big-endian job (s390x under qemu, `.github/workflows/ci.yml`) | every claim above, on a host whose byte order is the opposite of every developer machine |
 
-All four binaries pass under `-fsanitize=address,undefined`.
+All four binaries pass under `-fsanitize=address,undefined`. `ife_bytes_tests`
+and `ife_blocks_tests` also pass on s390x.
+
+**Byte order is now tested rather than reasoned about.** The big-endian job was
+added after two independent attempts at hand-written big-endian packed-width
+code proved wrong — v1's `__BE_LOAD_U24` (masked with `U40_MASK`) and this
+migration's first `IFE_Bytes.hpp` branch (swapped over `N` instead of
+`sizeof(T)`, so a `u24` loaded as `value << 8`). Neither was reachable by any
+test on any available host. Run against s390x, **the pre-existing tests catch
+both** — the suite was never weak, it was never executed anywhere it mattered.
+`load_bytes` is now branchless (correct on every host by construction);
+`store_bytes` keeps a compile-time branch because it is worth 6 instructions on
+`u40`, and that branch is what the s390x job exists to cover.
 
 **Open, and both need a human.**
 
@@ -1562,8 +1601,9 @@ All four binaries pass under `-fsanitize=address,undefined`.
 
 **Verified for this sign-off:** `--validate` clean; `--check` clean and
 regeneration byte-stable; 4/4 tests pass in both the normal and
-ASan+UBSan builds; all 18 structures match shipped IFE 1.0; generated output
-reproduces from a clean tree.
+ASan+UBSan builds; every block's 1.0 prefix matches shipped IFE 1.0 (15 with
+layout asserts — CIPHER is the bare universal header, asserted via the other
+15); generated output reproduces from a clean tree.
 
 ## Phase 5 — Specification document pipeline (AsciiDoc)
 
