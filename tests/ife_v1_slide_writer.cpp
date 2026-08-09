@@ -1,7 +1,7 @@
 /**
  * @file ife_v1_slide_writer.cpp
  * @brief Writes a slide file with the SHIPPED encoder. Test fixture, and the
- *        input for the 4.4 acceptance comparison.
+ *        input for the runtime acceptance comparison.
  *
  * A separate executable rather than a function the tests call, because the
  * hand-written layer and IFE_Runtime define the same four IrisCodec entry

@@ -92,8 +92,9 @@ set (
 # IFE_Runtime.{hpp,cpp} is deliberately NOT in the library above.  It defines the
 # same four IrisCodec entry points as the hand-written layer -- that is the whole
 # point, so a consumer switches by changing one include -- and two definitions
-# cannot coexist in one binary.  Phase 6 removes IrisCodecExtension.* and moves
-# these two lines up.  Until then the runtime builds into its test targets only.
+# cannot coexist in one binary.  Retiring the hand-written layer removes
+# IrisCodecExtension.* and moves these two lines up.  Until then the runtime
+# builds into its test targets only.
 set(IFE_RuntimeSources
     ${IFE_SOURCE_DIR}/IFE_Runtime.hpp
     ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
@@ -115,7 +116,7 @@ set (
 )
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Generated source (generated_source/) and generated docs
-# (generated_docs/) — Phase 3 pipeline output. Both are gitignored and
+# (generated_docs/) — generator pipeline output. Both are gitignored and
 # freely regenerable; the committed spec JSON is the source of truth.
 # Generation runs only when the pipeline exists, and only then if
 # IFE_RUN_GENERATOR=ON or the anchor file is missing.
@@ -141,8 +142,8 @@ endif()
 # checkout with an empty generated_source/ still compiles what the
 # generator just produced.
 file(GLOB IFE_GENERATED_SOURCES CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.cpp)
-# The conformance layer (4.6) is a development tool, not a production
-# dependency: decision 4.0-B ships it as its own target so an application links
+# The conformance layer is a development tool, not a production
+# dependency: it ships as its own target so an application links
 # it only when it wants validation.  Keep it out of the library's sources.
 set(IFE_VALIDATION_SOURCE ${IFE_GENERATED_DIR}/IFE_Validation.cpp)
 list(REMOVE_ITEM IFE_GENERATED_SOURCES ${IFE_VALIDATION_SOURCE})
@@ -154,8 +155,8 @@ if(IFE_GENERATED_SOURCES OR IFE_GENERATED_HEADERS)
     message(STATUS "IFE: compiling generated sources from ${IFE_GENERATED_DIR}")
 endif()
 # Generated headers live under their own base dir for the FILE_SET; keep
-# the base list conditional so an empty generated_source/ (pre-Phase 3)
-# never references a nonexistent directory.
+# the base list conditional so an empty generated_source/ (before the first
+# generation) never references a nonexistent directory.
 set(IFE_FILE_SET_BASE_DIRS ${IFE_SOURCE_DIR})
 if(IFE_GENERATED_HEADERS)
     list(APPEND IFE_FILE_SET_BASE_DIRS ${IFE_GENERATED_DIR})
@@ -276,7 +277,7 @@ if(IFE_BUILD_TESTS)
     # Wire-format parity: compile-time proof that the generated layout equals
     # shipped IFE 1.0.  Pure static_assert - building it IS the test, so it is
     # registered only so `ctest` reports it.  Retired with the hand-written
-    # layer in Phase 6.
+    # layer, when it is retired.
     add_executable(
         ife_wire_parity_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_wire_parity_tests.cpp
@@ -340,11 +341,11 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_window_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_window_tests COMMAND ife_window_tests)
 
-    # The public API (4.4), end to end: v1 encodes in ife_v1_fixture.cpp, the
+    # The public API, end to end: v1 encodes in ife_v1_fixture.cpp, the
     # generated stack reads through the four entry points Iris-Codec calls.
     # Two translation units because IFE_Runtime.hpp and IrisCodecExtension.hpp
-    # are mutually exclusive -- which is the property that makes the Phase 6
-    # cutover a one-line include change.
+    # are mutually exclusive -- which is the property that makes the cutover
+    # a one-line include change.
     # A slide written by the SHIPPED encoder, as a standalone tool.  It links
     # the hand-written layer; the runtime test does not, and cannot -- so the
     # file passes between them on disk, exactly as it would for a real consumer.
@@ -380,7 +381,70 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_runtime_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests)
 
-    # 4.4's acceptance criterion, made executable: the same example source
+    # Version gating, executed. The real spec is 1.0-only, so the
+    # since-mechanism — optional accessors gated by the file version and the
+    # stored stride — compiles but never runs. A derived fixture spec
+    # (tests/fixtures/build_future_spec.py) adds two fake fields and bumps
+    # the version to 200.0; the generated layer built from it is what the
+    # two version-gating tests below compile against. The version is extreme
+    # on purpose: it proves the comparison is numeric, and stays a valid
+    # future version for decades.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/build_future_spec.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/spec
+                ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+        RESULT_VARIABLE IFE_FIXTURE_RESULT
+    )
+    if(NOT IFE_FIXTURE_RESULT EQUAL 0)
+        message(FATAL_ERROR "IFE fixture spec builder failed — see output above")
+    endif()
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -m generator
+                --schema-dir ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+                --out-dir ${CMAKE_CURRENT_BINARY_DIR}/generated_future
+                --docs-dir ${CMAKE_CURRENT_BINARY_DIR}/generated_docs_future
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE IFE_FIXTURE_GEN_RESULT
+    )
+    if(NOT IFE_FIXTURE_GEN_RESULT EQUAL 0)
+        message(FATAL_ERROR "IFE future-version fixture generation failed — see output above")
+    endif()
+
+    # Forward direction: the 200.0 build reads 1.0 and 200.0 files.
+    add_executable(
+        ife_version_gating_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_version_gating_tests.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/generated_future/IFE_Blocks.cpp
+    )
+    target_include_directories(
+        ife_version_gating_tests PRIVATE
+        ${IFE_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/generated_future
+        ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+    )
+    target_compile_features(ife_version_gating_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_version_gating_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_version_gating_tests COMMAND ife_version_gating_tests)
+
+    # Backward direction: the production 1.0 build reads the same 200.0 file.
+    add_executable(
+        ife_version_gating_backward_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_version_gating_backward_tests.cpp
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_version_gating_backward_tests PRIVATE
+        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/generated_future
+        ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+    )
+    target_compile_features(ife_version_gating_backward_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_version_gating_backward_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_version_gating_backward_tests COMMAND ife_version_gating_backward_tests)
+
+    # The runtime acceptance criterion, made executable: the same example source
     # compiled against each layer, run on the same slide, and diffed.  If the
     # two outputs differ, the port changed observable behaviour.
     add_executable(
@@ -413,7 +477,7 @@ if(IFE_BUILD_TESTS)
             -P ${PROJECT_SOURCE_DIR}/tests/example_parity.cmake
     )
 
-    # 4.6: the conformance layer, attached and detached.  Both paths asserted,
+    # The conformance layer, attached and detached.  Both paths asserted,
     # because a layer that is never consulted is the failure mode a dispatch
     # point has, and a check that fires when detached would make the "costs a
     # null check" claim false.
@@ -430,7 +494,7 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_validation_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_validation_tests COMMAND ife_validation_tests)
 
-    # Decision 4.0-D: the generated layer stays out of the exported ABI.
+    # The generated layer stays out of the exported ABI.
     if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
         add_test(
             NAME ife_exported_symbols
@@ -444,7 +508,7 @@ if(IFE_BUILD_TESTS)
     # the generated layer.  The only gate that compares the new reader against
     # real output rather than against another description of the format, which
     # is why it links IrisFileExtensionLib - it needs v1's STORE_* to run, not
-    # merely its headers.  Retired with the hand-written layer in Phase 6, and
+    # merely its headers.  Retired with the hand-written layer, and
     # not one commit sooner: an oracle cannot be deleted before what it gates.
     # No ${IFE_GENERATED_SOURCES} here: IrisFileExtensionLib already compiles
     # them, and listing them again gives every generated definition twice.

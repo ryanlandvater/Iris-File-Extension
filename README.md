@@ -7,8 +7,7 @@ This is the official implementation of the Iris File Extension specification, pa
 > enumerations are being re-expressed as a JSON specification that generates
 > both the C++ serialization layer and the specification document itself
 > (LaTeX/HTML). The hand-written byte-offset tables will be retired when the
-> ecosystem (including Iris-Codec) cuts over. See
-> [`MIGRATION.md`](./MIGRATION.md) for the phase plan and current status.
+> ecosystem (including Iris-Codec) cuts over.
 
 Example Iris slide files are hosted to test decoding are hosted at [the Iris-Example-Files repository](https://github.com/IrisDigitalPathology/Iris-Example-Files). 
 

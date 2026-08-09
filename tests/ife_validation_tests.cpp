@@ -1,8 +1,8 @@
 /**
  * @file ife_validation_tests.cpp
- * @brief The conformance layer (4.6), attached and detached.
+ * @brief The conformance layer, attached and detached.
  *
- * Decision 4.0-B splits validation in two, and the split is the thing under
+ * Validation is split in two, and the split is the thing under
  * test here:
  *
  *   - **Structural** validation is inline and mandatory. A block stores its own

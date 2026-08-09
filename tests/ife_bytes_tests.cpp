@@ -140,8 +140,7 @@ void test_packed_widths_touch_exact_bytes() {
 // or sixth byte is genuinely not ours. Under AddressSanitizer that is a
 // heap-buffer-overflow and the process aborts naming this function; without a
 // sanitizer these are ordinary passing round-trips. The CI job that builds
-// with -fsanitize=address is what makes this test meaningful — see
-// MIGRATION.md 4.5.
+// with -fsanitize=address is what makes this test meaningful.
 void test_packed_loads_do_not_over_read() {
     {
         auto exact = std::make_unique<BYTE[]>(3);   // three bytes, no more
@@ -167,8 +166,8 @@ void test_packed_loads_do_not_over_read() {
 // a byte-order error exactly when there is one to catch: if both halves agree
 // on the wrong order, the round-trip still passes. This is the only test that
 // says what a byte on disk must actually be, in both directions, and it is
-// what pins "little endian on disk, at every version" (MIGRATION.md Phase 1,
-// field type system) rather than merely "self-consistent on this host".
+// what pins "little endian on disk, at every version" rather than merely
+// "self-consistent on this host".
 //
 // It caught nothing on a little-endian host by luck: the primitives compose
 // values arithmetically and so have no host-dependent path left. Before that,

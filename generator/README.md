@@ -1,6 +1,6 @@
 # `generator/` — the IFE code generator
 
-Phase 3 deliverable (see `MIGRATION.md`). Turns the committed spec JSON
+Turns the committed spec JSON
 (`spec/ife_header.json`, `spec/ife_fields.json`, `spec/ife_constants.json`)
 into the C++ that Iris-File-Extension compiles — and the derived layout tables
 the LaTeX/HTML specification document renders.
@@ -71,7 +71,7 @@ flowchart LR
 | `validate.py` | Consistency checks across the documents. Returns problems, raises nothing, reads no files. |
 | `model/layout.py` | Layout derivation — the single implementation of the offset/size rules; offsets are never read from the JSON. |
 | `emit/cpp.py` | C++ emission: `IFE_Constants.hpp` (enums + sentinels), `IFE_VTables.hpp` (vtables), `IFE_Blocks.hpp`/`.cpp` (handles, readers, validators). |
-| `emit/docs.py` | Markdown emission: derived layout tables (first cut of the doc emitter; full spec assembly is Phase 5). |
+| `emit/docs.py` | Markdown emission: derived layout tables (first cut of the doc emitter; full spec assembly comes with the document pipeline). |
 
 The boundary in that diagram is load-bearing: `model/` never produces text,
 `emit/` never does arithmetic on a byte offset, `validate.py` never touches the

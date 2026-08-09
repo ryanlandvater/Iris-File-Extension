@@ -444,7 +444,7 @@ Abstraction::FileMap recover_file_structure(BYTE* const __base, size_t __size) {
     // own offset, immediately followed by a u16 recovery tag. Scanning for
     // "a u64 equal to where it was found" is what makes VALIDATION worth its
     // eight bytes, and the shared 0x55 high byte on every tag is what keeps
-    // the false-positive rate of the second test negligible (4.0-A).
+    // the false-positive rate of the second test negligible.
     constexpr Size SIGNATURE = 8 + 2;
     if (__size < SIGNATURE) return map;
 

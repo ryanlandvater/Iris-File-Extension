@@ -3,7 +3,7 @@
  * @brief The semantic layer: the public API, built on the generated block handles.
  * @copyright Iris Developers, 2025-2026
  *
- * Stratum C of the Phase 4 plan — the part that is *not* generated, because it
+ * The part of the layer that is *not* generated, because it
  * encodes intent rather than layout: what to lift into RAM and what to leave
  * on disk, the order a file map is walked, what a recovery scan looks for.
  * Everything below it (offsets, widths, validation, block navigation) comes
@@ -13,7 +13,7 @@
  * doc-comments are v1's, and the `IrisCodec::Abstraction` structs are
  * structurally identical to the ones in src/IrisCodecExtension.hpp, because
  * they are the contract Iris-Codec consumes: changing them would turn the
- * Phase 6 cutover from a re-point into a rewrite.
+ * legacy-layer cutover from a re-point into a rewrite.
  *
  * **This header and IrisCodecExtension.hpp are mutually exclusive.** Both
  * define IrisCodec::Abstraction, deliberately — that is what lets a consumer
@@ -26,8 +26,8 @@
 
 #ifdef IrisCodecExtension_hpp
 #error "IFE_Runtime.hpp and IrisCodecExtension.hpp both define IrisCodec::Abstraction. \
-Include one or the other: IrisCodecExtension.hpp is the hand-written layer, retired in \
-Phase 6; IFE_Runtime.hpp is the generated-layer successor."
+Include one or the other: IrisCodecExtension.hpp is the hand-written layer, retired; \
+IFE_Runtime.hpp is the generated-layer successor."
 #endif
 
 #include <map>
@@ -98,7 +98,7 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __mapped_file_ptr,
  * finds nothing below a corrupted pointer — this ignores the graph entirely and scans for the
  * signature every block carries: a u64 equal to its own offset, immediately followed by a u16
  * in the recovery-tag set. The 0x55 high byte those tags share is what keeps the
- * false-positive rate of that scan negligible (decision 4.0-A).
+ * false-positive rate of that scan negligible.
  *
  * The FILE_HEADER is not recoverable this way and is not reported: it is the one block with no
  * VALIDATION field, because it lives at byte 0 where that field could only ever store zero.

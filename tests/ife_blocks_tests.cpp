@@ -420,7 +420,7 @@ std::vector<BYTE> make_extended_file() {
     ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ICC_COLOR_OFFSET), ICC_AT);
     ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ANNOTATIONS_OFFSET), ANNOTATIONS_AT);
     // FILE_END2, not make_file()'s FILE_END: handles bound against the buffer
-    // length today, but 4.4 validates against this field, and a header
+    // length today, but the runtime validates against this field, and a header
     // declaring 202 bytes over an 86 KB file would fail there instead of here.
     ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), FILE_END2);
     return f;
@@ -479,7 +479,7 @@ void test_annotation_groups_read_from_entries() {
     IFE_CHECK(static_cast<bool>(h.validate_deep()));
 }
 
-// ---- generated writers (4.2d) -------------------------------------------- //
+// ---- generated writers ------------------------------------------------- //
 //
 // Every other fixture in this file hand-assembles bytes with ::IFE::store<>,
 // which tests the readers against a buffer the test itself laid out. This one
@@ -762,7 +762,7 @@ void test_writers_stay_within_size_of() {
     check_writes_exactly("ANNOTATION_GROUP_BYTES", b::AnnotationGroupBytesCreateInfo{.bytes = payload, .count = sizeof(payload)});
 }
 
-// The hook decision 4.0-B requires: absent, store() costs one null check;
+// The validation hook: absent, store() costs one null check;
 // attached, it is consulted and its verdict is what store() returns. Both
 // paths asserted, because a hook that is never called is the failure mode a
 // dispatch point has.
@@ -785,7 +785,7 @@ void test_validation_hook_is_dispatched() {
                                 .X_EXTENT = 0, .Y_EXTENT = 16};
 
     // Detached: a violating CreateInfo still stores, because structural
-    // validation has nothing to object to. That is the split 4.0-B draws.
+    // validation has nothing to object to. That is the split the layer draws.
     g_hook_calls = 0;
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, info)));
     IFE_CHECK(g_hook_calls == 0);

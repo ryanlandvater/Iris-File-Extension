@@ -616,7 +616,7 @@ enum class Check : std::uint8_t {
     ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
     VERSION_TOO_NEW,   ///< reserved for the runtime; see below
     CYCLE,             ///< an offset chain returns to a block already on the path
-    CONFORMANCE,       ///< a normative clause was violated; only the 4.6 layer raises this
+    CONFORMANCE,       ///< a normative clause was violated; only the conformance layer raises this
 };
 
 /// Everything needed to describe a failure, unformatted.
@@ -742,7 +742,7 @@ def _emit_primitive_bases(out: list[str], layout: LayoutResult, types: dict[str,
 
 
 # ---------------------------------------------------------------------------
-# Writers (4.2d). Per block: a CreateInfo carrying what only the caller knows,
+# Writers. Per block: a CreateInfo carrying what only the caller knows,
 # a size_of, and a store. Replaces v1's 22 hand-written free functions -- 9
 # SIZE_* and 13 STORE_* -- none of which survive.
 # ---------------------------------------------------------------------------
@@ -862,12 +862,12 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
 
 
 def _emit_validation_hooks(out: list[str], layout: LayoutResult) -> None:
-    """The dispatch point decision 4.0-B requires exist from day one."""
+    """The dispatch point for the optional conformance layer, present from day one."""
     out += [
         "",
-        "/// The optional, runtime-attached spec-conformance layer (decision 4.0-B).",
+        "/// The optional, runtime-attached spec-conformance layer.",
         "///",
-        "/// 4.6 implements what sits behind these pointers; this is the call site,",
+        "/// The conformance layer implements what sits behind these pointers; this is the call site,",
         "/// and it is emitted now because adding a dispatch point later would break",
         "/// the ABI. Null when no layer is attached, which is what a shipped product",
         "/// runs: the cost is one predictable branch per store, never a search.",
@@ -1294,7 +1294,7 @@ def emit_blocks_source(
 
 
 # ---------------------------------------------------------------------------
-# Validation layer (4.6). The optional, runtime-attachable spec-conformance
+# Validation layer. The optional, runtime-attachable spec-conformance
 # checks, emitted from the normative clauses in the schema so a diagnostic and
 # the published document cite the same source.
 # ---------------------------------------------------------------------------
@@ -1343,10 +1343,10 @@ def emit_validation_source(
     layout: LayoutResult, constants_doc: dict[str, Any], types: dict[str, Any],
     header: dict[str, Any]
 ) -> str:
-    """IFE_Validation.cpp — the conformance layer behind 4.2d's hook."""
+    """IFE_Validation.cpp — the conformance layer behind the writers' hook."""
     out: list[str] = [
         _banner(header),
-        "// The optional layer decision 4.0-B describes: attachable at runtime,",
+        "// The optional layer: attachable at runtime,",
         "// costing a null check when absent, and free to be verbose because it",
         "// never runs in a shipped product's hot path. Every check below is",
         "// generated from a normative clause in spec/ife_fields.json, so a",
@@ -1483,7 +1483,7 @@ def emit_validation_header(layout: LayoutResult, header: dict[str, Any]) -> str:
         "namespace IFE {",
         "namespace blocks {",
         "",
-        "/// The spec-conformance layer (decision 4.0-B, task 4.6).",
+        "/// The spec-conformance layer.",
         "///",
         "/// Attach it once, at writer creation, by passing it to store():",
         "///",

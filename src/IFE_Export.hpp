@@ -8,7 +8,7 @@
  * The semantics are unchanged: CMake sets IFE_EXPORT_API=true when building
  * the library, and consumers get the import side.
  *
- * **What is deliberately not exported (decision 4.0-D).**
+ * **What is deliberately not exported.**
  *
  * The exported surface is the *semantic* API — the four entry points and the
  * `IrisCodec::Abstraction` structs — and nothing else. The generated block

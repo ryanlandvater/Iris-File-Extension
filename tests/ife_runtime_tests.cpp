@@ -1,6 +1,6 @@
 /**
  * @file ife_runtime_tests.cpp
- * @brief The public API (4.4), against a file the shipped encoder wrote.
+ * @brief The public API, against a file the shipped encoder wrote.
  *
  * The end-to-end the migration exists to make true: v1 encodes, and the whole
  * new stack — generated handles over IFE_Bytes, the semantic layer on top —
@@ -9,7 +9,7 @@
  * This translation unit includes IFE_Runtime.hpp and never IrisCodecExtension.hpp;
  * the encoder lives in ife_v1_fixture.cpp. That split is not incidental — the
  * two headers are mutually exclusive so that a consumer can switch layers by
- * changing one include line, which is exactly what the Phase 6 cutover is.
+ * changing one include line — the cutover.
  *
  * Self-contained; non-zero exit on failure.
  */
@@ -234,7 +234,7 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     // Ten self-validating blocks were written; the scan finds all of them and
     // invents nothing. A false positive needs eight bytes equal to their own
     // offset followed by a u16 in the 0x55 tag set -- the reason that prefix
-    // is worth keeping (decision 4.0-A).
+    // is worth keeping.
     IFE_CHECK(recovered.size() == 10);
 
     // And the graph walk really is defeated, so the comparison is meaningful.

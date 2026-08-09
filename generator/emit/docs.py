@@ -1,8 +1,8 @@
 """Markdown emission for the IFE code generator.
 
 First cut of the doc emitter: derived layout tables only. These are the
-tables the spec document interleaves at the ``{{layout:BLOCK}}`` /
-``{{entry_layout:BLOCK}}`` anchors (Phase 5 assembles the full document).
+tables the spec document interleaves at its ``{{layout:BLOCK}}`` /
+``{{entry_layout:BLOCK}}`` anchors.
 """
 from __future__ import annotations
 

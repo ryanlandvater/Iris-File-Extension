@@ -2,8 +2,8 @@
  * @file ife_v1_oracle_tests.cpp
  * @brief Bytes written by the SHIPPED encoder, read back through the generated layer.
  *
- * This is the gate MIGRATION.md carried as open item 2 for the whole
- * migration, and it is the only one of its kind. Every other check compares
+ * This closes the last gap in the read path, and it is the only check of its
+ * kind. Every other gate compares
  * the generated layer against a *description* of the format:
  *
  *   - ife_wire_parity_tests   compares generated constants to v1's constants
@@ -21,7 +21,7 @@
  * IrisFileExtensionLib, and the generated handles read. Blocks are written
  * leaves-first because v1's writers validate the blocks they reference.
  *
- * This file dies with src/IrisCodecExtension.* in Phase 6 — but not before.
+ * This file dies with src/IrisCodecExtension.* — but not before.
  * It is the reason the hand-written layer has to outlive the writers.
  */
 #include "IrisTypes.hpp"

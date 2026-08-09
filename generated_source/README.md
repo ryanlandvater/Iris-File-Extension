@@ -1,13 +1,13 @@
 # `generated_source/` — generated C++ for the Iris File Extension
 
 This directory holds the **regenerable** output of the IFE code generator
-(`generator/`, Phase 3). Everything here is **gitignored** and freely
+(`generator/`). Everything here is **gitignored** and freely
 regenerated from the committed JSON specification — never hand-edited.
 
 | Path | Contract |
 |------|----------|
 | `spec/ife_header.json`, `spec/ife_fields.json`, `spec/ife_constants.json` | **Source of truth. Committed.** Every field, type, and value. |
-| `generator/` (Phase 3) | Stdlib-only Python package, `python -m generator`. |
+| `generator/` | Stdlib-only Python package, `python -m generator`. |
 | `generated_source/` (this dir) | **Freely regenerable. Gitignored.** The four files below. |
 
 | File | Content |
@@ -42,7 +42,7 @@ is stdlib-only Python, so no toolchain beyond Python 3 is required.
 
 ## Consuming this layer
 
-**`IFE_HEADER_ONLY` is the only way to reach it** (decision 4.0-D). Nothing
+**`IFE_HEADER_ONLY` is the only way to reach it.** Nothing
 here is exported from the shared library — `IFE::blocks`, `IFE::vtables` and
 `IFE::constants` carry no export marking, and a test fails the build if any of
 them becomes visible:

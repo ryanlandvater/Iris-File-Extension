@@ -20,8 +20,7 @@ The checks are ordered by how much damage the defect causes:
 
 This is not a JSON Schema, deliberately: checks 1-4 are inexpressible in one
 (uniqueness over object values, cross-document agreement), and the structural
-remainder duplicates SpecError paths the model already raises. See
-MIGRATION.md Phase 2.
+remainder duplicates SpecError paths the model already raises.
 """
 # ---------------------------------------------------------------------------
 # ROLE: checking only. Returns a list of human-readable problems; an empty

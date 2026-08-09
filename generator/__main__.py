@@ -1,6 +1,6 @@
 """IFE code generator — command-line entry point.
 
-Phase 3 deliverable (MIGRATION.md). Emits the C++ serialization layer
+Emits the C++ serialization layer
 (vtables, enums, sentinels) and the derived doc tables from the committed
 spec JSON in `spec/`, into `generated_source/` and `generated_docs/`.
 

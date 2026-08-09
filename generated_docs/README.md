@@ -9,6 +9,6 @@ is hand-edited.
 |------|---------|
 | `layout_tables.md` | Derived per-block/entry layout tables — the content of the `{{layout:BLOCK}}` / `{{entry_layout:BLOCK}}` anchors. |
 
-Phase 5 (MIGRATION.md) will add enumeration tables (`{{constants:group}}`)
+The document pipeline will add enumeration tables (`{{constants:group}}`)
 and assemble the full LaTeX/HTML document from the `spec/ife_spec.md`
 basis. `README.md` is the only committed file here.

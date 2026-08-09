@@ -8,7 +8,7 @@
  * ever moves a byte the build fails naming the field.
  *
  * This file is deliberately temporary. It exists to gate the migration and
- * dies with src/IrisCodecExtension.* in Phase 6, having served as the only
+ * dies with src/IrisCodecExtension.*, having served as the only
  * mechanical proof that the generated layer speaks the shipped format.
  *
  * What is asserted is the **1.0 prefix**: the sizes and offsets of fields that

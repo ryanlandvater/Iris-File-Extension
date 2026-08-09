@@ -116,7 +116,7 @@ class FieldLayout:
     points_to: str | None = None
     nullable: bool | None = None
     since: str = "1.0"  # version group that introduced this field
-    # Normative clause (4.6), from the capped predicate vocabulary: a level and
+    # Normative clause, from the capped predicate vocabulary: a level and
     # a spec section for the diagnostic, plus at most a minimum/maximum, an
     # ordering, an enum-membership or a non-null requirement. Carried through
     # untouched -- the model derives byte positions and takes no view on what a

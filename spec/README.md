@@ -10,7 +10,7 @@ the HTML documentation (`generated_docs`):
 | `ife_header.json` | **Specification identity.** Name, version, status, copyright, licence — stated **once**. It belongs to neither the layout nor the constants, and a version or copyright written in two files is one that can disagree with itself. Generated file banners and `IFE_SCHEMA_VERSION_MAJOR`/`_MINOR` both come from here. |
 | `ife_fields.json` | **Byte structure only.** The type vocabulary, the primitive block types, and for every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
 | `ife_constants.json` | **Values.** Statically defined values (sentinels) and every enumeration — recovery codes, tile encodings, pixel formats, metadata formats, annotation types, image encodings, orientations — with per-value descriptions and errata. |
-| `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** Phase 5 converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::` — see MIGRATION.md Phase 5 for why a bespoke anchor syntax was rejected. |
+| `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** the document pipeline converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::`, rather than maintaining a bespoke anchor syntax and the preprocessor it would need. |
 
 ## What may never enter the schema
 
@@ -61,7 +61,7 @@ assigned by the generator. Writing one by hand is itself an error.
 
 ## Normative clauses (`conformance`)
 
-A field may carry one clause, which the 4.6 validation layer turns into a check
+A field may carry one clause, which the validation layer turns into a check
 and a diagnostic. **The vocabulary is closed and there is no expression
 syntax** — that is the cap in "What may never enter the schema", enforced.
 
@@ -186,7 +186,7 @@ Two kinds of top-level entry, and the distinction is load-bearing:
   members}}`, emitted as `enum class <PascalName> : <underlying>`. A member is
   `NAME: {value, description, [errata]}`, or the bare form `NAME: value` where
   no documentation is carried. *Prefer the object form:* the bare form cannot
-  describe itself, and Phase 5 renders these tables into the published
+  describe itself, and the document pipeline renders these tables into the published
   document. `recovery_codes` is currently the only group still using it.
 * **Statically defined values** — sentinels and named convenience constants,
   each carrying its **own** `type` rather than sharing an `underlying_type`,
@@ -199,7 +199,7 @@ Two kinds of top-level entry, and the distinction is load-bearing:
 ## `ife_spec.md` insertion markers (provisional)
 
 These mark where generated content belongs. They are **placeholders, not a
-supported syntax** — no preprocessor implements them, and Phase 5 replaces
+supported syntax** — no preprocessor implements them, and the document pipeline replaces
 each with an Asciidoctor `include::` of the corresponding generated file. Do
 not build tooling against them.
 
@@ -210,7 +210,7 @@ not build tooling against them.
 | `{{entry_layout:BLOCK}}` | Derived entry layout table for an array block |
 | `{{constants:group}}` | Value table for a constants group |
 
-Keep one marker per generated table rather than one per section: Phase 5
+Keep one marker per generated table rather than one per section: the pipeline
 emits fine-grained include files so the narrative pulls in exactly what it
 needs, and moving a section never drags unrelated tables along.
 
@@ -248,13 +248,14 @@ entry 39, group size 6.
   references *within* one revision; nothing yet compares a revision against
   its predecessor, which is the only way to catch a `1.0` field being moved,
   resized or retyped. It is a property of the **diff**, so no check over a
-  single document can see it. See MIGRATION.md Phase 2, validator item 1.
+  single document can see it.
   (A `ife.meta.schema.json` meta-schema was written and **deleted** — JSON
   Schema cannot express this check, nor uniqueness over object values, nor
   cross-document agreement, and it would add a dependency to a deliberately
   stdlib-only toolchain. Do not re-propose it.)
 * **Normative clause tagging.** No field carries a shall/should/may predicate
-  yet; MIGRATION.md 4.6 step 2 adds them, drawn from the capped vocabulary.
+  yet, beyond the fields already annotated; further clauses draw from the
+  same capped vocabulary.
 * v1 narrative not yet migrated into `ife_spec.md` (marked `TODO(draft)`):
   full definitions, MpP/Mc equations, global tile indexing equations and
   figures, slide-space figure.
