@@ -1393,7 +1393,47 @@ The original task description follows, for the record.
 - **Done when:** regeneration drift-clean; 4.5's round-trip property tests
   pass for all 16 blocks.
 
-#### 4.3 — Byte-window abstraction (kills the per-block `#ifdef`)
+#### 4.3 — Byte-window abstraction (kills the per-block `#ifdef`) — ✅ DONE
+
+`src/IFE_Window.hpp` / `.cpp` and `tests/ife_window_tests.cpp`.
+`IFE::Window` resolves residency *before* a handle is built, in two modes:
+**resident** (a native mmap — `map()` is a bounds check and a pointer
+addition) and **remote** (ranges fetched on demand and cached). Generated
+handles still hold nothing but `const BYTE*`.
+
+**Done when, measured:** `__EMSCRIPTEN__` appears **0** times in
+`generated_source/` and **0** times in `src/IFE_Bytes.hpp`; the WASM branch is
+one `#if` block in one translation unit. For scale, the hand-written pair it
+replaces carries **116** (21 in the header, 95 in the `.cpp`) across **88**
+`check_and_fetch_remote` call sites.
+
+Two decisions the task text did not settle:
+
+- **The transport is a function pointer, not a virtual.** `Window::Fetch` is
+  called once per cache *miss*, not per access, so dispatch cost is
+  irrelevant — what the seam buys is that the cache, the bounds arithmetic and
+  the failure path are all driven natively by a stub in
+  `ife_window_tests.cpp`. Only the ranged HTTP request itself is browser-only.
+  This is the same reasoning as 4.1's sanitizer job: a branch no available
+  host executes is a branch no test can check, so the untestable part is made
+  as small as it can be rather than merely documented.
+- **A cached page owns its own allocation** (`unique_ptr<BYTE[]>`, not a
+  `std::vector` inline in the element). A pointer handed out by `map()` must
+  survive the cache growing; `test_cached_pointers_survive_cache_growth` holds
+  one across a reallocation and reads it back.
+
+**The WASM branch is compiled, not assumed.** `emcc` builds
+`src/IFE_Window.cpp` clean under `-Werror`, `IFE::fetch_http_range` is a
+defined symbol in the resulting object and absent from the native one, and
+`.github/workflows/ci.yml` gained a job that does exactly this — no other job
+compiles that side of the `#if`.
+
+**Not carried forward from v1:** the `const_cast` that rewrote the caller's
+`__base`, and the two-round-trip fetch (header, then full size) that existed
+only because a block discovered its own size after reading its header. The
+runtime knows what range it wants before it asks.
+
+The original task description follows, for the record.
 
 v1 injects `check_and_fetch_remote` into **15** separate readers behind
 `#ifdef __EMSCRIPTEN__`, and the pair carries **116** `__EMSCRIPTEN__`
@@ -1573,7 +1613,7 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-~~4.2c (validators)~~ → ~~4.2d (writers)~~ → **4.3 (next)** → 4.4 → 4.6,
+~~4.2c (validators)~~ → ~~4.2d (writers)~~ → ~~4.3 (byte window)~~ → **4.4 (next)** → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1581,7 +1621,8 @@ schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checkl
 ### Phase 4 — state of play (2026-08-07)
 
 **Done.** 4.0 decisions A–H; 4.0-H wire parity; 4.1 byte primitives; 4.2a
-version threading; 4.2b block handles; 4.2c validators; 4.2d writers.
+version threading; 4.2b block handles; 4.2c validators; 4.2d writers;
+4.3 byte-window abstraction; and the v1-oracle round-trip that was open item 2.
 
 **What exists.** The generated layer reads and validates a file: typed handles
 per block over `IFE_Bytes` primitives, structural validation per block, and a
@@ -1590,9 +1631,8 @@ Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
 `IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
 (`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
-**What does not exist yet.** The byte-window abstraction (4.3), the semantic
-runtime and public API (4.4), and the validation layer (4.6) behind the hook
-4.2d now emits. **Nothing outside the tests consumes any of it** —
+**What does not exist yet.** The semantic runtime and public API (4.4), and
+the validation layer (4.6) behind the hook 4.2d now emits. **Nothing outside the tests consumes any of it** —
 `IrisFileExtensionLib` still compiles `src/IrisCodecExtension.cpp`, which
 remains the implementation that does the work. The cutover is Phase 6.
 

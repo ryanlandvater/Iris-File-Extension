@@ -1,16 +1,24 @@
 name: CI
 
-# The gates MIGRATION.md calls for, in one place. Four jobs, each pinning a
+# The gates MIGRATION.md calls for, in one place. Five jobs, each pinning a
 # property nothing else can:
 #
 #   spec        the JSON is self-consistent, and generated_source/ is what the
 #               current spec produces (Phase 3's drift gate)
-#   tests       the generated layer and the primitives behave
+#   tests       the generated layer and the primitives behave -- including the
+#               v1 oracle, the only test that reads bytes the shipped encoder
+#               wrote rather than another description of the format
 #   sanitizers  the packed loads read exactly 3 and exactly 5 bytes. Without
 #               ASan those tests are ordinary passing round-trips and prove
 #               nothing -- see MIGRATION.md 4.1
+#   wasm        the project's only __EMSCRIPTEN__ branch. Every native build
+#               takes the other side of that #if, so without this job the
+#               ranged-fetch path is never compiled at all
 #   big-endian  IFE is little-endian on disk at every version, which is a
 #               claim about every host, not about the one you build on
+#
+# The pattern across the last three: a branch no developer machine executes is
+# a branch no test can check, so each gets a job rather than a comment.
 
 on:
   push:
@@ -50,6 +58,25 @@ jobs:
       - run: cmake --build build-asan -j
       - run: ctest --test-dir build-asan --output-on-failure
 
+  wasm:
+    name: emscripten (the residency branch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+
+      # src/IFE_Window.cpp holds the project's only __EMSCRIPTEN__ branch, and
+      # no other job compiles it: every native build takes the other side of
+      # the #if. Without this step the ranged-fetch path -- EM_ASYNC_JS body
+      # included -- is never seen by a compiler at all.
+      - name: Fetch dependencies (native)
+        run: cmake -B build
+      - name: Compile the Emscripten branch
+        run: |
+          emcc -std=c++20 -Werror -c src/IFE_Window.cpp \
+            -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv \
+            -o /tmp/ife_window_wasm.o
+
   big-endian:
     name: big-endian (s390x)
     runs-on: ubuntu-latest
@@ -82,10 +109,12 @@ jobs:
             INC="-I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
             g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
             g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/window tests/ife_window_tests.cpp src/IFE_Window.cpp
             g++ -std=c++20 -O2 $INC -o /tmp/oracle tests/ife_v1_oracle_tests.cpp \
                 src/IrisCodecExtension.cpp generated_source/IFE_Blocks.cpp \
                 .deps/irisheaders-src/src/IrisBuffer.cpp
             /tmp/bytes
             /tmp/blocks
+            /tmp/window
             /tmp/oracle
           '

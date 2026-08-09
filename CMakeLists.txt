@@ -87,10 +87,12 @@ set (
     ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
     ${IFE_SOURCE_DIR}/IFE_Bytes.hpp
+    ${IFE_SOURCE_DIR}/IFE_Window.hpp
 )
 set (
     IFE_SourcesPriv
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
+    ${IFE_SOURCE_DIR}/IFE_Window.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
 )
 set (
@@ -310,6 +312,19 @@ if(IFE_BUILD_TESTS)
     target_compile_features(ife_blocks_header_only_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_blocks_header_only_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_blocks_header_only_tests COMMAND ife_blocks_header_only_tests)
+
+    # Residency.  The remote mode exists for the browser; its transport is a
+    # function pointer precisely so the cache and bounds logic can be driven
+    # here, natively, with a stub.
+    add_executable(
+        ife_window_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_window_tests.cpp
+        ${IFE_SOURCE_DIR}/IFE_Window.cpp
+    )
+    target_include_directories(ife_window_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_compile_features(ife_window_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_window_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_window_tests COMMAND ife_window_tests)
 
     # The v1 oracle: bytes written by the SHIPPED encoder, read back through
     # the generated layer.  The only gate that compares the new reader against
