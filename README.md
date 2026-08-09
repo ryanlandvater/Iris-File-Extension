@@ -40,6 +40,22 @@ cmake --build ./Iris-File-Extension/build --config Release
 cmake --install ./Iris-File-Extension/build
 ```
 
+#### Xcode
+On macOS, generate a native Xcode project (tests enabled, `generated_source/`
+regenerated at configure) and open it directly:
+
+```shell
+cmake --preset xcode
+open build-xcode/IrisFileExtension.xcodeproj
+```
+
+Headers from `src/` and `generated_source/` are part of the project navigator.
+Of the schemes CMake generates, the four `ife_*_tests` schemes are the ones to
+use (`ALL_BUILD`, `RUN_TESTS`, `ZERO_CHECK` and `install` are CMake plumbing).
+
+Pick a scheme (the `ife_*` targets are the tests) and Run — no extra signing
+or configuration is needed for the command-line targets.
+
 ### CMake Project
 If you **are** using CMake for your build, You may directly incorporate this repository into your code base using the following about **10 lines of code** in your project's CMakeLists.txt:
 ```CMake

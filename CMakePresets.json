@@ -1,0 +1,23 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "xcode",
+      "displayName": "Xcode (build-xcode)",
+      "description": "Xcode project with tests enabled; regenerates generated_source/ at configure.",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/build-xcode",
+      "cacheVariables": {
+        "IFE_BUILD_TESTS": "ON",
+        "IFE_RUN_GENERATOR": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "xcode",
+      "configurePreset": "xcode",
+      "configuration": "Debug"
+    }
+  ]
+}

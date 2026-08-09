@@ -86,6 +86,7 @@ set (
     IFE_SourcesExport 
     ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
     ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
+    ${IFE_SOURCE_DIR}/IFE_Bytes.hpp
 )
 set (
     IFE_SourcesPriv
@@ -151,6 +152,10 @@ target_sources (
 )
 target_sources (
     IrisFileExtensionLib PRIVATE
+    # Headers first: the Xcode generator only puts files that appear in a
+    # target's source list into the navigator, and FILE_SET HEADERS alone
+    # (the install metadata above) is not enough. Headers are never compiled.
+    ${IFE_SourcesExport}
     ${IFE_SourcesPriv}
 )
 target_include_directories (
@@ -164,7 +169,9 @@ target_compile_definitions (
 )
 set_target_properties(
     IrisFileExtensionLib 
-    PROPERTIES CXX_VISIBILITY_PRESET hidden
+    PROPERTIES 
+    CXX_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON
 )
 target_link_libraries (
     IrisFileExtensionLib
