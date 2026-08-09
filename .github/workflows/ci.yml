@@ -66,9 +66,13 @@ jobs:
       - name: Fetch dependencies and generate (native)
         run: cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
 
-      # The two suites that touch bytes. ife_wire_parity_tests is a wall of
+      # The three suites that touch bytes. ife_wire_parity_tests is a wall of
       # static_asserts over generated constants and cannot vary by host, so it
       # is left to the native job.
+      #
+      # The oracle earns its place here twice over: it is the shipped encoder
+      # writing and the generated layer reading, both on a host whose byte
+      # order is the opposite of every machine either was developed on.
       - name: Compile and run on s390x
         run: |
           docker run --rm --platform linux/s390x -v "$PWD":/repo -w /repo alpine:latest sh -c '
@@ -78,6 +82,10 @@ jobs:
             INC="-I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
             g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
             g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/oracle tests/ife_v1_oracle_tests.cpp \
+                src/IrisCodecExtension.cpp generated_source/IFE_Blocks.cpp \
+                .deps/irisheaders-src/src/IrisBuffer.cpp
             /tmp/bytes
             /tmp/blocks
+            /tmp/oracle
           '

@@ -1606,6 +1606,7 @@ remains the implementation that does the work. The cutover is Phase 6.
 | `ife_bytes_tests` | scalar and packed load/store, half precision exhaustively over all 65,536 patterns |
 | `ife_blocks_tests` (×2, compiled and header-only) | handles read what was written; corruption produces the specific `Check` code |
 | `ife_bytes_tests::test_wire_byte_order` | the literal bytes a field occupies on disk, both directions — the only test that does not round-trip `store` through `load`, which cancels a byte-order error exactly when there is one |
+| `ife_v1_oracle_tests` | the generated readers against **bytes the shipped v1 encoder wrote** — the only gate not comparing two descriptions of the format |
 | big-endian job (s390x under qemu, `.github/workflows/ci.yml`) | every claim above, on a host whose byte order is the opposite of every developer machine |
 
 All four binaries pass under `-fsanitize=address,undefined`. `ife_bytes_tests`
@@ -1622,19 +1623,46 @@ both** — the suite was never weak, it was never executed anywhere it mattered.
 `store_bytes` keeps a compile-time branch because it is worth 6 instructions on
 `u40`, and that branch is what the s390x job exists to cover.
 
-**Open, and both need a human.**
+**Open, and it needs a human.**
 
 1. **4.0-D — visibility of generated symbols.** Reopened by the `.hpp`/`.cpp`
    split; a shared build exports zero `IFE::blocks` symbols today. Latent, not
    broken, but it must be settled before Phase 6.
-2. **No test reads bytes written by the shipped encoder.** Everything so far
-   compares the generated layer against *descriptions* of the format — the
-   hand-written vtables, or buffers the tests themselves assembled. The
-   strongest available check is to drive v1's `STORE_*` functions, which are
-   linkable today, and read the result back through `IFE_Blocks`. That is the
-   only gate that would catch a correct-offset/wrong-load error, and the
-   parity wall structurally cannot. It belongs with 4.2d, which needs a writer
-   anyway.
+2. ~~**No test reads bytes written by the shipped encoder.**~~ **CLOSED —
+   `tests/ife_v1_oracle_tests.cpp`.** v1's `STORE_*` functions write a
+   complete file (linked from `IrisFileExtensionLib`); the generated handles
+   read it back; every assertion compares against the values that went *in*,
+   never against v1's reader. Blocks are written leaves-first because v1's
+   writers validate what they reference.
+
+   Retiring the `MAGIC_BYTES` macro is what made it possible — before that the
+   two layers could not appear in one translation unit.
+
+   **Red-green, and the result is worth recording.** With the emitter
+   deliberately reading a `u24` through `load<std::uint32_t>` — correct offset,
+   wrong width — the gates behave as follows:
+
+   | Gate | Notices? |
+   |---|---|
+   | `python3 -m generator --check` | no |
+   | `ife_wire_parity_tests` | no — offsets are identical either way |
+   | `ife_bytes_tests` | no — the primitive itself is unchanged |
+   | `ife_blocks_tests` | **yes** |
+   | `ife_v1_oracle_tests` | **yes** |
+
+   Two gates catch it, and the two that would otherwise have been the whole
+   defence do not. `ife_blocks_tests` catches it only because 4.2d gave it
+   writers to disagree with the readers; the class it still cannot reach is a
+   generated reader and writer that agree with *each other* and differ from the
+   shipped encoder — a wrong type at the right width, say. Nothing
+   self-consistent can detect that by construction, which is the whole argument
+   for keeping v1 alive until the cutover.
+
+   **Known limit, deliberately accepted.** v1 requires every tile entry to
+   address bytes inside the file, so the complete-file test cannot use a 5-byte
+   `u40` offset without a >4 GB fixture. `test_v1_packed_widths_at_full_width`
+   covers that by driving `STORE_TILE_OFFSETS` alone, with every byte of the
+   `u40` and `u24` significant, and reading the array back directly.
 
 **Verified for this sign-off:** `--validate` clean; `--check` clean and
 regeneration byte-stable; 4/4 tests pass in both the normal and

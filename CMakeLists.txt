@@ -311,5 +311,26 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_blocks_header_only_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_blocks_header_only_tests COMMAND ife_blocks_header_only_tests)
 
+    # The v1 oracle: bytes written by the SHIPPED encoder, read back through
+    # the generated layer.  The only gate that compares the new reader against
+    # real output rather than against another description of the format, which
+    # is why it links IrisFileExtensionLib - it needs v1's STORE_* to run, not
+    # merely its headers.  Retired with the hand-written layer in Phase 6, and
+    # not one commit sooner: an oracle cannot be deleted before what it gates.
+    # No ${IFE_GENERATED_SOURCES} here: IrisFileExtensionLib already compiles
+    # them, and listing them again gives every generated definition twice.
+    add_executable(
+        ife_v1_oracle_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_v1_oracle_tests.cpp
+    )
+    target_include_directories(
+        ife_v1_oracle_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_v1_oracle_tests PRIVATE cxx_std_20)
+    target_link_libraries(
+        ife_v1_oracle_tests PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
+    )
+    add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests)
+
 endif()
 
