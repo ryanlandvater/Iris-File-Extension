@@ -1617,7 +1617,48 @@ The original task description follows, for the record.
       hand-written big-endian path in this project's history has been wrong,
       and it is the only gate that executes one.
 
-#### 4.6 — Validation layer (generated; implements decision 4.0-B)
+#### 4.6 — Validation layer (generated; implements decision 4.0-B) — ✅ DONE
+
+`spec/ife_fields.json` gained normative clauses; `generated_source/IFE_Validation.{hpp,cpp}`
+emits them; `tests/ife_validation_tests.cpp` asserts both paths. Eleven fields
+carry a clause, reproducing what v1 checked inline: `X_TILES`/`Y_TILES` >= 1,
+strictly increasing layer scale, enum membership on five fields, and the two
+required root offsets.
+
+**The predicate vocabulary stayed capped, and shrank.** The plan allowed four
+predicates; only **two** turned out to be new. Non-null is already `nullable:
+false`, and an enum field's domain is already its member list — both were
+derivable from what the schema states. So `conformance` adds `minimum`,
+`maximum` and `ordering` as predicates, plus `level`, `section` and
+`requirement` for the diagnostic. No expression syntax, and none was wanted:
+every check is a comparison against a stated bound or a switch over declared
+members.
+
+**Done when — met.** Detached, `store()` costs one null check and the
+structural `validate()`, and a spec-violating file stores successfully (asserted,
+because that is the half of 4.0-B most easily lost). Attached, each violation
+returns `Check::CONFORMANCE` and reports a sentence citing its section —
+*"LAYER_EXTENTS.LAYER_EXTENT.X_TILES shall encode the number of 256 pixel tiles
+in the horizontal direction and shall be greater than zero. Per the IFE
+specification Section 2.4.1."* Red-green: disabling the range predicate in the
+emitter fails seven assertions.
+
+Three things worth recording:
+
+- **`ValidationHooks` was already emitted, in `IFE_Blocks.hpp`, not
+  `IFE_Runtime.hpp`.** 4.2d put it where the call site is, which is the only
+  place it can be — `store()` takes it. Step 1 of this task was already done,
+  a year early in plan-time, exactly as intended.
+- **`Check` gained `CONFORMANCE`.** A clause violation is not a structural
+  failure and must not report as one; the file is perfectly readable.
+- **Layers chain, and it is tested.** A second hook set in front of the
+  generated one runs, delegates through `next`, and the generated layer still
+  catches the violation.
+- **It is its own target**, kept out of `IrisFileExtensionLib` by an explicit
+  `list(REMOVE_ITEM ...)` on the generated-source GLOB. Verified: `nm` finds no
+  `conformance_layer` in the shared library.
+
+The original task description follows, for the record.
 
 The optional, runtime-attachable spec-conformance layer. 4.2d emits the call
 site; this task builds what sits behind it. May land after 4.4 — but the hook
@@ -1661,7 +1702,7 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-~~4.2c (validators)~~ → ~~4.2d (writers)~~ → ~~4.3 (byte window)~~ → ~~4.4 (runtime)~~ → **4.6 (next)**,
+~~4.2c (validators)~~ → ~~4.2d (writers)~~ → ~~4.3 (byte window)~~ → ~~4.4 (runtime)~~ → ~~4.6 (validation layer)~~ — **Phase 4 complete**,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1670,8 +1711,8 @@ schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checkl
 
 **Done.** 4.0 decisions A–H; 4.0-H wire parity; 4.1 byte primitives; 4.2a
 version threading; 4.2b block handles; 4.2c validators; 4.2d writers;
-4.3 byte-window abstraction; 4.4 the semantic layer and public API; and the
-v1-oracle round-trip that was open item 2.
+4.3 byte-window abstraction; 4.4 the semantic layer and public API; 4.6 the
+conformance layer; and the v1-oracle round-trip that was open item 2.
 
 **What exists.** The generated layer reads and validates a file: typed handles
 per block over `IFE_Bytes` primitives, structural validation per block, and a
@@ -1680,10 +1721,11 @@ Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
 `IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
 (`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
-**What does not exist yet.** The validation layer (4.6) behind the hook 4.2d
-emits. The generated stack is otherwise complete: a file can be encoded,
-validated, mapped, recovered and decoded entirely through it, which is the
-Phase 4 exit condition. **Nothing outside the tests consumes any of it** —
+**Phase 4 is complete.** A file can be encoded, validated, mapped, recovered
+and decoded entirely through generated-layer code; the conformance layer sits
+behind 4.2d's hook and is attachable at runtime. Every 4.0 decision is closed.
+What remains is Phase 5 (the AsciiDoc document pipeline) and Phase 6 (bindings,
+corpus, the Iris-Codec cutover, and retiring `src/IrisCodecExtension.*`). **Nothing outside the tests consumes any of it** —
 `IrisFileExtensionLib` still compiles `src/IrisCodecExtension.cpp`, which
 remains the implementation that does the work. The cutover is Phase 6.
 

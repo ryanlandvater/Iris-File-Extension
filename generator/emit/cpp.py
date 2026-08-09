@@ -616,6 +616,7 @@ enum class Check : std::uint8_t {
     ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
     VERSION_TOO_NEW,   ///< reserved for the runtime; see below
     CYCLE,             ///< an offset chain returns to a block already on the path
+    CONFORMANCE,       ///< a normative clause was violated; only the 4.6 layer raises this
 };
 
 /// Everything needed to describe a failure, unformatted.
@@ -1290,3 +1291,221 @@ def emit_blocks_source(
         "",
     ]
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Validation layer (4.6). The optional, runtime-attachable spec-conformance
+# checks, emitted from the normative clauses in the schema so a diagnostic and
+# the published document cite the same source.
+# ---------------------------------------------------------------------------
+
+
+def _clauses(fields: tuple[FieldLayout, ...]) -> list[FieldLayout]:
+    return [f for f in fields if f.conformance]
+
+
+def _requirement(block: str, field: FieldLayout) -> str:
+    """The sentence a violation prints, in v1's style: name the clause, then
+    cite the section that states it."""
+    c = field.conformance or {}
+    text = (
+        f"{block}.{field.name} {c.get('level', 'shall')} "
+        f"{c.get('requirement', 'satisfy the specification')}. "
+        f"Per the IFE specification Section {c.get('section', '?')}."
+    )
+    return text.replace('"', "'")
+
+
+def _check_lines(block: str, field: FieldLayout, value: str, types: dict[str, Any]) -> list[str]:
+    """One clause, as C++. Every branch here is a closed-vocabulary predicate;
+    there is deliberately no expression syntax to evaluate."""
+    c = field.conformance or {}
+    message = _requirement(block, field)
+    fail = [
+        f'        __report(__hooks, "{message}");',
+        f'        return {{Check::CONFORMANCE, "{block}", "{field.name}",',
+        f"                static_cast<std::uint64_t>({value}), 0, __at}};",
+    ]
+    out: list[str] = []
+    if "minimum" in c:
+        out += [f"    if ({value} < {c['minimum']}) {{"] + fail + ["    }"]
+    if "maximum" in c:
+        out += [f"    if ({value} > {c['maximum']}) {{"] + fail + ["    }"]
+    if c.get("non_null"):
+        out += [f"    if ({value} == ::IFE::constants::NULL_OFFSET) {{"] + fail + ["    }"]
+    if c.get("enum_member"):
+        enum = _pascal(field.type_name)
+        out += [f"    if (!is_member(static_cast<::IFE::constants::{enum}>({value}))) {{"] + fail + ["    }"]
+    return out
+
+
+def emit_validation_source(
+    layout: LayoutResult, constants_doc: dict[str, Any], types: dict[str, Any],
+    header: dict[str, Any]
+) -> str:
+    """IFE_Validation.cpp — the conformance layer behind 4.2d's hook."""
+    out: list[str] = [
+        _banner(header),
+        "// The optional layer decision 4.0-B describes: attachable at runtime,",
+        "// costing a null check when absent, and free to be verbose because it",
+        "// never runs in a shipped product's hot path. Every check below is",
+        "// generated from a normative clause in spec/ife_fields.json, so a",
+        "// diagnostic and the published specification cite one source.",
+        "",
+        '#include "IFE_Validation.hpp"',
+        "",
+        "namespace IFE {",
+        "namespace blocks {",
+        "namespace {",
+        "",
+        "void __report(const ValidationHooks* __hooks, const char* __message) noexcept {",
+        "    // The layer formats; the caller decides what I/O means. Silent when",
+        "    // no messenger was registered -- the Status still carries the failure.",
+        "    if (__hooks != nullptr && __hooks->diagnostic != nullptr)",
+        "        __hooks->diagnostic(__message, __hooks->user);",
+        "}",
+    ]
+
+    # Membership predicates, one per enum group the clauses reference.
+    referenced: dict[str, None] = {}
+    for name, block in layout.blocks.items():
+        for field in _clauses(block.header_fields) + _clauses(block.entry_fields):
+            if (field.conformance or {}).get("enum_member"):
+                referenced[field.type_name] = None
+    for group_name in referenced:
+        group = constants_doc.get(group_name, {})
+        members = [
+            member
+            for entries in group.get("ife_version", {}).values()
+            for member in entries
+        ]
+        enum = _pascal(group_name)
+        out += [
+            "",
+            f"/// Whether a value names a declared member of {group_name}.",
+            f"[[nodiscard]] bool is_member(::IFE::constants::{enum} __v) noexcept {{",
+            "    switch (__v) {",
+        ]
+        out += [f"        case ::IFE::constants::{enum}::{m}:" for m in members]
+        out += ["            return true;", "    }", "    return false;", "}"]
+
+    out += ["", "}  // namespace"]
+
+    # One check per block carrying clauses.
+    checked: list[str] = []
+    for name, block in layout.blocks.items():
+        header_clauses = _clauses(block.header_fields)
+        entry_clauses = _clauses(block.entry_fields)
+        if not header_clauses and not entry_clauses:
+            continue
+        checked.append(name)
+        info = _create_info(name)
+        out += [
+            "",
+            f"// ---- {name} ----",
+            f"Status check_{name}(const {info}& __info, ::IFE::Offset __at,",
+            "                    const ValidationHooks* __hooks) noexcept {",
+        ]
+        for field in header_clauses:
+            out += _check_lines(name, field, f"__info.{field.name}", types)
+
+        if entry_clauses:
+            entry = _entry_struct(block.entry_name or f"{name}_ENTRY")
+            out += [
+                "",
+                "    for (std::uint32_t __i = 0; __i < __info.count; ++__i) {",
+                f"        const {entry}& __e = __info.entries[__i];",
+            ]
+            for field in entry_clauses:
+                if (field.conformance or {}).get("ordering"):
+                    continue
+                out += ["    " + line for line in
+                        _check_lines(f"{name}.{block.entry_name}", field, f"__e.{field.name}", types)]
+            out.append("    }")
+
+            # Ordering is the one clause that is about the sequence rather than
+            # a value, so it gets its own pass over the entries.
+            for field in entry_clauses:
+                order = (field.conformance or {}).get("ordering")
+                if not order:
+                    continue
+                message = _requirement(f"{name}.{block.entry_name}", field)
+                out += [
+                    "",
+                    f"    for (std::uint32_t __i = 1; __i < __info.count; ++__i) {{",
+                    f"        if (!(__info.entries[__i].{field.name} >"
+                    f" __info.entries[__i - 1].{field.name})) {{",
+                    f'            __report(__hooks, "{message}");',
+                    f'            return {{Check::CONFORMANCE, "{name}", "{field.name}",',
+                    f"                    static_cast<std::uint64_t>(__i), 0, __at}};",
+                    "        }",
+                    "    }",
+                ]
+
+        out += [
+            "",
+            "    // Layers chain, as Vulkan's do: this one passed, so ask the next.",
+            f"    if (__hooks != nullptr && __hooks->next != nullptr && __hooks->next->{name} != nullptr)",
+            f"        return __hooks->next->{name}(__info, __at, __hooks->next);",
+            "    return {};",
+            "}",
+        ]
+
+    out += [
+        "",
+        "const ValidationHooks& conformance_layer() noexcept {",
+        "    static const ValidationHooks __layer = [] {",
+        "        ValidationHooks __h{};",
+    ]
+    out += [f"        __h.{name} = &check_{name};" for name in checked]
+    out += [
+        "        return __h;",
+        "    }();",
+        "    return __layer;",
+        "}",
+        "",
+        "}  // namespace blocks",
+        "}  // namespace IFE",
+        "",
+    ]
+    return "\n".join(out)
+
+
+def emit_validation_header(layout: LayoutResult, header: dict[str, Any]) -> str:
+    """IFE_Validation.hpp — how an application attaches the layer."""
+    return "\n".join([
+        _banner(header),
+        "#ifndef IFE_Validation_hpp",
+        "#define IFE_Validation_hpp",
+        "",
+        '#include "IFE_Blocks.hpp"',
+        "",
+        "namespace IFE {",
+        "namespace blocks {",
+        "",
+        "/// The spec-conformance layer (decision 4.0-B, task 4.6).",
+        "///",
+        "/// Attach it once, at writer creation, by passing it to store():",
+        "///",
+        "///     ValidationHooks hooks = conformance_layer();",
+        "///     hooks.diagnostic = [](const char* m, void*) { std::fputs(m, stderr); };",
+        "///     store(base, offset, info, &hooks);",
+        "///",
+        "/// Detached -- the default -- a store costs one null check and the",
+        "/// structural validate(). Attached, every `shall` clause in the schema is",
+        "/// enforced and each diagnostic cites the section that states it.",
+        "///",
+        "/// A development tool, not a production dependency: it lives in its own",
+        "/// library (IrisFileExtensionValidation) so an application links it only",
+        "/// when it wants it, exactly as a Vulkan validation layer is.",
+        "///",
+        "/// Copy the returned struct before setting `diagnostic` or `next` -- the",
+        "/// layer itself is shared and immutable.",
+        "[[nodiscard]] const ValidationHooks& conformance_layer() noexcept;",
+        "",
+        "}  // namespace blocks",
+        "}  // namespace IFE",
+        "",
+        "#endif  // IFE_Validation_hpp",
+        "",
+    ])

@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 from .emit.cpp import (
+    emit_validation_header,
+    emit_validation_source,
     emit_blocks_header,
     emit_blocks_source,
     emit_constants_header,
@@ -50,6 +52,10 @@ def _render(
         ),
         f"{_CPP_ROOT}/IFE_Blocks.cpp": emit_blocks_source(
             layout, fields_doc.get("types", {}), header
+        ),
+        f"{_CPP_ROOT}/IFE_Validation.hpp": emit_validation_header(layout, header),
+        f"{_CPP_ROOT}/IFE_Validation.cpp": emit_validation_source(
+            layout, constants_doc, fields_doc.get("types", {}), header
         ),
         f"{_DOCS_ROOT}/layout_tables.md": emit_layout_markdown(layout),
     }

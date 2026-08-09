@@ -1,20 +1,52 @@
 {
   "// MARK: - TYPE VOCABULARY": "Every scalar width the format may use, plus alias chains. Dense packing, always little endian on disk; no field is ever padded for alignment.",
   "types": {
-    "u8":  { "bits": 8,  "kind": "unsigned" },
-    "u16": { "bits": 16, "kind": "unsigned" },
-    "u24": { "bits": 24, "kind": "unsigned" },
-    "u32": { "bits": 32, "kind": "unsigned" },
-    "u40": { "bits": 40, "kind": "unsigned" },
-    "u64": { "bits": 64, "kind": "unsigned" },
-    "f16": { "bits": 16, "kind": "float" },
-    "f32": { "bits": 32, "kind": "float" },
-    "f64": { "bits": 64, "kind": "float" },
-    "offset":   { "alias": "u64" },
-    "recovery": { "alias": "u16" },
-    "byte":     { "alias": "u8" }
+    "u8": {
+      "bits": 8,
+      "kind": "unsigned"
+    },
+    "u16": {
+      "bits": 16,
+      "kind": "unsigned"
+    },
+    "u24": {
+      "bits": 24,
+      "kind": "unsigned"
+    },
+    "u32": {
+      "bits": 32,
+      "kind": "unsigned"
+    },
+    "u40": {
+      "bits": 40,
+      "kind": "unsigned"
+    },
+    "u64": {
+      "bits": 64,
+      "kind": "unsigned"
+    },
+    "f16": {
+      "bits": 16,
+      "kind": "float"
+    },
+    "f32": {
+      "bits": 32,
+      "kind": "float"
+    },
+    "f64": {
+      "bits": 64,
+      "kind": "float"
+    },
+    "offset": {
+      "alias": "u64"
+    },
+    "recovery": {
+      "alias": "u16"
+    },
+    "byte": {
+      "alias": "u8"
+    }
   },
-
   "// MARK: - PRIMITIVE BLOCK TYPES": "The byte prefixes every block inherits. A block names one primitive; its own fields follow that primitive's chain. Offsets are derived by concatenation, never stated.",
   "primitives": {
     "FILE_HEADER": {
@@ -22,54 +54,78 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "MAGIC",    "type": "u32", "constant": "MAGIC_BYTES", "description": "ASCII 'Iris' (0x49726973). The first four bytes of every IFE file." },
-            { "name": "RECOVERY", "enum": "recovery_codes", "description": "Recovery tag identifying this block's type." }
+            {
+              "name": "MAGIC",
+              "type": "u32",
+              "constant": "MAGIC_BYTES",
+              "description": "ASCII 'Iris' (0x49726973). The first four bytes of every IFE file."
+            },
+            {
+              "name": "RECOVERY",
+              "enum": "recovery_codes",
+              "description": "Recovery tag identifying this block's type."
+            }
           ]
         }
       }
     },
-
     "BLOCK": {
       "description": "Universal primitive for every block reached through an offset field. VALIDATION stores the block's own byte offset, so a reader that arrived by pointer can confirm it landed where it intended, and a recovery scan can find the block by searching for a value equal to its own position.",
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "VALIDATION", "type": "offset", "description": "Byte offset of this block from the start of file." },
-            { "name": "RECOVERY",   "enum": "recovery_codes", "description": "Recovery tag identifying this block's type." }
+            {
+              "name": "VALIDATION",
+              "type": "offset",
+              "description": "Byte offset of this block from the start of file."
+            },
+            {
+              "name": "RECOVERY",
+              "enum": "recovery_codes",
+              "description": "Recovery tag identifying this block's type."
+            }
           ]
         }
       }
     },
-
     "ARRAY": {
       "extends": "BLOCK",
       "description": "A block carrying a sequence of fixed-width entries. STRIDE records the entry width at encoding time so a decoder steps by the stored value rather than its own compiled size; that is what lets a reader of one version traverse an array written by a later one.",
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "STRIDE", "type": "u16", "description": "Byte size of one array entry at the time of encoding." },
-            { "name": "COUNT",  "type": "u32", "description": "Number of entries." }
+            {
+              "name": "STRIDE",
+              "type": "u16",
+              "description": "Byte size of one array entry at the time of encoding."
+            },
+            {
+              "name": "COUNT",
+              "type": "u32",
+              "description": "Number of entries."
+            }
           ]
         }
       }
     },
-
     "BYTE_ARRAY": {
       "extends": "BLOCK",
       "description": "A block carrying an opaque run of bytes. It stores no STRIDE: the stride of a byte array is intrinsically one, so recording it would encode no information. COUNT is therefore a byte count. Strings live here - every string in IFE is a byte range whose length comes from a size field elsewhere.",
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "COUNT", "type": "u32", "description": "Number of bytes in the array." }
+            {
+              "name": "COUNT",
+              "type": "u32",
+              "description": "Number of bytes in the array."
+            }
           ]
         }
       }
     }
   },
-
   "// MARK: - BLOCK INVENTORY": "Every data-block in the format, grouped by domain. Field lists are keyed by introducing version and concatenated in ascending order; no offset or size is ever stated.",
   "blocks": {
-
     "// MARK: - HEADER BLOCKS": "Fixed-size blocks. FILE_HEADER is the root at byte 0; every other block is reached only through an offset field.",
     "FILE_HEADER": {
       "primitive": "FILE_HEADER",
@@ -79,17 +135,56 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "FILE_SIZE",         "type": "u64", "description": "Total file size in bytes; serves as the atomic write-head during encoding." },
-            { "name": "EXTENSION_MAJOR",   "type": "u16", "description": "IFE specification major version used to encode this file. Read once at the root and propagated to every block; this is the sole version source." },
-            { "name": "EXTENSION_MINOR",   "type": "u16", "description": "IFE specification minor version used to encode this file." },
-            { "name": "FILE_REVISION",     "type": "u32", "description": "Monotonic modification counter for the file." },
-            { "name": "TILE_TABLE_OFFSET", "type": "offset", "points_to": "TILE_TABLE", "nullable": false, "description": "Offset of the tile table block." },
-            { "name": "METADATA_OFFSET",   "type": "offset", "points_to": "METADATA",   "nullable": false, "description": "Offset of the metadata block; required even when no optional metadata content is encoded." }
+            {
+              "name": "FILE_SIZE",
+              "type": "u64",
+              "description": "Total file size in bytes; serves as the atomic write-head during encoding."
+            },
+            {
+              "name": "EXTENSION_MAJOR",
+              "type": "u16",
+              "description": "IFE specification major version used to encode this file. Read once at the root and propagated to every block; this is the sole version source."
+            },
+            {
+              "name": "EXTENSION_MINOR",
+              "type": "u16",
+              "description": "IFE specification minor version used to encode this file."
+            },
+            {
+              "name": "FILE_REVISION",
+              "type": "u32",
+              "description": "Monotonic modification counter for the file."
+            },
+            {
+              "name": "TILE_TABLE_OFFSET",
+              "type": "offset",
+              "points_to": "TILE_TABLE",
+              "nullable": false,
+              "description": "Offset of the tile table block.",
+              "conformance": {
+                "level": "shall",
+                "section": "2.3.1",
+                "non_null": true,
+                "requirement": "contain the file offset location of a valid tile table header"
+              }
+            },
+            {
+              "name": "METADATA_OFFSET",
+              "type": "offset",
+              "points_to": "METADATA",
+              "nullable": false,
+              "description": "Offset of the metadata block; required even when no optional metadata content is encoded.",
+              "conformance": {
+                "level": "shall",
+                "section": "2.3.1",
+                "non_null": true,
+                "requirement": "contain the file offset location of a valid metadata header"
+              }
+            }
           ]
         }
       }
     },
-
     "TILE_TABLE": {
       "primitive": "BLOCK",
       "recovery_tag": "RECOVER_TILE_TABLE",
@@ -97,18 +192,63 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "ENCODING",             "enum": "tile_encodings", "description": "Compression codec of the slide tile pixel data." },
-            { "name": "FORMAT",               "enum": "pixel_formats",  "description": "Pixel channel ordering and bit depth." },
-            { "name": "CIPHER_OFFSET",        "type": "offset", "points_to": "CIPHER",        "nullable": true,  "description": "Offset of the codec cipher block (reserved for the Iris Codec)." },
-            { "name": "TILE_OFFSETS_OFFSET",  "type": "offset", "points_to": "TILE_OFFSETS",  "nullable": false, "description": "Offset of the tile offsets array." },
-            { "name": "LAYER_EXTENTS_OFFSET", "type": "offset", "points_to": "LAYER_EXTENTS", "nullable": false, "description": "Offset of the layer extents array." },
-            { "name": "X_EXTENT",             "type": "u32", "description": "Width of the slide, in pixels, at the highest-resolution layer." },
-            { "name": "Y_EXTENT",             "type": "u32", "description": "Height of the slide, in pixels, at the highest-resolution layer." }
+            {
+              "name": "ENCODING",
+              "enum": "tile_encodings",
+              "description": "Compression codec of the slide tile pixel data.",
+              "conformance": {
+                "level": "shall",
+                "section": "2.4.0",
+                "enum_member": true,
+                "requirement": "name a tile encoding defined by this specification"
+              }
+            },
+            {
+              "name": "FORMAT",
+              "enum": "pixel_formats",
+              "description": "Pixel channel ordering and bit depth.",
+              "conformance": {
+                "level": "shall",
+                "section": "2.4.0",
+                "enum_member": true,
+                "requirement": "name a pixel format defined by this specification"
+              }
+            },
+            {
+              "name": "CIPHER_OFFSET",
+              "type": "offset",
+              "points_to": "CIPHER",
+              "nullable": true,
+              "description": "Offset of the codec cipher block (reserved for the Iris Codec)."
+            },
+            {
+              "name": "TILE_OFFSETS_OFFSET",
+              "type": "offset",
+              "points_to": "TILE_OFFSETS",
+              "nullable": false,
+              "description": "Offset of the tile offsets array."
+            },
+            {
+              "name": "LAYER_EXTENTS_OFFSET",
+              "type": "offset",
+              "points_to": "LAYER_EXTENTS",
+              "nullable": false,
+              "description": "Offset of the layer extents array."
+            },
+            {
+              "name": "X_EXTENT",
+              "type": "u32",
+              "description": "Width of the slide, in pixels, at the highest-resolution layer."
+            },
+            {
+              "name": "Y_EXTENT",
+              "type": "u32",
+              "description": "Height of the slide, in pixels, at the highest-resolution layer."
+            }
           ]
         }
       }
     },
-
     "CIPHER": {
       "primitive": "BLOCK",
       "recovery_tag": "RECOVER_CIPHER",
@@ -120,7 +260,6 @@
         }
       }
     },
-
     "METADATA": {
       "primitive": "BLOCK",
       "recovery_tag": "RECOVER_METADATA",
@@ -128,20 +267,63 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "CODEC_MAJOR",        "type": "u16", "description": "Major version of the Iris Codec implementation that wrote the file; zero when not applicable." },
-            { "name": "CODEC_MINOR",        "type": "u16", "description": "Minor version of the writing codec; zero when not applicable." },
-            { "name": "CODEC_BUILD",        "type": "u16", "description": "Build number of the writing codec; zero when not applicable." },
-            { "name": "ATTRIBUTES_OFFSET",  "type": "offset", "points_to": "ATTRIBUTES",  "nullable": true, "description": "Offset of the attributes block, or NULL_OFFSET if no attributes are encoded." },
-            { "name": "IMAGES_OFFSET",      "type": "offset", "points_to": "IMAGES",      "nullable": true, "description": "Offset of the associated images array, or NULL_OFFSET if none are encoded." },
-            { "name": "ICC_COLOR_OFFSET",   "type": "offset", "points_to": "ICC_PROFILE", "nullable": true, "description": "Offset of the ICC color profile byte array, or NULL_OFFSET if none is encoded." },
-            { "name": "ANNOTATIONS_OFFSET", "type": "offset", "points_to": "ANNOTATIONS", "nullable": true, "description": "Offset of the annotations array, or NULL_OFFSET if none are present." },
-            { "name": "MICRONS_PIXEL",      "type": "f32", "description": "Normalized microns of physical space per pixel at layer scale 1." },
-            { "name": "MAGNIFICATION",      "type": "f32", "description": "Normalized magnification coefficient converting layer scale to microscope objective magnification." }
+            {
+              "name": "CODEC_MAJOR",
+              "type": "u16",
+              "description": "Major version of the Iris Codec implementation that wrote the file; zero when not applicable."
+            },
+            {
+              "name": "CODEC_MINOR",
+              "type": "u16",
+              "description": "Minor version of the writing codec; zero when not applicable."
+            },
+            {
+              "name": "CODEC_BUILD",
+              "type": "u16",
+              "description": "Build number of the writing codec; zero when not applicable."
+            },
+            {
+              "name": "ATTRIBUTES_OFFSET",
+              "type": "offset",
+              "points_to": "ATTRIBUTES",
+              "nullable": true,
+              "description": "Offset of the attributes block, or NULL_OFFSET if no attributes are encoded."
+            },
+            {
+              "name": "IMAGES_OFFSET",
+              "type": "offset",
+              "points_to": "IMAGES",
+              "nullable": true,
+              "description": "Offset of the associated images array, or NULL_OFFSET if none are encoded."
+            },
+            {
+              "name": "ICC_COLOR_OFFSET",
+              "type": "offset",
+              "points_to": "ICC_PROFILE",
+              "nullable": true,
+              "description": "Offset of the ICC color profile byte array, or NULL_OFFSET if none is encoded."
+            },
+            {
+              "name": "ANNOTATIONS_OFFSET",
+              "type": "offset",
+              "points_to": "ANNOTATIONS",
+              "nullable": true,
+              "description": "Offset of the annotations array, or NULL_OFFSET if none are present."
+            },
+            {
+              "name": "MICRONS_PIXEL",
+              "type": "f32",
+              "description": "Normalized microns of physical space per pixel at layer scale 1."
+            },
+            {
+              "name": "MAGNIFICATION",
+              "type": "f32",
+              "description": "Normalized magnification coefficient converting layer scale to microscope objective magnification."
+            }
           ]
         }
       }
     },
-
     "ATTRIBUTES": {
       "primitive": "BLOCK",
       "recovery_tag": "RECOVER_ATTRIBUTES",
@@ -149,15 +331,40 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "FORMAT",       "enum": "metadata_formats", "description": "The metadata standard by which the attributes were encoded." },
-            { "name": "VERSION",      "type": "u16", "description": "Version of the claimed metadata standard; zero when format is METADATA_FREE_TEXT." },
-            { "name": "SIZES_OFFSET", "type": "offset", "points_to": "ATTRIBUTE_SIZES", "nullable": false, "description": "Offset of the attribute sizes array." },
-            { "name": "BYTES_OFFSET", "type": "offset", "points_to": "ATTRIBUTE_BYTES", "nullable": false, "description": "Offset of the attribute byte array." }
+            {
+              "name": "FORMAT",
+              "enum": "metadata_formats",
+              "description": "The metadata standard by which the attributes were encoded.",
+              "conformance": {
+                "level": "shall",
+                "section": "2.4.4",
+                "enum_member": true,
+                "requirement": "name a metadata format defined by this specification"
+              }
+            },
+            {
+              "name": "VERSION",
+              "type": "u16",
+              "description": "Version of the claimed metadata standard; zero when format is METADATA_FREE_TEXT."
+            },
+            {
+              "name": "SIZES_OFFSET",
+              "type": "offset",
+              "points_to": "ATTRIBUTE_SIZES",
+              "nullable": false,
+              "description": "Offset of the attribute sizes array."
+            },
+            {
+              "name": "BYTES_OFFSET",
+              "type": "offset",
+              "points_to": "ATTRIBUTE_BYTES",
+              "nullable": false,
+              "description": "Offset of the attribute byte array."
+            }
           ]
         }
       }
     },
-
     "// MARK: - TILE DATA ARRAYS": "The pyramid geometry and the tile lookup table — everything needed to locate and reconstruct slide tiles.",
     "LAYER_EXTENTS": {
       "primitive": "ARRAY",
@@ -168,15 +375,44 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "X_TILES", "type": "u32", "description": "Number of 256-pixel tiles in the horizontal direction." },
-              { "name": "Y_TILES", "type": "u32", "description": "Number of 256-pixel tiles in the vertical direction." },
-              { "name": "SCALE",   "type": "f32", "description": "Relative scale of this layer as a multiple of the lowest-resolution layer's scale." }
+              {
+                "name": "X_TILES",
+                "type": "u32",
+                "description": "Number of 256-pixel tiles in the horizontal direction.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.1",
+                  "minimum": 1,
+                  "requirement": "encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero"
+                }
+              },
+              {
+                "name": "Y_TILES",
+                "type": "u32",
+                "description": "Number of 256-pixel tiles in the vertical direction.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.1",
+                  "minimum": 1,
+                  "requirement": "encode the number of 256 pixel tiles in the vertical direction and shall be greater than zero"
+                }
+              },
+              {
+                "name": "SCALE",
+                "type": "f32",
+                "description": "Relative scale of this layer as a multiple of the lowest-resolution layer's scale.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.1",
+                  "ordering": "strictly_increasing",
+                  "requirement": "increase strictly with each successive layer, the lowest-resolution layer first"
+                }
+              }
             ]
           }
         }
       }
     },
-
     "TILE_OFFSETS": {
       "primitive": "ARRAY",
       "recovery_tag": "RECOVER_TILE_OFFSETS",
@@ -186,14 +422,21 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "OFFSET", "type": "u40", "description": "Byte offset of the compressed tile stream from SOF, or NULL_TILE when the tile is not encoded." },
-              { "name": "SIZE",   "type": "u24", "description": "Byte size of the compressed tile stream." }
+              {
+                "name": "OFFSET",
+                "type": "u40",
+                "description": "Byte offset of the compressed tile stream from SOF, or NULL_TILE when the tile is not encoded."
+              },
+              {
+                "name": "SIZE",
+                "type": "u24",
+                "description": "Byte size of the compressed tile stream."
+              }
             ]
           }
         }
       }
     },
-
     "// MARK: - ATTRIBUTE ARRAYS": "Clinical and acquisition key-value metadata: a slicing array and the packed byte array it slices.",
     "ATTRIBUTE_SIZES": {
       "primitive": "ARRAY",
@@ -204,20 +447,26 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "KEY_SIZE",   "type": "u16", "description": "Byte length of the attribute key string (4 when encoded per the DICOM standard)." },
-              { "name": "VALUE_SIZE", "type": "u32", "description": "Byte length of the UTF-8 value string corresponding to the key." }
+              {
+                "name": "KEY_SIZE",
+                "type": "u16",
+                "description": "Byte length of the attribute key string (4 when encoded per the DICOM standard)."
+              },
+              {
+                "name": "VALUE_SIZE",
+                "type": "u32",
+                "description": "Byte length of the UTF-8 value string corresponding to the key."
+              }
             ]
           }
         }
       }
     },
-
     "ATTRIBUTE_BYTES": {
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ATTRIBUTE_BYTES",
       "description": "Tightly packed key and value strings sliced by the attribute sizes array."
     },
-
     "// MARK: - ASSOCIATED IMAGES": "Ancillary images such as labels and thumbnails: the entry array and the per-image label-plus-stream block.",
     "IMAGES": {
       "primitive": "ARRAY",
@@ -228,18 +477,55 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "BYTES_OFFSET", "type": "offset", "points_to": "IMAGE_BYTES", "nullable": false, "description": "Offset of the image bytes block holding this image's label and compressed stream." },
-              { "name": "WIDTH",        "type": "u32", "description": "Horizontal pixel extent of the encoded image." },
-              { "name": "HEIGHT",       "type": "u32", "description": "Vertical pixel extent of the encoded image." },
-              { "name": "ENCODING",     "enum": "image_encodings", "description": "Compression codec of the image byte stream." },
-              { "name": "FORMAT",       "enum": "pixel_formats", "description": "Pixel channel ordering of the decoded image." },
-              { "name": "ORIENTATION",  "type": "f16", "description": "Intended rendering rotation in degrees, IEEE half-precision, interpreted modulo 360. Any degree value is legal; the ORIENTATION_* constants are provided for convenience." }
+              {
+                "name": "BYTES_OFFSET",
+                "type": "offset",
+                "points_to": "IMAGE_BYTES",
+                "nullable": false,
+                "description": "Offset of the image bytes block holding this image's label and compressed stream."
+              },
+              {
+                "name": "WIDTH",
+                "type": "u32",
+                "description": "Horizontal pixel extent of the encoded image."
+              },
+              {
+                "name": "HEIGHT",
+                "type": "u32",
+                "description": "Vertical pixel extent of the encoded image."
+              },
+              {
+                "name": "ENCODING",
+                "enum": "image_encodings",
+                "description": "Compression codec of the image byte stream.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.6",
+                  "enum_member": true,
+                  "requirement": "name an image encoding defined by this specification"
+                }
+              },
+              {
+                "name": "FORMAT",
+                "enum": "pixel_formats",
+                "description": "Pixel channel ordering of the decoded image.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.6",
+                  "enum_member": true,
+                  "requirement": "name a pixel format defined by this specification"
+                }
+              },
+              {
+                "name": "ORIENTATION",
+                "type": "f16",
+                "description": "Intended rendering rotation in degrees, IEEE half-precision, interpreted modulo 360. Any degree value is legal; the ORIENTATION_* constants are provided for convenience."
+              }
             ]
           }
         }
       }
     },
-
     "IMAGE_BYTES": {
       "primitive": "BLOCK",
       "recovery_tag": "RECOVER_IMAGE_BYTES",
@@ -247,13 +533,20 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "TITLE_SIZE", "type": "u16", "description": "Byte length of the ASCII image label preceding the image bytes." },
-            { "name": "IMAGE_SIZE", "type": "u32", "description": "Byte length of the compressed image stream following the label." }
+            {
+              "name": "TITLE_SIZE",
+              "type": "u16",
+              "description": "Byte length of the ASCII image label preceding the image bytes."
+            },
+            {
+              "name": "IMAGE_SIZE",
+              "type": "u32",
+              "description": "Byte length of the compressed image stream following the label."
+            }
           ]
         }
       }
     },
-
     "// MARK: - ICC COLOR PROFILE": "An unmodified ICC colour profile, stored as an opaque byte array.",
     "ICC_PROFILE": {
       "primitive": "BYTE_ARRAY",
@@ -262,7 +555,6 @@
       "specified_by": "ICC.1 colour profile specification (International Color Consortium)",
       "description": "Serialized contents of an ICC (.icc) color profile without modification. IFE specifies only that the bytes are stored verbatim and their length; their internal structure is defined by the ICC specification and deliberately not constrained here."
     },
-
     "// MARK: - ANNOTATION ARRAYS": "On-slide annotation objects, their raw visual-object streams, and the group tables that name and collect them.",
     "ANNOTATIONS": {
       "primitive": "ARRAY",
@@ -271,8 +563,20 @@
       "fields": {
         "ife_version": {
           "1.0": [
-            { "name": "GROUP_SIZES_OFFSET", "type": "offset", "points_to": "ANNOTATION_GROUP_SIZES", "nullable": true, "description": "Offset of the annotation group sizes array, or NULL_OFFSET when no groups are encoded." },
-            { "name": "GROUP_BYTES_OFFSET", "type": "offset", "points_to": "ANNOTATION_GROUP_BYTES", "nullable": true, "description": "Offset of the annotation group bytes array, or NULL_OFFSET when no groups are encoded." }
+            {
+              "name": "GROUP_SIZES_OFFSET",
+              "type": "offset",
+              "points_to": "ANNOTATION_GROUP_SIZES",
+              "nullable": true,
+              "description": "Offset of the annotation group sizes array, or NULL_OFFSET when no groups are encoded."
+            },
+            {
+              "name": "GROUP_BYTES_OFFSET",
+              "type": "offset",
+              "points_to": "ANNOTATION_GROUP_BYTES",
+              "nullable": true,
+              "description": "Offset of the annotation group bytes array, or NULL_OFFSET when no groups are encoded."
+            }
           ]
         }
       },
@@ -281,22 +585,69 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "IDENTIFIER",   "type": "u24", "description": "Unique identifier tag of this annotation; never NULL_ID." },
-              { "name": "BYTES_OFFSET", "type": "offset", "points_to": "ANNOTATION_BYTES", "nullable": false, "description": "Offset of the annotation byte array containing this annotation's visual object stream." },
-              { "name": "FORMAT",       "enum": "annotation_types", "description": "Byte format of the annotation visual object stream." },
-              { "name": "X_LOCATION",   "type": "f32", "description": "Horizontal origin (upper-left) of the annotation in slide space." },
-              { "name": "Y_LOCATION",   "type": "f32", "description": "Vertical origin (upper-left) of the annotation in slide space." },
-              { "name": "X_SIZE",       "type": "f32", "description": "Rendered width of the annotation in slide space." },
-              { "name": "Y_SIZE",       "type": "f32", "description": "Rendered height of the annotation in slide space." },
-              { "name": "PIXEL_WIDTH",  "type": "u32", "description": "Horizontal pixel dimension of the decoded/rasterized annotation object." },
-              { "name": "PIXEL_HEIGHT", "type": "u32", "description": "Vertical pixel dimension of the decoded/rasterized annotation object." },
-              { "name": "PARENT_ID",    "type": "u24", "description": "Optional parent annotation identifier, or NULL_ID when no parent is referenced." }
+              {
+                "name": "IDENTIFIER",
+                "type": "u24",
+                "description": "Unique identifier tag of this annotation; never NULL_ID."
+              },
+              {
+                "name": "BYTES_OFFSET",
+                "type": "offset",
+                "points_to": "ANNOTATION_BYTES",
+                "nullable": false,
+                "description": "Offset of the annotation byte array containing this annotation's visual object stream."
+              },
+              {
+                "name": "FORMAT",
+                "enum": "annotation_types",
+                "description": "Byte format of the annotation visual object stream.",
+                "conformance": {
+                  "level": "shall",
+                  "section": "2.4.9",
+                  "enum_member": true,
+                  "requirement": "name an annotation type defined by this specification"
+                }
+              },
+              {
+                "name": "X_LOCATION",
+                "type": "f32",
+                "description": "Horizontal origin (upper-left) of the annotation in slide space."
+              },
+              {
+                "name": "Y_LOCATION",
+                "type": "f32",
+                "description": "Vertical origin (upper-left) of the annotation in slide space."
+              },
+              {
+                "name": "X_SIZE",
+                "type": "f32",
+                "description": "Rendered width of the annotation in slide space."
+              },
+              {
+                "name": "Y_SIZE",
+                "type": "f32",
+                "description": "Rendered height of the annotation in slide space."
+              },
+              {
+                "name": "PIXEL_WIDTH",
+                "type": "u32",
+                "description": "Horizontal pixel dimension of the decoded/rasterized annotation object."
+              },
+              {
+                "name": "PIXEL_HEIGHT",
+                "type": "u32",
+                "description": "Vertical pixel dimension of the decoded/rasterized annotation object."
+              },
+              {
+                "name": "PARENT_ID",
+                "type": "u24",
+                "description": "Optional parent annotation identifier, or NULL_ID when no parent is referenced."
+              }
             ]
           }
         }
       }
     },
-
     "ANNOTATION_BYTES": {
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_BYTES",
@@ -304,7 +655,6 @@
       "specified_by": "The annotation_types value carried by the referencing ANNOTATION_ENTRY.FORMAT field",
       "description": "One annotation's raw visual-object byte stream. IFE specifies only where the bytes are and how many; their interpretation is determined by the annotation format the referencing entry declares, and is deliberately not constrained here."
     },
-
     "ANNOTATION_GROUP_SIZES": {
       "primitive": "ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_SIZES",
@@ -314,14 +664,21 @@
         "fields": {
           "ife_version": {
             "1.0": [
-              { "name": "TITLE_SIZE",   "type": "u16", "description": "Byte length of the ASCII group title." },
-              { "name": "MEMBER_COUNT", "type": "u32", "description": "Number of 24-bit annotation identifiers in the group." }
+              {
+                "name": "TITLE_SIZE",
+                "type": "u16",
+                "description": "Byte length of the ASCII group title."
+              },
+              {
+                "name": "MEMBER_COUNT",
+                "type": "u32",
+                "description": "Number of 24-bit annotation identifiers in the group."
+              }
             ]
           }
         }
       }
     },
-
     "ANNOTATION_GROUP_BYTES": {
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_BYTES",

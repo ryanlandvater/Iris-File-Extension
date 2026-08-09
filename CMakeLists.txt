@@ -141,6 +141,11 @@ endif()
 # checkout with an empty generated_source/ still compiles what the
 # generator just produced.
 file(GLOB IFE_GENERATED_SOURCES CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.cpp)
+# The conformance layer (4.6) is a development tool, not a production
+# dependency: decision 4.0-B ships it as its own target so an application links
+# it only when it wants validation.  Keep it out of the library's sources.
+set(IFE_VALIDATION_SOURCE ${IFE_GENERATED_DIR}/IFE_Validation.cpp)
+list(REMOVE_ITEM IFE_GENERATED_SOURCES ${IFE_VALIDATION_SOURCE})
 file(GLOB IFE_GENERATED_HEADERS CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.hpp)
 if(IFE_GENERATED_SOURCES OR IFE_GENERATED_HEADERS)
     list(APPEND IFE_SourcesPriv   ${IFE_GENERATED_SOURCES})
@@ -407,6 +412,23 @@ if(IFE_BUILD_TESTS)
             -DWORK=${CMAKE_CURRENT_BINARY_DIR}
             -P ${PROJECT_SOURCE_DIR}/tests/example_parity.cmake
     )
+
+    # 4.6: the conformance layer, attached and detached.  Both paths asserted,
+    # because a layer that is never consulted is the failure mode a dispatch
+    # point has, and a check that fires when detached would make the "costs a
+    # null check" claim false.
+    add_executable(
+        ife_validation_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_validation_tests.cpp
+        ${IFE_VALIDATION_SOURCE}
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_validation_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_validation_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_validation_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_validation_tests COMMAND ife_validation_tests)
 
     # Decision 4.0-D: the generated layer stays out of the exported ABI.
     if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)

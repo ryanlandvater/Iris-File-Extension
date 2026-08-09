@@ -59,6 +59,36 @@ catches what layout derivation does not care about but a *file* does:
 Recovery-tag **values are never authored**. Each is `0x5500` plus its position,
 assigned by the generator. Writing one by hand is itself an error.
 
+## Normative clauses (`conformance`)
+
+A field may carry one clause, which the 4.6 validation layer turns into a check
+and a diagnostic. **The vocabulary is closed and there is no expression
+syntax** — that is the cap in "What may never enter the schema", enforced.
+
+```json
+{ "name": "X_TILES", "type": "u32",
+  "conformance": { "level": "shall", "section": "2.4.1", "minimum": 1,
+                   "requirement": "encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero" } }
+```
+
+| Key | Meaning |
+|---|---|
+| `level` | `shall` / `should` / `may` — the normative force |
+| `section` | the specification section that states it; appears in the diagnostic |
+| `requirement` | the clause in prose, completing "`BLOCK.FIELD` *level* …" |
+| `minimum`, `maximum` | inclusive bounds on the value |
+| `ordering` | `strictly_increasing` across an array's entries |
+| `enum_member` | the value names a declared member of the field's enum group |
+
+`non_null` is spelled `nullable: false` on the `points_to` linkage, and enum
+membership needs no separate domain — both were already stated. A clause adds
+the *requirement*, not the data.
+
+Clauses are **optional and opt-in**. A field without one is not unconstrained;
+it is simply not machine-checked, and a rule that will not fit this vocabulary
+stays as prose in `ife_spec.md` and is hand-written into the layer. That escape
+valve is the design, not a shortfall.
+
 ## Saying "we are not specifying this"
 
 A blank in a specification is ambiguous: not decided yet, decided not to
