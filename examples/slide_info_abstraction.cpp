@@ -21,12 +21,16 @@
  #include <iostream>
  #include <format>
  #include <filesystem>
- #ifdef BUILD_EXAMPLES_TEST
+ #ifdef IFE_USE_RUNTIME
+ // The generated layer (Phase 4). This is the whole of the cutover for a
+ // consumer: one include line. Everything below is unchanged.
+ #include "IFE_Runtime.hpp"
+ #elif defined BUILD_EXAMPLES_TEST
  // if CMake is building this to test the installation
  #include "IrisFileExtension.hpp"
  #else
  #include <Iris/IrisFileExtension.hpp>
- #endif 
+ #endif
  constexpr char help_statement[] =
  "This is an example implementation of the Iris File Extension \
  official low-level headers using the file abstraction assistance. \

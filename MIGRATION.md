@@ -5,11 +5,11 @@
 > 4.4. The generated layer reads and validates; it does not yet write, and
 > nothing outside the tests consumes it — `IrisFileExtensionLib` still
 > compiles the hand-written `IrisCodecExtension.cpp`, and the cutover is
-> Phase 6. One decision is open: **4.0-D** (visibility of generated symbols,
-> reopened by the `.hpp`/`.cpp` split — a shared build exports zero
-> `IFE::blocks` symbols). 4.0-E is fully closed: part 1 in the decision,
-> parts 2–3 with 4.1 and the emitter. Gates in force: `--validate`, `--check`, the
-> `static_assert` parity wall, and four test binaries under ASan+UBSan.
+> Phase 6. **All 4.0 decisions are now closed**, 4.0-D last (2026-08-09:
+> export the semantic API, keep the generated block layer out of the ABI).
+> Gates in force: `--validate`, `--check`, the `static_assert` parity wall, an
+> exported-symbol check, and the test binaries under ASan+UBSan, on both byte
+> orders.
 >
 > **Broad plan below.** Each phase below gets a granular checklist
 > (`plans/phase-N-*.md`) during a refinement pass **before** implementation
@@ -514,29 +514,37 @@ sentinel set, decision A).
         for two of the three — adjust the 4.2b compile check accordingly.
       - `4.1`'s `IFE_Bytes.hpp` uses the Iris scalar types too; it does not
         declare its own `Byte`/`Offset`/`Size`.
-- [ ] **D. `IFE_EXPORT` — ⚠ REOPENED. The premise no longer holds.** The
-      original decision was that generated block code is header-only
-      `inline`/`constexpr`, so there is no symbol to export. Since 4.2b's
-      `.hpp`/`.cpp` split (see "Generated code ships as a header and a source")
-      the definitions are compiled into the library, and the library is built
-      with `CXX_VISIBILITY_PRESET hidden`.
-      **Measured:** a shared build exports **zero** `IFE::blocks` symbols
-      (`nm -gU libIrisFileExtension.dylib | grep IFE6blocks` → 0). A consumer
-      linking the shared library today cannot call a generated accessor.
-      Nothing consumes the generated layer yet, so this is latent rather than
-      broken — but it must be settled before the Phase 6 cutover. Three ways:
-      1. **Emit `IFE_EXPORT` on generated definitions**, reusing the scheme at
-         `src/IrisCodecExtension.hpp:55-74`. Matches how v1's
-         `Serialization::` structs are consumed today; a consumer links and
-         calls, exactly as now.
-      2. **Consumers use `IFE_HEADER_ONLY`** (or compile
-         `generated_source/IFE_Blocks.cpp` into their own target). No exported
-         ABI at all, and each consumer inlines everything — arguably the right
-         answer for a layer that is pure field arithmetic.
-      3. Both: export by default, header-only available.
-      *Recommendation:* (1), because it keeps the Iris-Codec cutover a
-      re-point rather than a build-system change — but it is a distribution
-      decision, not a code one.
+- [x] **D. `IFE_EXPORT` — DECIDED (2026-08-09): split it. The semantic API is
+      exported; the generated block layer is not, and `IFE_HEADER_ONLY` is the
+      only way to surface it.** The original decision assumed generated code
+      was header-only and had no symbol to export; 4.2b's `.hpp`/`.cpp` split
+      ended that, and a shared build exported **zero** `IFE::` symbols while
+      exporting **139** hand-written `Serialization::` ones — a consumer could
+      call every v1 block method and no generated one.
+
+      **Exported:** the four entry points, `recover_file_structure`, and the
+      `IrisCodec::Abstraction` structs, marked `IFE_EXPORT` exactly as v1 marks
+      them. This is what a consumer actually calls —
+      `examples/slide_info_abstraction.cpp` builds against the generated stack
+      touching only these, never naming a block handle — so the cutover stays a
+      re-point rather than a build-system change.
+
+      **Not exported:** `IFE::blocks`, `IFE::vtables`, `IFE::constants`. Three
+      reasons, in order of weight: an exported accessor could only offer a
+      cross-boundary call where inlining a `u24` load is strictly better; every
+      exported symbol is a thing that cannot change without breaking someone,
+      and a *generated* layer must stay free to change when the schema does;
+      and it holds the ABI at a handful of symbols instead of ~139. A consumer
+      that wants the block layer defines `IFE_HEADER_ONLY` or compiles
+      `generated_source/IFE_Blocks.cpp` into its own target — the supported
+      route, not a workaround.
+
+      **Enforced, not remembered.** The `IFE_EXPORT` scheme moved out of
+      `IrisCodecExtension.hpp` into `src/IFE_Export.hpp` so both layers share
+      one definition, and `tests/exported_symbols.cmake` fails the build if any
+      `IFE::` symbol becomes visible. Red-green: flipping
+      `CXX_VISIBILITY_PRESET` to `default` leaks 242 symbols and the test names
+      them.
 
 - [x] **E. `f16` — DECIDED, and half-applied.** The earlier "fail loudly"
       decision was made on a false premise: `image_orientations` declared
@@ -1461,7 +1469,47 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
 - **Done when:** `grep -c __EMSCRIPTEN__ generated_source/*.hpp` is 0, and the
   WASM branch exists in exactly one translation unit.
 
-#### 4.4 — `src/IFE_Runtime.hpp` / `.cpp` — semantic layer and public API
+#### 4.4 — `src/IFE_Runtime.hpp` / `.cpp` — semantic layer and public API — ✅ DONE
+
+The four v1 entry points, the `Abstraction::` structs, and `recover_file_structure`
+(new), on top of the generated handles. Every byte offset, every `LOAD_U*`, every
+`if (__version > IRIS_EXTENSION_1_0); else goto`, and every `#ifdef __EMSCRIPTEN__`
+is gone from the semantic layer; a reader body is a sequence of accessor calls.
+
+**Done when — met, and executable.** `tests/example_parity.cmake` compiles
+`examples/slide_info_abstraction.cpp` twice, differing *only* in which header it
+includes, runs both on one slide written by the shipped encoder, and requires
+byte-identical output. Red-green: swapping `x_extent` for `y_extent` in the
+runtime fails both it and `ife_runtime_tests`.
+
+Three things the port forced that the task text did not anticipate:
+
+- **The two layers are mutually exclusive, at compile *and* link time.** Both
+  define `IrisCodec::Abstraction` and the same four entry points — which is
+  exactly what makes the cutover a one-line include change — so they cannot
+  share a translation unit or a binary. `IFE_Runtime.hpp` says so with an
+  `#error`, and `IFE_Runtime.cpp` is deliberately **not** in
+  `IrisFileExtensionLib` until Phase 6 removes v1. It is why the runtime tests
+  take their fixture from a separate *process* (`ife_v1_slide_writer`) rather
+  than a linked function.
+- **`FileMapEntry::datablock` could not carry over.** Its type was
+  `Serialization::DATA_BLOCK`, a class that dies with v1, and there is nothing
+  to `static_cast` to: a generated handle is *constructed* from an offset, not
+  downcast. The entry now carries `{type, offset, size}` and the caller builds
+  whichever handle it wants — strictly more capable, and the only place a
+  consumer's code changes at the cutover.
+- **`is_Iris_Codec_file` is `validate()`, not two loads.** `MAGIC` is a
+  `constant` field, so the generated layer checks it rather than exposing an
+  accessor; `FILE_HEADER::validate()` is exactly v1's two checks plus the
+  bounds check v1 had to be given separately.
+
+`recover_file_structure` scans for the signature every block carries — a `u64`
+equal to its own offset followed by a `u16` in the tag set — and is tested
+against a file whose root pointers have been destroyed: it finds all ten
+self-validating blocks where `generate_file_map` cannot get past byte 22. The
+root is not recoverable and is not reported, having no `VALIDATION` field.
+
+The original task description follows, for the record.
 
 - **v1 precedent — this task is a port, not a design.** The entire semantic
   layer already exists and works; read it before writing anything.
@@ -1613,7 +1661,7 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-~~4.2c (validators)~~ → ~~4.2d (writers)~~ → ~~4.3 (byte window)~~ → **4.4 (next)** → 4.6,
+~~4.2c (validators)~~ → ~~4.2d (writers)~~ → ~~4.3 (byte window)~~ → ~~4.4 (runtime)~~ → **4.6 (next)**,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1622,7 +1670,8 @@ schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checkl
 
 **Done.** 4.0 decisions A–H; 4.0-H wire parity; 4.1 byte primitives; 4.2a
 version threading; 4.2b block handles; 4.2c validators; 4.2d writers;
-4.3 byte-window abstraction; and the v1-oracle round-trip that was open item 2.
+4.3 byte-window abstraction; 4.4 the semantic layer and public API; and the
+v1-oracle round-trip that was open item 2.
 
 **What exists.** The generated layer reads and validates a file: typed handles
 per block over `IFE_Bytes` primitives, structural validation per block, and a
@@ -1631,8 +1680,10 @@ Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
 `IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
 (`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
-**What does not exist yet.** The semantic runtime and public API (4.4), and
-the validation layer (4.6) behind the hook 4.2d now emits. **Nothing outside the tests consumes any of it** —
+**What does not exist yet.** The validation layer (4.6) behind the hook 4.2d
+emits. The generated stack is otherwise complete: a file can be encoded,
+validated, mapped, recovered and decoded entirely through it, which is the
+Phase 4 exit condition. **Nothing outside the tests consumes any of it** —
 `IrisFileExtensionLib` still compiles `src/IrisCodecExtension.cpp`, which
 remains the implementation that does the work. The cutover is Phase 6.
 
@@ -1663,11 +1714,7 @@ both** — the suite was never weak, it was never executed anywhere it mattered.
 `store_bytes` keeps a compile-time branch because it is worth 6 instructions on
 `u40`, and that branch is what the s390x job exists to cover.
 
-**Open, and it needs a human.**
-
-1. **4.0-D — visibility of generated symbols.** Reopened by the `.hpp`/`.cpp`
-   split; a shared build exports zero `IFE::blocks` symbols today. Latent, not
-   broken, but it must be settled before Phase 6.
+**Open.** Nothing blocking. 4.0-D closed 2026-08-09.
 2. ~~**No test reads bytes written by the shipped encoder.**~~ **CLOSED —
    `tests/ife_v1_oracle_tests.cpp`.** v1's `STORE_*` functions write a
    complete file (linked from `IrisFileExtensionLib`); the generated handles

@@ -89,6 +89,15 @@ set (
     ${IFE_SOURCE_DIR}/IFE_Bytes.hpp
     ${IFE_SOURCE_DIR}/IFE_Window.hpp
 )
+# IFE_Runtime.{hpp,cpp} is deliberately NOT in the library above.  It defines the
+# same four IrisCodec entry points as the hand-written layer -- that is the whole
+# point, so a consumer switches by changing one include -- and two definitions
+# cannot coexist in one binary.  Phase 6 removes IrisCodecExtension.* and moves
+# these two lines up.  Until then the runtime builds into its test targets only.
+set(IFE_RuntimeSources
+    ${IFE_SOURCE_DIR}/IFE_Runtime.hpp
+    ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
+)
 set (
     IFE_SourcesPriv
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
@@ -325,6 +334,89 @@ if(IFE_BUILD_TESTS)
     target_compile_features(ife_window_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_window_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_window_tests COMMAND ife_window_tests)
+
+    # The public API (4.4), end to end: v1 encodes in ife_v1_fixture.cpp, the
+    # generated stack reads through the four entry points Iris-Codec calls.
+    # Two translation units because IFE_Runtime.hpp and IrisCodecExtension.hpp
+    # are mutually exclusive -- which is the property that makes the Phase 6
+    # cutover a one-line include change.
+    # A slide written by the SHIPPED encoder, as a standalone tool.  It links
+    # the hand-written layer; the runtime test does not, and cannot -- so the
+    # file passes between them on disk, exactly as it would for a real consumer.
+    add_executable(
+        ife_v1_slide_writer
+        ${PROJECT_SOURCE_DIR}/tests/ife_v1_slide_writer.cpp
+        ${PROJECT_SOURCE_DIR}/tests/ife_v1_fixture.cpp
+    )
+    target_include_directories(
+        ife_v1_slide_writer PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_v1_slide_writer PRIVATE cxx_std_20)
+    target_link_libraries(
+        ife_v1_slide_writer PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
+    )
+
+    add_executable(
+        ife_runtime_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_runtime_tests.cpp
+        ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
+        ${IFE_SOURCE_DIR}/IFE_Window.cpp
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_runtime_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_runtime_tests PRIVATE cxx_std_20)
+    target_compile_definitions(
+        ife_runtime_tests PRIVATE
+        IFE_V1_SLIDE_WRITER="$<TARGET_FILE:ife_v1_slide_writer>"
+    )
+    add_dependencies(ife_runtime_tests ife_v1_slide_writer)
+    target_link_libraries(ife_runtime_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests)
+
+    # 4.4's acceptance criterion, made executable: the same example source
+    # compiled against each layer, run on the same slide, and diffed.  If the
+    # two outputs differ, the port changed observable behaviour.
+    add_executable(
+        ife_example_v1 ${PROJECT_SOURCE_DIR}/examples/slide_info_abstraction.cpp
+    )
+    target_compile_definitions(ife_example_v1 PRIVATE BUILD_EXAMPLES_TEST)
+    target_include_directories(ife_example_v1 PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_compile_features(ife_example_v1 PRIVATE cxx_std_20)
+    target_link_libraries(ife_example_v1 PRIVATE IrisFileExtensionLib ${IFE_Dependencies})
+
+    add_executable(
+        ife_example_runtime
+        ${PROJECT_SOURCE_DIR}/examples/slide_info_abstraction.cpp
+        ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
+        ${IFE_SOURCE_DIR}/IFE_Window.cpp
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_compile_definitions(ife_example_runtime PRIVATE IFE_USE_RUNTIME)
+    target_include_directories(ife_example_runtime PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_compile_features(ife_example_runtime PRIVATE cxx_std_20)
+    target_link_libraries(ife_example_runtime PRIVATE ${IFE_Dependencies})
+
+    add_test(
+        NAME ife_example_parity
+        COMMAND ${CMAKE_COMMAND}
+            -DWRITER=$<TARGET_FILE:ife_v1_slide_writer>
+            -DEXAMPLE_V1=$<TARGET_FILE:ife_example_v1>
+            -DEXAMPLE_RUNTIME=$<TARGET_FILE:ife_example_runtime>
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${PROJECT_SOURCE_DIR}/tests/example_parity.cmake
+    )
+
+    # Decision 4.0-D: the generated layer stays out of the exported ABI.
+    if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
+        add_test(
+            NAME ife_exported_symbols
+            COMMAND ${CMAKE_COMMAND}
+                -DLIBRARY=$<TARGET_FILE:IrisFileExtension>
+                -P ${PROJECT_SOURCE_DIR}/tests/exported_symbols.cmake
+        )
+    endif()
 
     # The v1 oracle: bytes written by the SHIPPED encoder, read back through
     # the generated layer.  The only gate that compares the new reader against

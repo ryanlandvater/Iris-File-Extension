@@ -40,6 +40,27 @@ output would create a second, drift-prone copy. Downstream consumers
 (FetchContent) receive the generated code at configure time — the generator
 is stdlib-only Python, so no toolchain beyond Python 3 is required.
 
+## Consuming this layer
+
+**`IFE_HEADER_ONLY` is the only way to reach it** (decision 4.0-D). Nothing
+here is exported from the shared library — `IFE::blocks`, `IFE::vtables` and
+`IFE::constants` carry no export marking, and a test fails the build if any of
+them becomes visible:
+
+```cpp
+#define IFE_HEADER_ONLY
+#include "IFE_Blocks.hpp"       // definitions fold in; nothing to link
+```
+
+or compile `generated_source/IFE_Blocks.cpp` into your own target.
+
+That is deliberate, not an oversight. This layer is field arithmetic — inlining
+a `u24` load beats calling it across a library boundary — and it is *generated*,
+so it must stay free to change whenever the schema does. An exported symbol is
+one that cannot. The stable, exported API is the semantic layer:
+`IrisCodec::validate_file_structure`, `abstract_file_structure`,
+`generate_file_map`, `recover_file_structure`, and the `Abstraction::` structs.
+
 ## Contract
 
 * Generator output must be byte-stable (stable ordering, no timestamps).
