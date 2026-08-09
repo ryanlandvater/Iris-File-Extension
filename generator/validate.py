@@ -34,6 +34,7 @@ remainder duplicates SpecError paths the model already raises.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterator
 
 from .model.layout import (
@@ -117,10 +118,22 @@ def _sentinel(constants_doc: dict[str, Any], name: str) -> dict[str, Any]:
     return {}
 
 
+def _narrative_anchors(narrative: str | None) -> set[str] | None:
+    """Every `[[anchor]]` declared in the specification narrative.
+
+    None when the narrative was not supplied, which is not an error: the C++
+    layer generates from the JSON alone and must keep doing so.
+    """
+    if narrative is None:
+        return None
+    return set(re.findall(r"^\[\[([A-Za-z0-9_-]+)\]\]", narrative, re.M))
+
+
 def validate(
     fields_doc: dict[str, Any],
     constants_doc: dict[str, Any],
     document: dict[str, Any],
+    narrative: str | None = None,
 ) -> list[str]:
     """Return a list of problems; empty means the documents are consistent."""
     problems: list[str] = []
@@ -359,6 +372,25 @@ def validate(
                 f"{len(blocks)} blocks but {len(sequence)} block-claimable recovery "
                 "tags; every block needs exactly one and every tag exactly one block"
             )
+
+    # ---- 6. normative clauses point at a clause the document declares ---- #
+    # A clause cites a stable anchor rather than a section number, and this is
+    # what makes that worth anything: a dangling or renamed anchor fails here
+    # instead of rendering a diagnostic and a document that confidently cite a
+    # requirement nobody can find. Section numbers were tried and are worse --
+    # a renumbering that lands on another real section is undetectable.
+    anchors = _narrative_anchors(narrative)
+    if anchors is not None:
+        for owner, spec in _every_versioned(fields_doc, blocks, primitives):
+            for _, field in _versioned_fields(spec):
+                clause = (field.get("conformance") or {}).get("clause")
+                if clause is None:
+                    continue
+                if clause not in anchors:
+                    problems.append(
+                        f"{owner}.{field.get('name', '<unnamed>')}: normative clause cites "
+                        f"{clause!r}, which the specification narrative does not anchor"
+                    )
 
     document_version = document.get("version", {})
     ceiling = (int(document_version.get("major", 0)), int(document_version.get("minor", 0)))

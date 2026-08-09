@@ -21,6 +21,7 @@
  #include <iostream>
  #include <format>
  #include <filesystem>
+ #include <cmath>   // std::round: GCC 13 does not pull <cmath> in transitively
  #ifdef IFE_USE_RUNTIME
  // The generated layer (Phase 4). This is the whole of the cutover for a
  // consumer: one include line. Everything below is unchanged.

@@ -108,11 +108,13 @@ void test_attached_enforces_a_range_clause() {
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
     IFE_CHECK(std::strcmp(status.field, "X_TILES") == 0);
     IFE_CHECK(g_reports == 1);
-    // Each diagnostic cites the clause and the section that states it -- the
-    // reason the clauses live in the schema beside the fields they constrain.
+    // Each diagnostic cites the stable clause id the specification anchors --
+    // not a section number, which is positional and would point confidently at
+    // the wrong requirement after a renumbering. `--validate` proves the id
+    // resolves, so this string is a link a reader can actually follow.
     IFE_CHECK(g_diagnostic.find("X_TILES") != std::string::npos);
     IFE_CHECK(g_diagnostic.find("shall") != std::string::npos);
-    IFE_CHECK(g_diagnostic.find("Section 2.4.1") != std::string::npos);
+    IFE_CHECK(g_diagnostic.find("clause ife-layer-extents") != std::string::npos);
 }
 
 void test_attached_enforces_an_ordering_clause() {
@@ -127,7 +129,7 @@ void test_attached_enforces_an_ordering_clause() {
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
     IFE_CHECK(g_diagnostic.find("SCALE") != std::string::npos);
-    IFE_CHECK(g_diagnostic.find("Section 2.4.1") != std::string::npos);
+    IFE_CHECK(g_diagnostic.find("clause ife-layer-extents") != std::string::npos);
 
     // Ordering is a property of the sequence, so it cannot be caught one entry
     // at a time: every individual entry here is perfectly legal.

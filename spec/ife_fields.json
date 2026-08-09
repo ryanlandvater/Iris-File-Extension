@@ -163,7 +163,7 @@
               "description": "Offset of the tile table block.",
               "conformance": {
                 "level": "shall",
-                "section": "2.3.1",
+                "clause": "ife-file-header",
                 "non_null": true,
                 "requirement": "contain the file offset location of a valid tile table header"
               }
@@ -176,7 +176,7 @@
               "description": "Offset of the metadata block; required even when no optional metadata content is encoded.",
               "conformance": {
                 "level": "shall",
-                "section": "2.3.1",
+                "clause": "ife-file-header",
                 "non_null": true,
                 "requirement": "contain the file offset location of a valid metadata header"
               }
@@ -198,7 +198,7 @@
               "description": "Compression codec of the slide tile pixel data.",
               "conformance": {
                 "level": "shall",
-                "section": "2.4.0",
+                "clause": "ife-tile-table",
                 "enum_member": true,
                 "requirement": "name a tile encoding defined by this specification"
               }
@@ -209,7 +209,7 @@
               "description": "Pixel channel ordering and bit depth.",
               "conformance": {
                 "level": "shall",
-                "section": "2.4.0",
+                "clause": "ife-tile-table",
                 "enum_member": true,
                 "requirement": "name a pixel format defined by this specification"
               }
@@ -337,7 +337,7 @@
               "description": "The metadata standard by which the attributes were encoded.",
               "conformance": {
                 "level": "shall",
-                "section": "2.4.4",
+                "clause": "ife-attributes",
                 "enum_member": true,
                 "requirement": "name a metadata format defined by this specification"
               }
@@ -381,7 +381,7 @@
                 "description": "Number of 256-pixel tiles in the horizontal direction.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.1",
+                  "clause": "ife-layer-extents",
                   "minimum": 1,
                   "requirement": "encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero"
                 }
@@ -392,7 +392,7 @@
                 "description": "Number of 256-pixel tiles in the vertical direction.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.1",
+                  "clause": "ife-layer-extents",
                   "minimum": 1,
                   "requirement": "encode the number of 256 pixel tiles in the vertical direction and shall be greater than zero"
                 }
@@ -403,7 +403,7 @@
                 "description": "Relative scale of this layer as a multiple of the lowest-resolution layer's scale.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.1",
+                  "clause": "ife-layer-extents",
                   "ordering": "strictly_increasing",
                   "requirement": "increase strictly with each successive layer, the lowest-resolution layer first"
                 }
@@ -500,7 +500,7 @@
                 "description": "Compression codec of the image byte stream.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.6",
+                  "clause": "ife-images",
                   "enum_member": true,
                   "requirement": "name an image encoding defined by this specification"
                 }
@@ -511,7 +511,7 @@
                 "description": "Pixel channel ordering of the decoded image.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.6",
+                  "clause": "ife-images",
                   "enum_member": true,
                   "requirement": "name a pixel format defined by this specification"
                 }
@@ -603,7 +603,7 @@
                 "description": "Byte format of the annotation visual object stream.",
                 "conformance": {
                   "level": "shall",
-                  "section": "2.4.9",
+                  "clause": "ife-annotations",
                   "enum_member": true,
                   "requirement": "name an annotation type defined by this specification"
                 }

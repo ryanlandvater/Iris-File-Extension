@@ -68,6 +68,8 @@ Result to_result(const b::Status& __status) noexcept try {
         case b::Check::CYCLE:
             return {IRIS_FAILURE, where + " is reached by an offset chain that returns to a block "
                                   "already on the path"};
+        case b::Check::CONFORMANCE:
+            return {IRIS_FAILURE, where + " violates a normative requirement of the specification"};
         case b::Check::OK: break;
     }
     return {IRIS_FAILURE, where + " failed validation"};

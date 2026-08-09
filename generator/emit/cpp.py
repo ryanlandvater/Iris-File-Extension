@@ -1308,10 +1308,14 @@ def _requirement(block: str, field: FieldLayout) -> str:
     """The sentence a violation prints, in v1's style: name the clause, then
     cite the section that states it."""
     c = field.conformance or {}
+    # The stable clause id, not a section number. A number is positional: a
+    # renumbering that lands on another real section makes the diagnostic point
+    # confidently at the wrong requirement, and nothing detects it. The id is
+    # what the specification anchors, and --validate proves it resolves.
     text = (
         f"{block}.{field.name} {c.get('level', 'shall')} "
         f"{c.get('requirement', 'satisfy the specification')}. "
-        f"Per the IFE specification Section {c.get('section', '?')}."
+        f"Per the IFE specification, clause {c.get('clause', '?')}."
     )
     return text.replace('"', "'")
 

@@ -7,7 +7,7 @@
  * encodes intent rather than layout: what to lift into RAM and what to leave
  * on disk, the order a file map is walked, what a recovery scan looks for.
  * Everything below it (offsets, widths, validation, block navigation) comes
- * from spec/*.json through generated_source/.
+ * from the spec JSON through generated_source/.
  *
  * This is a **port, not a redesign**. The entry-point names, signatures and
  * doc-comments are v1's, and the `IrisCodec::Abstraction` structs are

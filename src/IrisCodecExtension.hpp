@@ -255,7 +255,7 @@ struct IFE_EXPORT AssociatedImage {
 /**
  * @brief Label-image dictionary for associated images
  */
-using AssociatedImages = IFE_EXPORT std::unordered_map<std::string, AssociatedImage>;
+using AssociatedImages = std::unordered_map<std::string, AssociatedImage>;
 /**
  * @brief Annotation abstraction containing on-slide annotations by annotation
  * identifier (24-bit value) and annotation groups by group name (string)

@@ -1721,7 +1721,7 @@ Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
 `IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
 (`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
-**Phase 4 is complete.** A file can be encoded, validated, mapped, recovered
+**Phases 4 and 5 are complete.** A file can be encoded, validated, mapped, recovered
 and decoded entirely through generated-layer code; the conformance layer sits
 behind 4.2d's hook and is attachable at runtime. Every 4.0 decision is closed.
 What remains is Phase 5 (the AsciiDoc document pipeline) and Phase 6 (bindings,
@@ -1799,7 +1799,50 @@ ASan+UBSan builds; every block's 1.0 prefix matches shipped IFE 1.0 (15 with
 layout asserts — CIPHER is the bare universal header, asserted via the other
 15); generated output reproduces from a clean tree.
 
-## Phase 5 — Specification document pipeline (AsciiDoc)
+## Phase 5 — Specification document pipeline (AsciiDoc) — ✅ DONE
+
+`spec/ife_spec.adoc` (the narrative, converted), `generator/emit/docs.py`
+(33 fine-grained includes), `spec/build_document.sh` (one command, both
+outputs), and a CI job. `spec/ife_spec.md` is deleted: two narratives is the
+drift-prone duplication the whole design exists to avoid.
+
+**Exit met.** One command renders HTML and PDF from `ife_spec.adoc` plus the
+JSON, with zero hand-written layout content and no preprocessor anywhere.
+Verified: 163 KB HTML, 857 KB PDF, warning-free, 28 tables, 0 unresolved
+includes.
+
+**pandoc was evaluated and rejected on a measured fact:** it has no AsciiDoc
+*reader* — `asciidoc` appears only among its output formats. Adopting it would
+mean reverting the source to Markdown and writing the preprocessor this design
+exists to avoid, plus installing a LaTeX engine. `asciidoctor -b docbook |
+pandoc` works (verified) and is kept as a fallback for anyone on a Ruby too old
+for asciidoctor-pdf, which needs >= 3.2.
+
+Three things the conversion surfaced that the task text did not anticipate:
+
+- **The document described a structure that no longer exists.** §2.3 "File
+  Preamble" and its "first eight bytes are version-invariant" prose predate the
+  layout correction that deleted the standalone preamble. The three shared
+  anchors now map to the primitives that replaced them
+  (`{{preamble}}` -> `primitive_FILE_HEADER`, 6 B, not 8). **The prose is still
+  wrong and is left for a human**: rewriting normative text is a content change,
+  not a format conversion. `BYTE_ARRAY` has no anchor at all, so the blob-array
+  prefix appears in no section.
+- **Orphaned generated files were invisible.** A renamed block left its old
+  `.adoc` on disk, the narrative kept including it, and `--check` said nothing —
+  publishing a table with no source. The pipeline now fails `--check` on
+  orphans and removes them on regeneration. This applied to `generated_source/`
+  equally; docs were simply where it would have been silent.
+- **Asciidoctor exits 0 on a missing include**, writing "Unresolved directive"
+  into the output instead. The exit code is therefore not the gate;
+  `build_document.sh` greps for it, so a local build fails exactly as CI does.
+  Red-green verified by pointing an include at a renamed block.
+
+The normative content is unchanged: 101 shall/should/may keywords in rendered
+text before and after, 31 headings, 68 list items. The only difference is three
+keywords inside a non-rendered comment block.
+
+The original task description follows, for the record.
 
 **Toolchain decision: AsciiDoc via Asciidoctor, with its native `include::`
 directive — not Markdown with a bespoke `{{...}}` anchor syntax.** Custom

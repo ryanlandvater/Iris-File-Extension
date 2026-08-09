@@ -709,14 +709,14 @@ void check_writes_exactly(const char* what, const CreateInfo& info) {
     }
     for (std::size_t i = 0; i < PAD; ++i) {
         if (buf[i] != POISON) {
-            std::fprintf(stderr, "FAIL: %s wrote %zu bytes BEFORE its offset\n", what, PAD - i);
+            std::fprintf(stderr, "FAIL: %s wrote %zu bytes BEFORE its offset\n", what, static_cast<std::size_t>(PAD - i));
             ++g_failures;
             break;
         }
     }
     for (std::size_t i = PAD + span; i < buf.size(); ++i) {
         if (buf[i] != POISON) {
-            std::fprintf(stderr, "FAIL: %s wrote past size_of() at +%zu\n", what, i - (PAD + span));
+            std::fprintf(stderr, "FAIL: %s wrote past size_of() at +%zu\n", what, static_cast<std::size_t>(i - (PAD + span)));
             ++g_failures;
             break;
         }

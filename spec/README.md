@@ -10,7 +10,7 @@ the HTML documentation (`generated_docs`):
 | `ife_header.json` | **Specification identity.** Name, version, status, copyright, licence — stated **once**. It belongs to neither the layout nor the constants, and a version or copyright written in two files is one that can disagree with itself. Generated file banners and `IFE_SCHEMA_VERSION_MAJOR`/`_MINOR` both come from here. |
 | `ife_fields.json` | **Byte structure only.** The type vocabulary, the primitive block types, and for every block: field names, types, and linkage — exactly what the generator needs to emit layouts. Field `description`s are permitted (they become comments in generated code) but nothing else narrative lives here. |
 | `ife_constants.json` | **Values.** Statically defined values (sentinels) and every enumeration — recovery codes, tile encodings, pixel formats, metadata formats, annotation types, image encodings, orientations — with per-value descriptions and errata. |
-| `ife_spec.md` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. `{{...}}` markers show where generated tables belong. **Provisional:** the document pipeline converts this file to AsciiDoc (`ife_spec.adoc`) and replaces each marker with Asciidoctor's native `include::`, rather than maintaining a bespoke anchor syntax and the preprocessor it would need. |
+| `ife_spec.adoc` | **The specification basis.** Hand-written narrative and all normative shall/should/may requirements, organized as the published document. Every layout and value table is an `include::` of a file under `generated_docs/`, resolved by Asciidoctor itself — there is no preprocessor and no hand-written offset in the document. Build it with `spec/build_document.sh`. |
 
 ## What may never enter the schema
 
@@ -86,7 +86,7 @@ the *requirement*, not the data.
 
 Clauses are **optional and opt-in**. A field without one is not unconstrained;
 it is simply not machine-checked, and a rule that will not fit this vocabulary
-stays as prose in `ife_spec.md` and is hand-written into the layer. That escape
+stays as prose in `ife_spec.adoc` and is hand-written into the layer. That escape
 valve is the design, not a shortfall.
 
 ## Saying "we are not specifying this"
@@ -116,7 +116,7 @@ length-prefixed in place. Keys and values live in `ATTRIBUTE_BYTES` sliced by
 `ANNOTATION_GROUP_SIZES`; an image label is the first `TITLE_SIZE` bytes of
 `IMAGE_BYTES`. A string is therefore a **byte array** (stride 1), and its
 character encoding — ASCII for keys, labels and titles; UTF-8 for attribute
-values — is normative prose in `ife_spec.md`, not layout.
+values — is normative prose in `ife_spec.adoc`, not layout.
 
 Do not add a `string` entry to the `types` table. A layout type must have a
 width derivable from the schema alone, and a string does not: it would have
@@ -196,7 +196,7 @@ Two kinds of top-level entry, and the distinction is load-bearing:
   `enum class : float`. Reach for an enumeration only when the value domain is
   genuinely closed.
 
-## `ife_spec.md` insertion markers (provisional)
+## `ife_spec.adoc` insertion markers (provisional)
 
 These mark where generated content belongs. They are **placeholders, not a
 supported syntax** — no preprocessor implements them, and the document pipeline replaces
@@ -233,7 +233,7 @@ needs, and moving a section never drags unrelated tables along.
 8. **Sentinel errata corrected** (`NULL_TILE` → 40-bit max, `NULL_ID` →
    24-bit max).
 9. **`METADATA_FREE_TEXT` gets a distinct value (3).**
-10. **`TILE_PIXEL_DATA` stays unframed** — specified in `ife_spec.md`
+10. **`TILE_PIXEL_DATA` stays unframed** — specified in `ife_spec.adoc`
     Section 4.3 only; it has no byte structure to generate.
 
 Derived layout consequences (computed, never stored): preamble 8 B;
@@ -256,6 +256,6 @@ entry 39, group size 6.
 * **Normative clause tagging.** No field carries a shall/should/may predicate
   yet, beyond the fields already annotated; further clauses draw from the
   same capped vocabulary.
-* v1 narrative not yet migrated into `ife_spec.md` (marked `TODO(draft)`):
+* v1 narrative not yet migrated into `ife_spec.adoc` (marked `TODO(draft)`):
   full definitions, MpP/Mc equations, global tile indexing equations and
   figures, slide-space figure.
