@@ -17,7 +17,7 @@
 
   "// MARK: - PRIMITIVE BLOCK TYPES": "The byte prefixes every block inherits. A block names one primitive; its own fields follow that primitive's chain. Offsets are derived by concatenation, never stated.",
   "primitives": {
-    "file_header": {
+    "FILE_HEADER": {
       "description": "Root primitive. The file header is the one block reached without an offset - it is at byte 0 - so it carries no VALIDATION field, which would only ever store zero. It opens with the magic number that identifies the file.",
       "fields": {
         "ife_version": {
@@ -29,7 +29,7 @@
       }
     },
 
-    "block": {
+    "BLOCK": {
       "description": "Universal primitive for every block reached through an offset field. VALIDATION stores the block's own byte offset, so a reader that arrived by pointer can confirm it landed where it intended, and a recovery scan can find the block by searching for a value equal to its own position.",
       "fields": {
         "ife_version": {
@@ -41,8 +41,8 @@
       }
     },
 
-    "array": {
-      "extends": "block",
+    "ARRAY": {
+      "extends": "BLOCK",
       "description": "A block carrying a sequence of fixed-width entries. STRIDE records the entry width at encoding time so a decoder steps by the stored value rather than its own compiled size; that is what lets a reader of one version traverse an array written by a later one.",
       "fields": {
         "ife_version": {
@@ -54,8 +54,8 @@
       }
     },
 
-    "byte_array": {
-      "extends": "block",
+    "BYTE_ARRAY": {
+      "extends": "BLOCK",
       "description": "A block carrying an opaque run of bytes. It stores no STRIDE: the stride of a byte array is intrinsically one, so recording it would encode no information. COUNT is therefore a byte count. Strings live here - every string in IFE is a byte range whose length comes from a size field elsewhere.",
       "fields": {
         "ife_version": {
@@ -72,7 +72,7 @@
 
     "// MARK: - HEADER BLOCKS": "Fixed-size blocks. FILE_HEADER is the root at byte 0; every other block is reached only through an offset field.",
     "FILE_HEADER": {
-      "primitive": "file_header",
+      "primitive": "FILE_HEADER",
       "recovery_tag": "RECOVER_FILE_HEADER",
       "fixed_location": true,
       "description": "Root of the file structure; its universal header immediately follows the file preamble at byte offset 8.",
@@ -91,7 +91,7 @@
     },
 
     "TILE_TABLE": {
-      "primitive": "block",
+      "primitive": "BLOCK",
       "recovery_tag": "RECOVER_TILE_TABLE",
       "description": "Information necessary to visually reconstruct the whole slide image.",
       "fields": {
@@ -110,7 +110,7 @@
     },
 
     "CIPHER": {
-      "primitive": "block",
+      "primitive": "BLOCK",
       "recovery_tag": "RECOVER_CIPHER",
       "unspecified": "reserved",
       "description": "Reserved for future use by the Iris Codec. The block is claimed so its recovery tag and position in the inventory are fixed; encoders write nothing beyond the universal header and readers ignore its contents. TILE_TABLE.CIPHER_OFFSET is nullable and is NULL_OFFSET in every file written to date.",
@@ -122,7 +122,7 @@
     },
 
     "METADATA": {
-      "primitive": "block",
+      "primitive": "BLOCK",
       "recovery_tag": "RECOVER_METADATA",
       "description": "Slide metadata: encoder identification, offsets of optional structures, and physical-space conversion coefficients.",
       "fields": {
@@ -143,7 +143,7 @@
     },
 
     "ATTRIBUTES": {
-      "primitive": "block",
+      "primitive": "BLOCK",
       "recovery_tag": "RECOVER_ATTRIBUTES",
       "description": "Header for key-value (or tag-value) clinical and acquisition metadata attributes.",
       "fields": {
@@ -160,7 +160,7 @@
 
     "// MARK: - TILE DATA ARRAYS": "The pyramid geometry and the tile lookup table — everything needed to locate and reconstruct slide tiles.",
     "LAYER_EXTENTS": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_LAYER_EXTENTS",
       "description": "Pyramidal layer dimensions, ordered from lowest resolution (index 0) to highest.",
       "entry": {
@@ -178,7 +178,7 @@
     },
 
     "TILE_OFFSETS": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_TILE_OFFSETS",
       "description": "Byte offset and size of each compressed tile stream, indexed by the global tile indexing scheme.",
       "entry": {
@@ -196,7 +196,7 @@
 
     "// MARK: - ATTRIBUTE ARRAYS": "Clinical and acquisition key-value metadata: a slicing array and the packed byte array it slices.",
     "ATTRIBUTE_SIZES": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_ATTRIBUTE_SIZES",
       "description": "Slicing tuples converting the attribute byte array into key-value pairs.",
       "entry": {
@@ -213,14 +213,14 @@
     },
 
     "ATTRIBUTE_BYTES": {
-      "primitive": "byte_array",
+      "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ATTRIBUTE_BYTES",
       "description": "Tightly packed key and value strings sliced by the attribute sizes array."
     },
 
     "// MARK: - ASSOCIATED IMAGES": "Ancillary images such as labels and thumbnails: the entry array and the per-image label-plus-stream block.",
     "IMAGES": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_IMAGES",
       "description": "Associated (ancillary) images such as labels and thumbnails.",
       "entry": {
@@ -241,7 +241,7 @@
     },
 
     "IMAGE_BYTES": {
-      "primitive": "block",
+      "primitive": "BLOCK",
       "recovery_tag": "RECOVER_IMAGE_BYTES",
       "description": "One associated image's ASCII label followed by its compressed byte stream. Not an array: the payload length is TITLE_SIZE + IMAGE_SIZE, so the block needs neither STRIDE nor COUNT. The label is specified (ASCII); the stream that follows is defined by the referencing IMAGE_ENTRY.ENCODING value.",
       "fields": {
@@ -256,7 +256,7 @@
 
     "// MARK: - ICC COLOR PROFILE": "An unmodified ICC colour profile, stored as an opaque byte array.",
     "ICC_PROFILE": {
-      "primitive": "byte_array",
+      "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ICC_PROFILE",
       "unspecified": "external",
       "specified_by": "ICC.1 colour profile specification (International Color Consortium)",
@@ -265,7 +265,7 @@
 
     "// MARK: - ANNOTATION ARRAYS": "On-slide annotation objects, their raw visual-object streams, and the group tables that name and collect them.",
     "ANNOTATIONS": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_ANNOTATIONS",
       "description": "On-slide annotation objects positioned and sized in slide space.",
       "fields": {
@@ -298,7 +298,7 @@
     },
 
     "ANNOTATION_BYTES": {
-      "primitive": "byte_array",
+      "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_BYTES",
       "unspecified": "external",
       "specified_by": "The annotation_types value carried by the referencing ANNOTATION_ENTRY.FORMAT field",
@@ -306,7 +306,7 @@
     },
 
     "ANNOTATION_GROUP_SIZES": {
-      "primitive": "array",
+      "primitive": "ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_SIZES",
       "description": "Slicing tuples for decoding group titles and member-identifier lists from the group bytes array.",
       "entry": {
@@ -323,7 +323,7 @@
     },
 
     "ANNOTATION_GROUP_BYTES": {
-      "primitive": "byte_array",
+      "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_BYTES",
       "description": "Tightly packed group label strings each followed by that group's 24-bit annotation identifier sequence."
     }

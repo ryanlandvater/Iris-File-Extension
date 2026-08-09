@@ -82,7 +82,12 @@ constexpr uint16_t IRIS_EXTENSION_MAJOR = 1;
 constexpr uint16_t IRIS_EXTENSION_MINOR = 0;
 
 // Iris' Magic Number is ASCII for 'Iris' 49 72 69 73
-#define MAGIC_BYTES 0x49726973
+// Deliberately not a macro: a macro has no namespace and clobbered the
+// generated IFE::MAGIC_BYTES, so the hand-written and generated layers could
+// not appear in one translation unit without an #undef. As a constexpr it
+// lives in IrisCodec:: and the two coexist, which is what lets a consumer
+// migrate file by file rather than all at once.
+constexpr uint32_t MAGIC_BYTES = 0x49726973;
 
 // These are the header and array datablocks defined in this file:
 namespace Serialization {

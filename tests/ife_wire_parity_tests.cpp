@@ -32,20 +32,20 @@
 
 #include "IrisCodecExtension.hpp"
 
-// src/IrisCodecExtension.hpp:85 defines MAGIC_BYTES as a preprocessor macro,
-// which clobbers the generated `constexpr std::uint32_t MAGIC_BYTES`. The two
-// layers therefore cannot currently coexist in one translation unit without
-// this #undef. Harmless here - the assertions below use neither - but it is a
-// real obstacle for any consumer migrating gradually, and the macro should be
-// retired with the rest of the hand-written layer in Phase 6.
-#undef MAGIC_BYTES
-
 #include "IFE_VTables.hpp"
+#include "IFE_Constants.hpp"
 
 namespace {
 namespace v1  = IrisCodec::Serialization;
 namespace gen = IFE::vtables;
 }  // namespace
+
+// Both layers' magic numbers are visible here at once, which is the whole
+// point of MAGIC_BYTES no longer being a macro: a macro has no namespace and
+// clobbered the generated constant, so a consumer could not migrate one file
+// at a time. This assertion fails to compile if the macro ever returns.
+static_assert(IFE::constants::MAGIC_BYTES == IrisCodec::MAGIC_BYTES,
+              "MAGIC_BYTES: the generated and hand-written values diverged");
 
 
 // ---- FILE_HEADER vs v1 FILE_HEADER ----
@@ -71,9 +71,9 @@ static_assert(gen::FILE_HEADER::offset::METADATA_OFFSET == v1::FILE_HEADER::META
 // ---- TILE_TABLE vs v1 TILE_TABLE ----
 static_assert(gen::TILE_TABLE::header_size_v1_0 == v1::TILE_TABLE::HEADER_V1_0_SIZE,
               "TILE_TABLE: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::TILE_TABLE::offset::VALIDATION == v1::TILE_TABLE::VALIDATION,
+static_assert(gen::BLOCK::offset::VALIDATION == v1::TILE_TABLE::VALIDATION,
               "TILE_TABLE.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::TILE_TABLE::offset::RECOVERY == v1::TILE_TABLE::RECOVERY,
+static_assert(gen::BLOCK::offset::RECOVERY == v1::TILE_TABLE::RECOVERY,
               "TILE_TABLE.RECOVERY: offset diverged from shipped IFE 1.0");
 static_assert(gen::TILE_TABLE::offset::ENCODING == v1::TILE_TABLE::ENCODING,
               "TILE_TABLE.ENCODING: offset diverged from shipped IFE 1.0");
@@ -93,9 +93,9 @@ static_assert(gen::TILE_TABLE::offset::Y_EXTENT == v1::TILE_TABLE::Y_EXTENT,
 // ---- METADATA vs v1 METADATA ----
 static_assert(gen::METADATA::header_size_v1_0 == v1::METADATA::HEADER_V1_0_SIZE,
               "METADATA: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::METADATA::offset::VALIDATION == v1::METADATA::VALIDATION,
+static_assert(gen::BLOCK::offset::VALIDATION == v1::METADATA::VALIDATION,
               "METADATA.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::METADATA::offset::RECOVERY == v1::METADATA::RECOVERY,
+static_assert(gen::BLOCK::offset::RECOVERY == v1::METADATA::RECOVERY,
               "METADATA.RECOVERY: offset diverged from shipped IFE 1.0");
 static_assert(gen::METADATA::offset::CODEC_MAJOR == v1::METADATA::CODEC_MAJOR,
               "METADATA.CODEC_MAJOR: offset diverged from shipped IFE 1.0");
@@ -119,9 +119,9 @@ static_assert(gen::METADATA::offset::MAGNIFICATION == v1::METADATA::MAGNIFICATIO
 // ---- ATTRIBUTES vs v1 ATTRIBUTES ----
 static_assert(gen::ATTRIBUTES::header_size_v1_0 == v1::ATTRIBUTES::HEADER_V1_0_SIZE,
               "ATTRIBUTES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTES::offset::VALIDATION == v1::ATTRIBUTES::VALIDATION,
+static_assert(gen::BLOCK::offset::VALIDATION == v1::ATTRIBUTES::VALIDATION,
               "ATTRIBUTES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTES::offset::RECOVERY == v1::ATTRIBUTES::RECOVERY,
+static_assert(gen::BLOCK::offset::RECOVERY == v1::ATTRIBUTES::RECOVERY,
               "ATTRIBUTES.RECOVERY: offset diverged from shipped IFE 1.0");
 static_assert(gen::ATTRIBUTES::offset::FORMAT == v1::ATTRIBUTES::FORMAT,
               "ATTRIBUTES.FORMAT: offset diverged from shipped IFE 1.0");
@@ -135,13 +135,13 @@ static_assert(gen::ATTRIBUTES::offset::BYTES_OFFSET == v1::ATTRIBUTES::BYTE_ARRA
 // ---- LAYER_EXTENTS vs v1 LAYER_EXTENTS ----
 static_assert(gen::LAYER_EXTENTS::header_size_v1_0 == v1::LAYER_EXTENTS::HEADER_V1_0_SIZE,
               "LAYER_EXTENTS: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::LAYER_EXTENTS::offset::VALIDATION == v1::LAYER_EXTENTS::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::LAYER_EXTENTS::VALIDATION,
               "LAYER_EXTENTS.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::LAYER_EXTENTS::offset::RECOVERY == v1::LAYER_EXTENTS::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::LAYER_EXTENTS::RECOVERY,
               "LAYER_EXTENTS.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::LAYER_EXTENTS::offset::STRIDE == v1::LAYER_EXTENTS::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::LAYER_EXTENTS::ENTRY_SIZE,
               "LAYER_EXTENTS.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::LAYER_EXTENTS::offset::COUNT == v1::LAYER_EXTENTS::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::LAYER_EXTENTS::ENTRY_NUMBER,
               "LAYER_EXTENTS.COUNT: offset diverged from shipped IFE 1.0");
 static_assert(gen::LAYER_EXTENTS::entry_size_v1_0 == v1::LAYER_EXTENT::SIZE,
               "LAYER_EXTENT: entry size diverged from shipped IFE 1.0");
@@ -155,13 +155,13 @@ static_assert(gen::LAYER_EXTENTS::entry::offset::SCALE == v1::LAYER_EXTENT::SCAL
 // ---- TILE_OFFSETS vs v1 TILE_OFFSETS ----
 static_assert(gen::TILE_OFFSETS::header_size_v1_0 == v1::TILE_OFFSETS::HEADER_V1_0_SIZE,
               "TILE_OFFSETS: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::TILE_OFFSETS::offset::VALIDATION == v1::TILE_OFFSETS::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::TILE_OFFSETS::VALIDATION,
               "TILE_OFFSETS.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::TILE_OFFSETS::offset::RECOVERY == v1::TILE_OFFSETS::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::TILE_OFFSETS::RECOVERY,
               "TILE_OFFSETS.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::TILE_OFFSETS::offset::STRIDE == v1::TILE_OFFSETS::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::TILE_OFFSETS::ENTRY_SIZE,
               "TILE_OFFSETS.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::TILE_OFFSETS::offset::COUNT == v1::TILE_OFFSETS::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::TILE_OFFSETS::ENTRY_NUMBER,
               "TILE_OFFSETS.COUNT: offset diverged from shipped IFE 1.0");
 static_assert(gen::TILE_OFFSETS::entry_size_v1_0 == v1::TILE_OFFSET::SIZE,
               "TILE_OFFSET: entry size diverged from shipped IFE 1.0");
@@ -173,13 +173,13 @@ static_assert(gen::TILE_OFFSETS::entry::offset::SIZE == v1::TILE_OFFSET::TILE_SI
 // ---- ATTRIBUTE_SIZES vs v1 ATTRIBUTES_SIZES ----
 static_assert(gen::ATTRIBUTE_SIZES::header_size_v1_0 == v1::ATTRIBUTES_SIZES::HEADER_V1_0_SIZE,
               "ATTRIBUTE_SIZES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_SIZES::offset::VALIDATION == v1::ATTRIBUTES_SIZES::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::ATTRIBUTES_SIZES::VALIDATION,
               "ATTRIBUTE_SIZES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_SIZES::offset::RECOVERY == v1::ATTRIBUTES_SIZES::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::ATTRIBUTES_SIZES::RECOVERY,
               "ATTRIBUTE_SIZES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_SIZES::offset::STRIDE == v1::ATTRIBUTES_SIZES::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::ATTRIBUTES_SIZES::ENTRY_SIZE,
               "ATTRIBUTE_SIZES.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_SIZES::offset::COUNT == v1::ATTRIBUTES_SIZES::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::ATTRIBUTES_SIZES::ENTRY_NUMBER,
               "ATTRIBUTE_SIZES.COUNT: offset diverged from shipped IFE 1.0");
 static_assert(gen::ATTRIBUTE_SIZES::entry_size_v1_0 == v1::ATTRIBUTE_SIZE::SIZE,
               "ATTRIBUTE_SIZE: entry size diverged from shipped IFE 1.0");
@@ -191,31 +191,31 @@ static_assert(gen::ATTRIBUTE_SIZES::entry::offset::VALUE_SIZE == v1::ATTRIBUTE_S
 // ---- ATTRIBUTE_BYTES vs v1 ATTRIBUTES_BYTES ----
 static_assert(gen::ATTRIBUTE_BYTES::header_size_v1_0 == v1::ATTRIBUTES_BYTES::HEADER_V1_0_SIZE,
               "ATTRIBUTE_BYTES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_BYTES::offset::VALIDATION == v1::ATTRIBUTES_BYTES::VALIDATION,
+static_assert(gen::BYTE_ARRAY::offset::VALIDATION == v1::ATTRIBUTES_BYTES::VALIDATION,
               "ATTRIBUTE_BYTES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_BYTES::offset::RECOVERY == v1::ATTRIBUTES_BYTES::RECOVERY,
+static_assert(gen::BYTE_ARRAY::offset::RECOVERY == v1::ATTRIBUTES_BYTES::RECOVERY,
               "ATTRIBUTE_BYTES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ATTRIBUTE_BYTES::offset::COUNT == v1::ATTRIBUTES_BYTES::ENTRY_NUMBER,
+static_assert(gen::BYTE_ARRAY::offset::COUNT == v1::ATTRIBUTES_BYTES::ENTRY_NUMBER,
               "ATTRIBUTE_BYTES.COUNT: offset diverged from shipped IFE 1.0");
 
 // ---- IMAGES vs v1 IMAGE_ARRAY ----
 static_assert(gen::IMAGES::header_size_v1_0 == v1::IMAGE_ARRAY::HEADER_V1_0_SIZE,
               "IMAGES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::IMAGES::offset::VALIDATION == v1::IMAGE_ARRAY::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::IMAGE_ARRAY::VALIDATION,
               "IMAGES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::IMAGES::offset::RECOVERY == v1::IMAGE_ARRAY::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::IMAGE_ARRAY::RECOVERY,
               "IMAGES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::IMAGES::offset::STRIDE == v1::IMAGE_ARRAY::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::IMAGE_ARRAY::ENTRY_SIZE,
               "IMAGES.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::IMAGES::offset::COUNT == v1::IMAGE_ARRAY::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::IMAGE_ARRAY::ENTRY_NUMBER,
               "IMAGES.COUNT: offset diverged from shipped IFE 1.0");
 
 // ---- IMAGE_BYTES vs v1 IMAGE_BYTES ----
 static_assert(gen::IMAGE_BYTES::header_size_v1_0 == v1::IMAGE_BYTES::HEADER_V1_0_SIZE,
               "IMAGE_BYTES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::IMAGE_BYTES::offset::VALIDATION == v1::IMAGE_BYTES::VALIDATION,
+static_assert(gen::BLOCK::offset::VALIDATION == v1::IMAGE_BYTES::VALIDATION,
               "IMAGE_BYTES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::IMAGE_BYTES::offset::RECOVERY == v1::IMAGE_BYTES::RECOVERY,
+static_assert(gen::BLOCK::offset::RECOVERY == v1::IMAGE_BYTES::RECOVERY,
               "IMAGE_BYTES.RECOVERY: offset diverged from shipped IFE 1.0");
 static_assert(gen::IMAGE_BYTES::offset::TITLE_SIZE == v1::IMAGE_BYTES::TITLE_SIZE,
               "IMAGE_BYTES.TITLE_SIZE: offset diverged from shipped IFE 1.0");
@@ -225,23 +225,23 @@ static_assert(gen::IMAGE_BYTES::offset::IMAGE_SIZE == v1::IMAGE_BYTES::IMAGE_SIZ
 // ---- ICC_PROFILE vs v1 ICC_PROFILE ----
 static_assert(gen::ICC_PROFILE::header_size_v1_0 == v1::ICC_PROFILE::HEADER_V1_0_SIZE,
               "ICC_PROFILE: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ICC_PROFILE::offset::VALIDATION == v1::ICC_PROFILE::VALIDATION,
+static_assert(gen::BYTE_ARRAY::offset::VALIDATION == v1::ICC_PROFILE::VALIDATION,
               "ICC_PROFILE.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ICC_PROFILE::offset::RECOVERY == v1::ICC_PROFILE::RECOVERY,
+static_assert(gen::BYTE_ARRAY::offset::RECOVERY == v1::ICC_PROFILE::RECOVERY,
               "ICC_PROFILE.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ICC_PROFILE::offset::COUNT == v1::ICC_PROFILE::ENTRY_NUMBER,
+static_assert(gen::BYTE_ARRAY::offset::COUNT == v1::ICC_PROFILE::ENTRY_NUMBER,
               "ICC_PROFILE.COUNT: offset diverged from shipped IFE 1.0");
 
 // ---- ANNOTATIONS vs v1 ANNOTATIONS ----
 static_assert(gen::ANNOTATIONS::header_size_v1_0 == v1::ANNOTATIONS::HEADER_V1_0_SIZE,
               "ANNOTATIONS: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATIONS::offset::VALIDATION == v1::ANNOTATIONS::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::ANNOTATIONS::VALIDATION,
               "ANNOTATIONS.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATIONS::offset::RECOVERY == v1::ANNOTATIONS::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::ANNOTATIONS::RECOVERY,
               "ANNOTATIONS.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATIONS::offset::STRIDE == v1::ANNOTATIONS::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::ANNOTATIONS::ENTRY_SIZE,
               "ANNOTATIONS.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATIONS::offset::COUNT == v1::ANNOTATIONS::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::ANNOTATIONS::ENTRY_NUMBER,
               "ANNOTATIONS.COUNT: offset diverged from shipped IFE 1.0");
 static_assert(gen::ANNOTATIONS::offset::GROUP_SIZES_OFFSET == v1::ANNOTATIONS::GROUP_SIZES_OFFSET,
               "ANNOTATIONS.GROUP_SIZES_OFFSET: offset diverged from shipped IFE 1.0");
@@ -251,33 +251,33 @@ static_assert(gen::ANNOTATIONS::offset::GROUP_BYTES_OFFSET == v1::ANNOTATIONS::G
 // ---- ANNOTATION_BYTES vs v1 ANNOTATION_BYTES ----
 static_assert(gen::ANNOTATION_BYTES::header_size_v1_0 == v1::ANNOTATION_BYTES::HEADER_V1_0_SIZE,
               "ANNOTATION_BYTES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_BYTES::offset::VALIDATION == v1::ANNOTATION_BYTES::VALIDATION,
+static_assert(gen::BYTE_ARRAY::offset::VALIDATION == v1::ANNOTATION_BYTES::VALIDATION,
               "ANNOTATION_BYTES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_BYTES::offset::RECOVERY == v1::ANNOTATION_BYTES::RECOVERY,
+static_assert(gen::BYTE_ARRAY::offset::RECOVERY == v1::ANNOTATION_BYTES::RECOVERY,
               "ANNOTATION_BYTES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_BYTES::offset::COUNT == v1::ANNOTATION_BYTES::ENTRY_NUMBER,
+static_assert(gen::BYTE_ARRAY::offset::COUNT == v1::ANNOTATION_BYTES::ENTRY_NUMBER,
               "ANNOTATION_BYTES.COUNT: offset diverged from shipped IFE 1.0");
 
 // ---- ANNOTATION_GROUP_SIZES vs v1 ANNOTATION_GROUP_SIZES ----
 static_assert(gen::ANNOTATION_GROUP_SIZES::header_size_v1_0 == v1::ANNOTATION_GROUP_SIZES::HEADER_V1_0_SIZE,
               "ANNOTATION_GROUP_SIZES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_SIZES::offset::VALIDATION == v1::ANNOTATION_GROUP_SIZES::VALIDATION,
+static_assert(gen::ARRAY::offset::VALIDATION == v1::ANNOTATION_GROUP_SIZES::VALIDATION,
               "ANNOTATION_GROUP_SIZES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_SIZES::offset::RECOVERY == v1::ANNOTATION_GROUP_SIZES::RECOVERY,
+static_assert(gen::ARRAY::offset::RECOVERY == v1::ANNOTATION_GROUP_SIZES::RECOVERY,
               "ANNOTATION_GROUP_SIZES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_SIZES::offset::STRIDE == v1::ANNOTATION_GROUP_SIZES::ENTRY_SIZE,
+static_assert(gen::ARRAY::offset::STRIDE == v1::ANNOTATION_GROUP_SIZES::ENTRY_SIZE,
               "ANNOTATION_GROUP_SIZES.STRIDE: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_SIZES::offset::COUNT == v1::ANNOTATION_GROUP_SIZES::ENTRY_NUMBER,
+static_assert(gen::ARRAY::offset::COUNT == v1::ANNOTATION_GROUP_SIZES::ENTRY_NUMBER,
               "ANNOTATION_GROUP_SIZES.COUNT: offset diverged from shipped IFE 1.0");
 
 // ---- ANNOTATION_GROUP_BYTES vs v1 ANNOTATION_GROUP_BYTES ----
 static_assert(gen::ANNOTATION_GROUP_BYTES::header_size_v1_0 == v1::ANNOTATION_GROUP_BYTES::HEADER_V1_0_SIZE,
               "ANNOTATION_GROUP_BYTES: the 1.0 header size diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_BYTES::offset::VALIDATION == v1::ANNOTATION_GROUP_BYTES::VALIDATION,
+static_assert(gen::BYTE_ARRAY::offset::VALIDATION == v1::ANNOTATION_GROUP_BYTES::VALIDATION,
               "ANNOTATION_GROUP_BYTES.VALIDATION: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_BYTES::offset::RECOVERY == v1::ANNOTATION_GROUP_BYTES::RECOVERY,
+static_assert(gen::BYTE_ARRAY::offset::RECOVERY == v1::ANNOTATION_GROUP_BYTES::RECOVERY,
               "ANNOTATION_GROUP_BYTES.RECOVERY: offset diverged from shipped IFE 1.0");
-static_assert(gen::ANNOTATION_GROUP_BYTES::offset::COUNT == v1::ANNOTATION_GROUP_BYTES::ENTRY_NUMBER,
+static_assert(gen::BYTE_ARRAY::offset::COUNT == v1::ANNOTATION_GROUP_BYTES::ENTRY_NUMBER,
               "ANNOTATION_GROUP_BYTES.COUNT: offset diverged from shipped IFE 1.0");
 
 // Recovery tags are unchanged in value; only their names were clarified.

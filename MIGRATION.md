@@ -1314,7 +1314,44 @@ The original task description follows, for the record.
 - **Done when:** regeneration is drift-clean, the header still passes
   `-fsyntax-only`, and 4.5's corruption tests pass.
 
-##### 4.2d — Generated writers
+##### 4.2d — Generated writers — ✅ DONE (bar the v1-oracle round-trip)
+
+Emitted for all 16 blocks: a `<Pascal>CreateInfo`, a `size_of()`, and a
+`store()` — 32 generated functions replacing v1's 22 hand-written `SIZE_*` and
+`STORE_*`, none of which survive. The `ValidationHooks` dispatch point is
+emitted with them, per 4.0-B, and is exercised in both states.
+
+Three things the implementation settled that the task text did not:
+
+- **`EXTENSION_MAJOR`/`MINOR` stay in `CreateInfo`.** They are not `constant`
+  in the schema, and choosing what version to stamp is a *policy* — the
+  encoder declaring what it wrote. Stratum B is mechanical; that decision
+  belongs to 4.4, which will set them from `VERSION_WRITTEN`. Putting it in
+  the generator would have been the first semantic rule in generated code.
+- **`size_of()` for a plain `block` is its header alone.** `IMAGE_BYTES`'
+  label-plus-stream payload is not schema-described (the same absence that
+  makes `TILE_PIXEL_DATA` unframed, decision 10), so placing it is the
+  runtime's job. Stated at the emitted declaration so it cannot be mistaken
+  for an oversight.
+- **An unknown primitive field now raises.** `_PRIMITIVE_FIELDS` names the
+  five the writer knows how to fill; a sixth added to the schema stops the
+  generator rather than emitting a `store()` that silently leaves bytes
+  unwritten.
+
+**A test-design correction, and the reason 4.5's round-trip item is not
+enough on its own.** The round-trip test — build a file through `store()`,
+deep-validate, read every field back — **passes with a `u24` emitted through
+`store<std::uint32_t>`**. Writer and reader agree (the spilled fourth byte is
+zero and `load_u24` never looks at it), and the byte it clobbers belongs to a
+block written later, which repairs the damage before anything reads it.
+Ordering hides it. `test_writers_stay_within_size_of` closes it by poisoning
+either side and asserting `store()` touches exactly `size_of()` bytes; with
+the same defect reintroduced it fails on `TILE_OFFSETS` and `ANNOTATIONS`,
+naming the byte. This is C6 in miniature — two descriptions agreeing is not
+correctness — and it is why the **v1-oracle round-trip (open item 2) is still
+outstanding**: nothing here yet reads bytes produced by the shipped encoder.
+
+The original task description follows, for the record.
 
 - **v1 precedent — the writer pattern to generate:**
   `src/IrisCodecExtension.hpp:464-471` (`HeaderCreateInfo` + its
@@ -1536,7 +1573,7 @@ must already exist, or adding it later breaks the ABI.
 
 **Ordering:** ~~4.0 (decisions A–G)~~ → ~~4.0-H (wire-format correction)~~ →
 ~~4.1 (primitives)~~ → ~~4.2a (version threading)~~ → ~~4.2b (handles)~~ →
-~~4.2c (validators)~~ → **4.2d (next)** → 4.3 → 4.4 → 4.6,
+~~4.2c (validators)~~ → ~~4.2d (writers)~~ → **4.3 (next)** → 4.4 → 4.6,
 with 4.5's matching test file landing in the same session as the task it
 gates. 4.6 may slip later than 4.4, but **4.2d must emit its hook on
 schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checklist above.
@@ -1544,7 +1581,7 @@ schedule** — that call site is ABI. **Exit unchanged** from the Phase 4 checkl
 ### Phase 4 — state of play (2026-08-07)
 
 **Done.** 4.0 decisions A–H; 4.0-H wire parity; 4.1 byte primitives; 4.2a
-version threading; 4.2b block handles; 4.2c validators.
+version threading; 4.2b block handles; 4.2c validators; 4.2d writers.
 
 **What exists.** The generated layer reads and validates a file: typed handles
 per block over `IFE_Bytes` primitives, structural validation per block, and a
@@ -1553,9 +1590,9 @@ Four generated artifacts (`IFE_Constants.hpp`, `IFE_VTables.hpp`,
 `IFE_Blocks.hpp` + `IFE_Blocks.cpp`) plus one hand-written header
 (`src/IFE_Bytes.hpp`), all reproducible from `spec/` alone.
 
-**What does not exist yet.** Writers (4.2d), the byte-window abstraction
-(4.3), the semantic runtime and public API (4.4), and the validation layer
-(4.6). **Nothing outside the tests consumes any of it** —
+**What does not exist yet.** The byte-window abstraction (4.3), the semantic
+runtime and public API (4.4), and the validation layer (4.6) behind the hook
+4.2d now emits. **Nothing outside the tests consumes any of it** —
 `IrisFileExtensionLib` still compiles `src/IrisCodecExtension.cpp`, which
 remains the implementation that does the work. The cutover is Phase 6.
 
