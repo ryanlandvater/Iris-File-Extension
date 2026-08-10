@@ -159,7 +159,7 @@ Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
         layer.scale      = entry.scale();
         // Same normalisation, same reason: one plane unless the file says more.
         abstraction.tileTable.planes[i] =
-            std::max<uint16_t>(entry.planes().value_or(0), 1);
+            std::max<uint16_t>(entry.z_planes().value_or(0), 1);
     }
     // Downsample is derived, not stored: the reciprocal of the scale relative
     // to the most magnified layer. Semantic, so it stays hand-written.
@@ -270,6 +270,8 @@ Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
     if (const auto clinical = metadata.clinical_offset()) {
         abstraction.clinicalOffset = clinical.__offset + b::CLINICAL_METADATA::header_size;
         abstraction.clinicalSize   = clinical.count();
+        abstraction.clinicalEncoding =
+            clinical.encoding().value_or(k::ClinicalEncodings::CLINICAL_UNDEFINED);
     }
 
     if (const auto plane = metadata.microns_plane()) abstraction.micronsPerPlane = *plane;

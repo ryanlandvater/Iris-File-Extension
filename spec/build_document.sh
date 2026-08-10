@@ -48,6 +48,36 @@ if grep -q 'Unresolved directive' "$out/ife_spec.html"; then
     exit 1
 fi
 
+# The complementary failure, and the quieter one. `include::` is a directive
+# only at the start of a line; anywhere else Asciidoctor treats it as ordinary
+# text and prints it. There is no warning, the exit code is 0, and the check
+# above stays silent because nothing was left unresolved -- it was never
+# resolved at all. Six value tables shipped this way before anyone noticed.
+if grep -q 'include::' "$out/ife_spec.html"; then
+    grep -o 'include::[^<)]*' "$out/ife_spec.html" | sort -u >&2
+    echo "error: an include directive was printed instead of processed." >&2
+    echo "       include:: must begin at column 0. To attach a table to a list" >&2
+    echo "       item, end the item, put a '+' on its own line, then the" >&2
+    echo "       directive on the line after it." >&2
+    exit 1
+fi
+
+# And the third: a table that is generated but that nothing includes is a table
+# no reader ever sees. Cheap to check, and it is how a new enumeration goes
+# missing -- the generator writes it, --check is happy, and the document simply
+# does not mention it.
+missing=""
+for table in "$root"/generated_docs/constants/*.adoc "$root"/generated_docs/layout/*.adoc; do
+    [ -e "$table" ] || continue
+    name="${table#"$root"/generated_docs/}"
+    grep -qF "$name" "$root/spec/ife_spec.adoc" || missing="$missing $name"
+done
+if [ -n "$missing" ]; then
+    echo "error: generated tables that the narrative never includes:" >&2
+    for m in $missing; do echo "         $m" >&2; done
+    exit 1
+fi
+
 if command -v asciidoctor-pdf >/dev/null; then
     echo "==> PDF"
     asciidoctor-pdf "${common[@]}" "${pdf_opts[@]}" -o "$out/ife_spec.pdf" "$root/spec/ife_spec.adoc"

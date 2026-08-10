@@ -55,6 +55,15 @@ from .model.layout import (
 # prefix that makes the recovery scan's false-positive rate acceptable.
 MAX_RECOVERY_TAGS = 0x100
 
+# Field names that are macros in the Windows SDK (wingdi.h's PLANES, windef's
+# min/max, ...). A generated identifier equal to one of these expands before
+# the compiler sees it, so the layer fails to compile on MSVC only — the one
+# platform where it is never locally reproducible. Renaming the field is the
+# only fix, so the validator refuses the name up front.
+_MSVC_MACRO_NAMES = frozenset(
+    {"PLANES", "MIN", "MAX", "INTERFACE", "NEAR", "FAR", "SMALL", "DOMAIN", "CONSTANT"}
+)
+
 
 def _entries(doc: dict[str, Any], key: str) -> dict[str, Any]:
     """Non-banner children of a mapping."""
@@ -126,6 +135,56 @@ def _narrative_anchors(narrative: str | None) -> set[str] | None:
     if narrative is None:
         return None
     return set(re.findall(r"^\[\[([A-Za-z0-9_-]+)\]\]", narrative, re.M))
+
+
+# Identifiers that are *macros* on a supported platform. A macro is expanded by
+# the preprocessor before any namespace exists, so `offset::PLANES` becomes
+# `offset::14` and the error names a line the schema never wrote. This cost a
+# build once: PLANES is a GetDeviceCaps index in <wingdi.h>, and the field had
+# to be renamed Z_PLANES after the fact.
+#
+# Types are not listed. `SIZE` is a struct in <windef.h>, not a macro, and a
+# type is shadowed harmlessly by a namespaced constant of the same name — which
+# is why the schema's several SIZE fields are fine and are not flagged here.
+_PLATFORM_MACROS: dict[str, str] = {
+    "PLANES": "<wingdi.h> (GetDeviceCaps index)",
+    "BITSPIXEL": "<wingdi.h> (GetDeviceCaps index)",
+    "NUMCOLORS": "<wingdi.h> (GetDeviceCaps index)",
+    "COLORRES": "<wingdi.h> (GetDeviceCaps index)",
+    "RASTERCAPS": "<wingdi.h> (GetDeviceCaps index)",
+    "HORZRES": "<wingdi.h> (GetDeviceCaps index)",
+    "VERTRES": "<wingdi.h> (GetDeviceCaps index)",
+    "HORZSIZE": "<wingdi.h> (GetDeviceCaps index)",
+    "VERTSIZE": "<wingdi.h> (GetDeviceCaps index)",
+    "LOGPIXELSX": "<wingdi.h> (GetDeviceCaps index)",
+    "LOGPIXELSY": "<wingdi.h> (GetDeviceCaps index)",
+    "TRANSPARENT": "<wingdi.h> (background mode)",
+    "ABSOLUTE": "<wingdi.h> (palette entry flag)",
+    "RELATIVE": "<wingdi.h> (palette entry flag)",
+    "DELETE": "<winnt.h> (access mask)",
+    "ERROR": "<wingdi.h> (region complexity)",
+    "OPTIONAL": "<winnt.h> (SAL annotation)",
+    "IN": "<winnt.h> (SAL annotation)",
+    "OUT": "<winnt.h> (SAL annotation)",
+    "NEAR": "<minwindef.h>",
+    "FAR": "<minwindef.h>",
+    "NULL": "the C standard library",
+    "EOF": "<stdio.h>",
+}
+
+
+def _field_names(fields_doc: dict[str, Any]) -> Iterator[tuple[str, str]]:
+    """(where, field name) over every field the generator will emit."""
+    for name, spec in _entries(fields_doc, "primitives").items():
+        for _, field in _versioned_fields(spec.get("fields")):
+            yield f"primitive {name}", field.get("name", "")
+    for name, spec in _entries(fields_doc, "blocks").items():
+        for _, field in _versioned_fields(spec.get("fields")):
+            yield f"block {name}", field.get("name", "")
+        entry = spec.get("entry")
+        if entry:
+            for _, field in _versioned_fields(entry.get("fields")):
+                yield f"{name} entry", field.get("name", "")
 
 
 def validate(
@@ -260,6 +319,14 @@ def validate(
                 if fname in names:
                     problems.append(f"{where}: field name declared more than once")
                 names.add(fname)
+                # A field name that is a Windows SDK macro (wingdi.h's PLANES,
+                # windef's min/max, ...) expands before the compiler sees the
+                # generated layer, which then fails to compile on MSVC only.
+                if fname.upper() in _MSVC_MACRO_NAMES:
+                    problems.append(
+                        f"{where}: field name {fname!r} is a Windows SDK macro and "
+                        "would break the generated layer on MSVC; rename it"
+                    )
                 target = field.get("points_to")
                 if target is not None and target not in blocks:
                     problems.append(f"{where}: points_to unknown block {target!r}")
@@ -480,6 +547,25 @@ def validate(
                     f"{owner}: version group {label!r} is newer than the document "
                     f"version {ceiling[0]}.{ceiling[1]}"
                 )
+    # ---- 6. identifiers that a platform defines as macros --------------- #
+    # Cheap, and the alternative is finding out from a Windows build.
+    for where, name in _field_names(fields_doc):
+        if name in _PLATFORM_MACROS:
+            problems.append(
+                f"{where}: field {name!r} is a macro in {_PLATFORM_MACROS[name]}. "
+                "The preprocessor expands it before namespaces apply, so the "
+                "generated `offset::" + name + "` becomes whatever the macro "
+                "says and the compiler reports a line this schema never wrote. "
+                "Rename the field."
+            )
+    for group_name, group in _enum_groups(constants_doc).items():
+        for _, member, _raw in _members(group):
+            if member in _PLATFORM_MACROS:
+                problems.append(
+                    f"enum {group_name}: member {member!r} is a macro in "
+                    f"{_PLATFORM_MACROS[member]}; rename it."
+                )
+
     return problems
 
 

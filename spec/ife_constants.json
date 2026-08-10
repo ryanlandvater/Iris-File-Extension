@@ -280,5 +280,29 @@
         }
       }
     }
+  },
+  "clinical_encodings": {
+    "description": "The serialization of the clinical metadata stream. Stated rather than sniffed: each of these formats can be recognised from its opening bytes, but a decoder should be told which parser to use rather than made to guess, and a guess is a heuristic that a truncated or unusual stream defeats.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.1": {
+        "CLINICAL_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid encoding."
+        },
+        "CLINICAL_HL7_V2": {
+          "value": 1,
+          "description": "HL7 version 2 pipe-delimited messages, beginning with an MSH segment."
+        },
+        "CLINICAL_FHIR_JSON": {
+          "value": 2,
+          "description": "HL7 FHIR resources serialized as JSON text."
+        },
+        "CLINICAL_FASTFHIR": {
+          "value": 3,
+          "description": "FastFHIR, the binary encoding of the FHIR resource model; offsets resolve against the start of the stream and the leading bytes carry its magic number, FHIR revision and layout mode."
+        }
+      }
+    }
   }
 }

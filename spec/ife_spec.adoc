@@ -60,8 +60,8 @@ the address below, and may be consumed in any of the following forms:
   ranges fetched on demand rather than memory-mapped.
 
 
-The schema, the reference implementation, this document's sources, and the
-release artefacts are all available at:
+The schema, **the reference implementation**, this document's sources, and the
+release artifacts are all available at:
 
 {repository}[IrisDigitalPathology/Iris-File-Extension]
 
@@ -141,22 +141,11 @@ where the origin (0, 0) is defined as the upper-left of the slide and the point
 same axis as the global slide indexing scheme (<<ife-tile-offsets>>), layer
 _N_ − 1.
 
-NOTE: This differs from IFE 1.0, which referenced the lowest-resolution layer
-(_l~0~_). The highest-resolution layer is the reference used by other whole
-slide imaging standards, and referencing it means an annotation's coordinates
-do not change when a layer is added to or removed from a slide — the base
-resolution is a property of the scanned material, whereas the number of
-downsampled layers is a property of the encoder. See <<ife-annotations>>.
-
-NOTE: Slide space is a *single-precision float in fractional tiles*, not an
-integer pixel count and not a fixed-point pair. Coordinates land on a GPU
-unchanged: float is the shader's native type, the 24-bit significand represents
-every integer tile index exactly up to 2^24^, and the remainder keeps positional
-accuracy of about one hundredth of a pixel on a large slide — finer than the
-acquisition it describes. A fixed-point per-pixel encoding — the DICOM-style
-choice — would be worse: integer bits must cover the whole slide in pixels,
-there is no sentinel value, and the coordinates still need conversion for a
-GPU.
+NOTE: Slide space is a single-precision float in fractional tiles, not an
+integer pixel count and not a fixed-point pair. Float is the shader's native
+type, so a coordinate reaches a GPU unconverted; the 24-bit significand
+represents every integer tile index exactly to 2^24^ and holds positional
+accuracy near one hundredth of a pixel across a large slide.
 
 [[ife-abbreviations]]
 ==== Symbols and Abbreviations
@@ -165,14 +154,17 @@ GPU.
 // dozen two-word expansions each claiming two lines wastes most of a page.
 [horizontal]
 DICOM:: Digital Imaging and Communications in Medicine.
+EMR:: eletronic medical record (system)
 EOF:: end of file.
 FHIR:: Fast Healthcare Interoperability Resources (HL7).
 HL7:: Health Level Seven International.
-I2S:: Iris Interoperability Standard; named in IFE 1.0, never specified.
+I2S:: Iris Interoperability Specification.
 ICC:: International Color Consortium.
 IEC:: International Electrotechnical Commission.
 IEEE:: Institute of Electrical and Electronics Engineers.
 IFE:: Iris File Extension.
+IMS:: image management system
+LIS:: laboratory informatics system
 NEMA:: National Electrical Manufacturers Association.
 SOF:: start of file.
 TIFF:: Tagged Image File Format.
@@ -262,6 +254,34 @@ header; entries follow the complete header region.
   array. Byte-blob arrays use a stride of one (1), making the count a byte
   count.
 
+[[ife-byte-array-header]]
+==== Byte Array Header
+
+include::{generated}/layout/primitive_BYTE_ARRAY.adoc[]
+
+A byte array carries an opaque run of bytes rather than fixed-width entries.
+It stores no STRIDE, the stride of a byte array being intrinsically one, so
+COUNT is a byte count. The bytes begin at the end of the complete header
+region.
+
+* The count *shall* encode the number of bytes carried, exclusive of the
+  header.
+
+Every string in this specification is carried by a byte array, and its length
+*shall* come from a size field rather than from a terminator.
+
+[[ife-tile-frame-header]]
+==== Tile Frame Header
+
+include::{generated}/layout/primitive_TILE_FRAME.adoc[]
+
+The only prefix not laid out forward from a block's start. A tile frame is
+located by measuring back from the byte its tile offsets entry addresses, so
+its fields are placed backward from that byte and its displacements are
+negative. <<ife-tile-frame>> specifies its use.
+
+* VALIDATION *shall* encode the byte offset of the VALIDATION field itself.
+
 === Statically Defined Values
 
 include::{generated}/constants/statically_defined_values.adoc[]
@@ -326,11 +346,15 @@ statically defined location.
 
 include::{generated}/layout/TILE_TABLE.adoc[]
 
-* ENCODING *shall* be one of the tile encoding values
-  (include::{generated}/constants/tile_encodings.adoc[]), excluding the undefined value (0).
-* FORMAT *should* describe the pixel channel ordering and bits per channel
-  (include::{generated}/constants/pixel_formats.adoc[]); it *may* encode the undefined value (0)
-  when the original encoding information is unavailable.
+* ENCODING *shall* be one of the tile encoding values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/tile_encodings.adoc[]
+* FORMAT *should* describe the pixel channel ordering and bits per channel;
+  it *may* encode the undefined value (0) when the original encoding
+  information is unavailable.
++
+include::{generated}/constants/pixel_formats.adoc[]
 * CIPHER_OFFSET *shall* be NULL_OFFSET unless the tile encoding is
   TILE_ENCODING_IRIS.
 * TILE_OFFSETS_OFFSET *shall* contain a valid offset to the tile offsets
@@ -344,22 +368,18 @@ include::{generated}/layout/TILE_TABLE.adoc[]
 [[ife-tile-size]]
 ===== Tile Size
 
-Every tile in a slide is the same size, and that size sets the axis of the
-global tile indexing scheme and of slide space (<<ife-terms>>). It is a
-property of the whole slide rather than of a layer: layers differ in how many
-tiles they hold, never in how large a tile is.
+Every tile in a slide is the same size. That size sets the axis of the global
+tile indexing scheme and of slide space (<<ife-terms>>), and is a property of
+the whole slide: layers differ in how many tiles they hold, never in how large
+a tile is.
 
-Encoders *should* use 256. The field exists so a slide tiled otherwise can be
-described rather than misdescribed, not to invite the choice. 256 is what
-every IFE file written to date uses, what decoders are tuned for, and what a
-reader that ignores this field will assume; a slide that departs from it is
-correct but is taking on compatibility risk that the format cannot remove.
+Encoders *should* use 256. Every IFE file written to date does, and it is what
+a reader that ignores this field assumes.
 
-NOTE: A 1.0 reader does not read this field and will assume 256. A file that
-sets it to anything else is therefore readable by a 1.0 decoder but will be
-rendered wrongly by one — unlike PLANES (<<ife-focal-planes>>), where the
-1.0 assumption stays true. This is the one place in 1.1 where the appended
-field carries meaning a prior decoder needs.
+IMPORTANT: A 1.0 reader does not read TILE_SIZE and will assume 256. A file
+that sets it to any other value is readable by a 1.0 decoder but will be
+rendered incorrectly by one. This is the only field added in 1.1 whose absence
+changes what a prior decoder computes.
 
 [[ife-cipher]]
 ==== Codec Cipher
@@ -407,9 +427,11 @@ include::{generated}/layout/METADATA.adoc[]
 
 include::{generated}/layout/ATTRIBUTES.adoc[]
 
-* FORMAT *shall* be one of the metadata format values
-  (include::{generated}/constants/metadata_formats.adoc[]) and *should* name
-  the discipline the pairs actually follow rather than the undefined value (0).
+* FORMAT *shall* be one of the metadata format values below, and *should*
+  name the discipline the pairs actually follow rather than the undefined
+  value (0).
++
+include::{generated}/constants/metadata_formats.adoc[]
 * VERSION *should* encode the version of the standard FORMAT names — the Iris
   Interoperability Specification version for METADATA_I2S, the encoding year
   for METADATA_DICOM — and *shall* encode zero (0x0000) where that standard
@@ -420,40 +442,24 @@ include::{generated}/layout/ATTRIBUTES.adoc[]
 The IFE is not intended to validate clinical interoperability metadata
 specification conformance; that is outside the scope of this specification.
 
-IFE 1.1 draws the metadata boundary by which block a fact is written into.
-What the tissue is and whose it is goes in the clinical metadata stream
-(<<ife-clinical-metadata>>). How the image was made — the instrument, the
-optics, the stain — goes in these arrays, as does anything else an
-implementation wishes to record.
+These key-value arrays are intended to hold the slide's immutable *laboratory
+metadata*: what the instrument and the laboratory did, from the objective it
+was scanned through to the stain on the glass. Nested DICOM structures — an
+optical path, a specimen preparation sequence — reach that flat form through
+the key grammar those standards define.
 
-FORMAT states that a file keeps to that boundary. METADATA_I2S is a claim
-about what these arrays do *not* contain as much as about what they do: it
-undertakes that every pair is a fact fixed when the slide was scanned and that
-nothing clinical or identifying was recorded here. That undertaking cannot be
-read off the keys, because it concerns the ones that are absent — a slide with
-no patient name looks the same whether the name was excluded by discipline or
-never existed. So it is declared rather than inferred, and a consumer deciding
-whether these arrays are safe to keep reads one field instead of walking every
-key against a list of the identifiers it can think of.
+Clinical metadata covered by HL7 is not intended for this data block, as it is
+the province of the EMR. Information encoded by HL7 (and
+clinical DICOM metadata) may still be encoded in the __optional__
+<<ife-clinical-metadata>> block.
 
-The two differ in more than subject, and the difference is the reason they are
-kept apart. Acquisition facts are fixed when the slide is scanned and identify
-no patient; clinical facts change for as long as the patient has a record, and
-disclose a great deal. A slide is therefore de-identified by dropping the
-clinical stream — setting CLINICAL_OFFSET to NULL_OFFSET — with no pixel
-rewrite and no re-encode, and the scanner, objective and stain survive that
-operation. They must: the pixels cannot be interpreted without them and they
-disclose nothing.
-
-NOTE: These arrays are deliberately untyped. A field earns a typed slot in
-this specification by changing what a decoder does, and nothing here does —
-a serial number, a numerical aperture and a scan date are read and displayed,
-not acted upon. Recording them as key-value pairs also avoids restating
-vocabularies that already exist: the equipment attributes of DICOM PS3.3 are
-flat tag-value pairs that these arrays carry as they stand.
+NOTE: If DICOM tags are used in these laboratory attributes fields, we recommend
+still adhering to proper data province and including only acquisition information specific to
+WSI files (such as objective or stain type, for example). We recommend shifting
+clinical data such as patient identifiers or diagnoses to the <<ife-clinical-metadata>>.
 
 The names and admissibility of those pairs are specified separately, by the
-Iris Interoperability Specification (I2S), which states that a key is a DICOM
+Iris Interoperability Specification (I2S), which states that a key is a DICOM-like
 keyword, gives the grammar for flattening DICOM's nested sequences into flat
 keys, and defines which facts may be recorded at all. This specification
 governs where the bytes are and takes no view on what they say; a file whose
@@ -473,46 +479,33 @@ include::{generated}/layout/LAYER_EXTENTS_entry.adoc[]
   vertical direction and *shall* be greater than zero.
 * SCALE *shall* have a value greater than zero and any subsequent layer
   *shall* have a scale greater than the previous layer's scale.
-* PLANES *shall* encode the greatest number of focal (Z) planes carried by any
+* Z_PLANES *shall* encode the greatest number of focal (Z) planes carried by any
   one tile byte-stream in this layer. A value of zero, and the field's absence
   in a file written under 1.0, *shall* both denote a single plane.
 
 [[ife-focal-planes]]
 ===== Focal Planes
 
-A layer may be Z-stacked: each of its tiles holds several images of the same
-field of view captured at different focal depths. Cytology depends on this,
-since cells sit at different depths within a preparation and no single focal
-plane resolves all of them.
+A layer *may* be Z-stacked: each of its tiles holds several images of the same
+field of view captured at different focal depths. The stack is stored as one
+byte-stream per tile, not as several, and the tile's OFFSET and SIZE
+(<<ife-tile-offsets>>) address that stream whole.
 
-The stack is stored as one byte-stream per tile, not as several. The tile's
-OFFSET and SIZE (<<ife-tile-offsets>>) address that stream whole, and PLANES
-states how many images it yields. Codecs that predict between frames — AV1
-among them — encode a Z-stack far more compactly than the same planes stored
-separately, because adjacent focal planes of one field of view differ only
-slightly. Recovering the individual planes from the stream is the codec's
-business; this specification states only how many are in there.
+* Z_PLANES *shall* encode the greatest number of focal planes any one tile of
+  the layer carries. An individual tile *may* carry fewer.
+* A decoder *shall* obtain the number of planes a particular tile carries from
+  that tile's byte-stream, or from its frame where one is present
+  (<<ife-tile-frame>>). This specification does not record it per tile.
 
-PLANES is recorded per layer rather than per tile because focal depth is a
-property of the acquisition rather than of a position on the slide, and
-because a pyramid is normally built from one plane: a Z-stacked slide is
-typically stacked at the highest-resolution layer and single-plane above it.
-Recording it per layer rather than per tile also keeps the tile offsets array
-— by far the largest in the file — at its 1.0 width.
-
-It is a maximum rather than a count so that depth may still vary across a
-layer. An acquisition may capture a stack only where there is material to
-resolve and a single plane over blank glass, and a tile that is not encoded
-at all carries no planes at all. A decoder sizes its buffers from PLANES and
-learns what a particular tile actually holds from that tile's stream, which
-is the only thing that can answer it: the planes are frames of one encoded
-sequence, and how many frames a sequence contains is a question its codec
-already answers.
+Z_PLANES is a per-layer maximum rather than a per-tile count for two reasons:
+focal depth is a property of the acquisition, and a pyramid is normally
+stacked at its highest-resolution layer and single-plane above it. Recording
+it per tile would also widen the tile offsets array, which is the largest in
+the file.
 
 NOTE: A 1.0 reader steps through this array by the stride stored in the array
-header and never reads PLANES, so a 1.1 file remains readable to it — every
-layer is simply single-plane as far as it is concerned. This is the stride
-mechanism of <<ife-array-header>> doing what it exists to do.
+header and never reads Z_PLANES, so a 1.1 file remains readable to it as a
+single-plane slide. See <<ife-array-header>>.
 
 // TODO(draft): migrate the global tile indexing scheme narrative,
 // Equations 2.3/2.4, and Figure 2.6 from v1.0 Sections 2.4.1-2.4.2.
@@ -551,60 +544,41 @@ offsets entry.
 [[ife-tile-frame]]
 ===== The Tile Frame
 
-An encoder *may* precede a tile byte-stream with the __optional__ frame below. Its fields
-are placed *backward* from the first byte the tile offsets entry addresses:
-the offsets in the table are displacements behind that byte, so VALIDATION
-ends exactly where the stream begins and the frame extends towards the start
-of file.
+An encoder *may* precede a tile byte-stream with the __optional__ frame below.
+Its fields are placed *backward* from the first byte the tile offsets entry
+addresses: the offsets in the table are displacements behind that byte, so
+VALIDATION ends where the stream begins and the frame extends towards the
+start of file.
 
 include::{generated}/layout/TILE_PIXEL_DATA.adoc[]
-
-The frame sits *before* the addressed bytes rather than within them, which is
-what keeps it free. OFFSET and SIZE continue to delimit the codec stream
-exactly, so a decoder may still hand those bytes to a codec, or serve them,
-without arithmetic — and a decoder written against 1.0, which never looks
-behind OFFSET, reads a framed file exactly as it reads an unframed one.
 
 * VALIDATION *shall* encode the byte offset of the VALIDATION field itself,
   which is the address of the stream it precedes less five.
 * TILE_INDEX *shall* encode the global tile index of the stream that follows.
-* PLANES *shall* encode the number of focal planes the stream carries and
-  *shall not* exceed the PLANES maximum of the layer holding the tile
+* Z_PLANES *shall* encode the number of focal planes the stream carries and
+  *shall not* exceed the Z_PLANES maximum of the layer holding the tile
   (<<ife-layer-extents>>).
+* A decoder *shall* determine whether a frame is present by reading the five
+  bytes ending at the tile's OFFSET; the frame is present when their value
+  equals their own position. No field records whether an encoder wrote frames.
+* The frame *shall not* be counted in OFFSET or SIZE, which continue to
+  delimit the codec stream exactly.
 
-A frame is detected, not declared: read the five bytes ending at a tile's
-OFFSET, and the frame is present when they equal their own position. No field
-elsewhere records whether an encoder wrote frames, and none needs to.
+The frame is a recovery structure. It records which tile a stream belongs to,
+which position alone cannot supply because tile ordering is free. It does not
+record the stream's length; that is the codec's to determine, and a second
+copy would only be a value to keep in agreement. Where the tile offsets array
+is intact the frame is redundant and *may* be omitted.
 
-Placing VALIDATION adjacent to the stream is what makes that test survive the
-frame growing. A future version appends fields at the far end, so the frame's
-start moves but VALIDATION does not, and a decoder built against this version
-still finds a frame written by a later one — and still reads TILE_INDEX and
-PLANES from the displacements stated here. A frame laid out forward from its
-start could not offer that: growing it would move the very field a reader
-measures to.
+NOTE: VALIDATION is 40 bits here rather than the 64 of the universal block
+header (<<ife-block-header>>). No other structure in the format stores its own
+offset in 40 bits, so the frame needs no recovery tag and consumes none of the
+256 the format has.
 
-NOTE: This is why VALIDATION here is 40 bits rather than the 64 of the
-universal block header (<<ife-block-header>>). It is the only structure in
-the format that stores its own offset in 40 bits, so a u40 equal to its own
-position identifies a tile frame and nothing else — the frame needs no
-recovery tag, and does not consume one of the 256 the format has.
-
-The frame exists for recovery, and carries the part of a tile offsets entry
-that cannot be worked out from the slide itself: which tile a stream belongs
-to. Position alone cannot say, since the ordering above is explicitly free, so
-without the frame a scan recovers a heap of streams it is unable to place.
-
-It deliberately does *not* record the stream's length. That is discoverable
-from the stream — an AV1 low-overhead bitstream carries a size with each OBU,
-and a JPEG terminates at an EOI marker that entropy-coded data cannot imitate,
-because every 0xFF within it is followed by a stuffed zero or a restart
-marker. Recording a second copy would oblige an encoder to keep the two in
-agreement and a decoder to decide which to believe when they disagree.
-Determining the extent of a compressed stream is the codec's work, which is
-outside this specification; establishing which tile that stream is, is not.
-Where the tile offsets array is intact the frame is redundant, and an encoder
-that does not want to spend the bytes *should* omit it.
+NOTE: Because the fields are placed backward from the stream, a later version
+extends the frame away from it and every displacement above keeps its value. A
+decoder built against this version reads TILE_INDEX and Z_PLANES from a frame
+written by a later one.
 
 [[ife-attribute-sizes]]
 ==== Attribute Sizes Array
@@ -643,8 +617,10 @@ include::{generated}/layout/IMAGES_entry.adoc[]
   in an image bytes block.
 * WIDTH / HEIGHT *shall* be greater than zero and less than the 32-bit
   maximum value.
-* ENCODING *shall* be one of the image encoding values
-  (include::{generated}/constants/image_encodings.adoc[]), excluding the undefined value (0).
+* ENCODING *shall* be one of the image encoding values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/image_encodings.adoc[]
 * FORMAT *shall* be one of the pixel format values, excluding the
   undefined value (0).
 * ORIENTATION *shall* encode the intended degree of rotation as an IEEE
@@ -677,35 +653,34 @@ include::{generated}/layout/ICC_PROFILE.adoc[]
 
 include::{generated}/layout/CLINICAL_METADATA.adoc[]
 
+This *optional* block carries HL7 encodable information. The system of record for these data is
+the EMR; the block exists for the optional inclusion of such information, 
+rather than requiring it. A use case for such inclusion could be default or consultation sent to 
+another institution or for long-term archival purposes. While it may be default in DICOM institutions we recommend that an encoder
+*should not* write duplicate (and potentially conflicting) HL7 data from the EHR / LIS and IMS by default.
+
 * The count *shall* be greater than zero and *shall* encode the byte size of
   the contained stream, stored without modification.
-* The stream *shall* identify its own format in its leading bytes, and a
-  decoder *shall* determine the format from the stream rather than from any
-  field of this specification.
+* ENCODING *shall* be one of the clinical encoding values below, excluding
+  the undefined value (0), and a decoder *shall* select its parser from it.
++
+include::{generated}/constants/clinical_encodings.adoc[]
+* An implementation *may* additionally verify the stream against the signature
+  its format defines — an MSH segment, an opening brace, a FastFHIR magic
+  number — but *shall not* infer the format where ENCODING and the stream
+  disagree; such a file is malformed and *should* be rejected.
+* The stream itself is not interpreted by this specification, which records
+  only its encoding, where its bytes begin, and how many there are.
 
-This block carries clinical and interoperability metadata that does not
-reduce to key-value pairs — a patient, a specimen, a diagnostic report, and
-the relationships between them. It holds a whole document, and IFE treats it
-the way it treats an ICC profile (<<ife-icc-profile>>): as a byte range
-defined by the standard that wrote it, stored verbatim and not parsed here.
+Setting CLINICAL_OFFSET to NULL_OFFSET and dropping this block de-identifies
+a slide. No other block is affected and no pixel data is rewritten.
 
-IFE 1.1 defines one such stream, *FastFHIR*: a binary encoding of the HL7 FHIR
-resource model, whose offsets resolve against the start of the stream and
-whose leading bytes record its own magic number, FHIR revision and layout
-mode. Nothing about it needs to be restated here, which is the point — the
-specification records where the bytes are and stops.
-
-NOTE: This is a different channel from the attributes arrays
-(<<ife-attributes>>), not a replacement for them. Attributes remain the place
-for flat key-value metadata such as DICOM tag-value pairs, and the metadata
-format enumeration describes how those pairs are encoded. A clinical stream
-is not a key-value list and takes no value from that enumeration.
-
-IMPORTANT: The METADATA_I2S value of that enumeration named a standard that
-was never specified, and no encoder ever wrote it. Implementations *should*
-carry clinical metadata in this block. The value itself is retained, and
-retains its meaning, because an enumeration value that has been published is
-on the wire forever whether or not anything wrote it.
+IMPORTANT: An encoder declaring METADATA_I2S undertakes that its attribute
+arrays hold acquisition information only. Clinical and identifying data
+*shall not* be written to the attribute arrays under that declaration. A file
+that declares METADATA_I2S and records a patient identifier among its
+attributes is non-conformant, and nothing in the file reveals it — the
+declaration reads the same either way.
 
 [[ife-annotations]]
 ==== Annotations Array
@@ -717,19 +692,6 @@ Annotations are positioned and sized at fractional tile locations within the
 slide-space convention (<<ife-terms>>), which is measured against the
 *highest-resolution* layer.
 
-[IMPORTANT]
-====
-IFE 1.0 measured slide space against the lowest-resolution layer. The four
-coordinate fields keep their position, width and type, so only their meaning
-differs and a reader that ignores the version will not notice.
-
-An implementation *shall* interpret `X_LOCATION`, `Y_LOCATION`, `X_SIZE` and
-`Y_SIZE` according to the version the file declares (`EXTENSION_MAJOR` and
-`EXTENSION_MINOR`, <<ife-file-header>>). Converting a 1.0 file scales each
-coordinate by the ratio of the highest-resolution layer's scale to the
-lowest's.
-====
-
 // TODO(draft): migrate Figure 2.7 (slide-space diagram).
 
 * GROUP_SIZES_OFFSET / GROUP_BYTES_OFFSET *shall* be NULL_OFFSET when no
@@ -738,8 +700,10 @@ lowest's.
   annotation and *shall not* be NULL_ID.
 * BYTES_OFFSET *shall* be a valid offset to the corresponding annotation
   byte array.
-* FORMAT *shall* be one of the annotation type values
-  (include::{generated}/constants/annotation_types.adoc[]), excluding the undefined value (0).
+* FORMAT *shall* be one of the annotation type values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/annotation_types.adoc[]
 * PIXEL_WIDTH / PIXEL_HEIGHT *shall* be greater than zero and less than
   the 32-bit maximum value.
 * PARENT_ID *may* encode a parent annotation identifier and *should*

@@ -275,7 +275,7 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
         ::IFE::store_u40(f.data() + at + vt::TILE_FRAME::offset::VALIDATION,
                          at + vt::TILE_FRAME::offset::VALIDATION);
         ::IFE::store<std::uint32_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
-        ::IFE::store<std::uint16_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::PLANES, 1);
+        ::IFE::store<std::uint16_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
         f.resize(f.size() + t.size, 0x5A);
     }
 

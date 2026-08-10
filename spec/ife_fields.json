@@ -447,7 +447,7 @@
             ],
             "1.1": [
               {
-                "name": "PLANES",
+                "name": "Z_PLANES",
                 "type": "u16",
                 "description": "Greatest number of focal (Z) planes carried by any one tile byte-stream in this layer; an individual tile may carry fewer. Zero, and absence in a file written under 1.0, both denote a single plane."
               }
@@ -740,9 +740,9 @@
               "description": "Global tile index of the stream this frame precedes. An offset alone cannot say which tile it holds, because streams may be written in any order, so this is what lets a recovery scan put a recovered stream back in the right place."
             },
             {
-              "name": "PLANES",
+              "name": "Z_PLANES",
               "type": "u16",
-              "description": "Number of focal (Z) planes actually carried by this stream, never exceeding the layer's PLANES maximum. Zero denotes a single plane."
+              "description": "Number of focal (Z) planes actually carried by this stream, never exceeding the Z_PLANES maximum of the layer holding the tile. Zero denotes a single plane."
             }
           ]
         }
@@ -751,10 +751,22 @@
     "CLINICAL_METADATA": {
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_CLINICAL_METADATA",
-      "description": "An opaque clinical metadata stream. The bytes are defined by the standard that wrote them and are not interpreted by this specification, exactly as the ICC colour profile block carries a profile this specification does not parse.",
+      "description": "An opaque clinical metadata stream: the patient, the request that produced the slide, and the interpretation of it. This is the block that carries identity, which is why it is a block of its own and not part of the attribute arrays: removing it de-identifies a slide without discarding what the laboratory did to the tissue. The bytes are defined by the standard that wrote them and are not interpreted here, exactly as the ICC colour profile block carries a profile this specification does not parse.",
       "fields": {
         "ife_version": {
-          "1.1": []
+          "1.1": [
+            {
+              "name": "ENCODING",
+              "enum": "clinical_encodings",
+              "description": "Serialization of the stream that follows this header.",
+              "conformance": {
+                "level": "shall",
+                "clause": "ife-clinical-metadata",
+                "enum_member": true,
+                "requirement": "name a clinical encoding defined by this specification"
+              }
+            }
+          ]
         }
       }
     }

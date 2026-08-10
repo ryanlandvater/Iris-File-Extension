@@ -835,14 +835,14 @@ void test_tile_frame_reads_backward_from_the_stream() {
     constexpr Offset  STREAM_AT   = 4096;
     constexpr std::uint32_t STREAM_SIZE = 300;
     constexpr std::uint32_t TILE_INDEX  = 12345;
-    constexpr std::uint16_t PLANES      = 9;
+    constexpr std::uint16_t Z_PLANES  = 9;
     constexpr Offset  VALIDATION_AT = STREAM_AT + vt::TILE_FRAME::offset::VALIDATION;
 
     // The displacements are the contract. Stated here rather than derived so
     // that a change to them fails this test rather than sliding through it.
     static_assert(vt::TILE_FRAME::offset::VALIDATION == -5);
     static_assert(vt::TILE_PIXEL_DATA::offset::TILE_INDEX == -9);
-    static_assert(vt::TILE_PIXEL_DATA::offset::PLANES == -11);
+    static_assert(vt::TILE_PIXEL_DATA::offset::Z_PLANES == -11);
     static_assert(vt::TILE_PIXEL_DATA::header_size == 11);
 
     std::vector<BYTE> f(STREAM_AT + STREAM_SIZE, 0);
@@ -851,14 +851,14 @@ void test_tile_frame_reads_backward_from_the_stream() {
 
     ::IFE::store_u40(p + STREAM_AT + vt::TILE_FRAME::offset::VALIDATION, VALIDATION_AT);
     ::IFE::store<std::uint32_t>(p + STREAM_AT + vt::TILE_PIXEL_DATA::offset::TILE_INDEX, TILE_INDEX);
-    ::IFE::store<std::uint16_t>(p + STREAM_AT + vt::TILE_PIXEL_DATA::offset::PLANES, PLANES);
+    ::IFE::store<std::uint16_t>(p + STREAM_AT + vt::TILE_PIXEL_DATA::offset::Z_PLANES, Z_PLANES);
 
     // Anchored at the stream, not at the frame: no arithmetic at the call site.
     const b::TILE_PIXEL_DATA frame{p, STREAM_AT, f.size(), b::VERSION_WRITTEN};
     IFE_CHECK(static_cast<bool>(frame.validate()));
     IFE_CHECK(frame.validation() == VALIDATION_AT);
     IFE_CHECK(frame.tile_index() == TILE_INDEX);
-    IFE_CHECK(frame.planes() == PLANES);
+    IFE_CHECK(frame.z_planes() == Z_PLANES);
 
     // The stream is untouched on both sides: OFFSET and SIZE still delimit the
     // codec bytes exactly, which is the property the whole placement exists for.
@@ -887,7 +887,7 @@ void test_tile_frame_reads_backward_from_the_stream() {
     const b::TILE_PIXEL_DATA as_1_0{p, STREAM_AT, f.size(), VERSION_1_0};
     IFE_CHECK(as_1_0.validation() == std::nullopt);
     IFE_CHECK(as_1_0.tile_index() == std::nullopt);
-    IFE_CHECK(as_1_0.planes() == std::nullopt);
+    IFE_CHECK(as_1_0.z_planes() == std::nullopt);
 }
 
 /// An appended *offset* field is version gated like any other appended field.

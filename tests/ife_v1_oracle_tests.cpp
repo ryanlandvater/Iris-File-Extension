@@ -324,12 +324,12 @@ void test_v1_packed_widths_at_full_width() {
 // The version-gating tests prove this against a synthetic 200.0 spec, where
 // both the file and the field are invented. This proves it against the real
 // specification and bytes from the shipped 1.0 encoder -- the case that
-// actually occurs when a 1.1 build opens a slide written before PLANES
+// actually occurs when a 1.1 build opens a slide written before Z_PLANES
 // existed.
 //
 // The version alone cannot decide it. VERSION_WRITTEN is 1.1 here, so the
 // version gate is open and only the stride stored in v1's array -- 12 bytes,
-// two short of PLANES -- keeps the decoder from reading whatever follows the
+// two short of Z_PLANES -- keeps the decoder from reading whatever follows the
 // entry. That is precisely the guarantee <<ife-array-header>> makes to every
 // future version, so it is worth an assertion of its own.
 void test_v1_layer_extents_gate_the_1_1_plane_count() {
@@ -351,8 +351,8 @@ void test_v1_layer_extents_gate_the_1_1_plane_count() {
     IFE_CHECK(le.stride() == ::IFE::vtables::LAYER_EXTENTS::entry_size_v1_0);
     IFE_CHECK(b::VERSION_WRITTEN >= 0x00010001u);
 
-    IFE_CHECK(le.entry(0).planes() == std::nullopt);
-    IFE_CHECK(le.entry(1).planes() == std::nullopt);
+    IFE_CHECK(le.entry(0).z_planes() == std::nullopt);
+    IFE_CHECK(le.entry(1).z_planes() == std::nullopt);
 
     // The 1.0 fields stay readable across the gate -- gating the tail must not
     // disturb the prefix.

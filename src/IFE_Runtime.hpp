@@ -220,20 +220,28 @@ struct IFE_EXPORT File {
     AssociatedImages images;
     Annotations      annotations;
     Metadata         metadata;
-/// Byte range of the clinical metadata stream, NULL_OFFSET when absent.
+    /// Byte range of the clinical metadata stream, NULL_OFFSET when absent.
     ///
     /// A range rather than a copy, unlike Metadata::ICC_profile. A colour
-    /// profile is a few kilobytes; a clinical stream is a whole document and
-    /// can be megabytes, and lifting payloads into the abstraction is the one
-    /// thing this abstraction exists not to do. Read it with IFE::Window, or
-    /// hand base + clinicalOffset straight to the reader for whatever format
-    /// the stream's leading bytes identify.
+    /// profile is a few kilobytes; this is a whole resource graph and can be
+    /// megabytes, and lifting payloads into the abstraction is the one thing
+    /// this abstraction exists not to do. Read it with IFE::Window, or hand
+    /// base + clinicalOffset straight to the reader for whatever format the
+    /// stream's leading bytes identify.
+    ///
+    /// This is the only member here that carries identity. Laboratory metadata
+    /// is key-value and lives in Metadata::attributes; de-identifying a slide
+    /// drops this stream alone and leaves that untouched.
     ///
     /// Held on File rather than on Metadata beside ICC_profile only because
     /// IrisCodec::Metadata is defined in Iris-Headers rather than in this
     /// repository. Move it there when that header gains the field.
     Offset           clinicalOffset = ::IFE::constants::NULL_OFFSET;
     Size             clinicalSize   = 0;
+    /// Which parser the clinical stream needs. Declared by the file rather
+    /// than sniffed from the bytes; undefined when no stream is present.
+    ::IFE::constants::ClinicalEncodings clinicalEncoding =
+        ::IFE::constants::ClinicalEncodings::CLINICAL_UNDEFINED;
     /// Microns between adjacent focal planes of a Z-stacked tile; zero when
     /// the slide is not Z-stacked or the spacing was not recorded.
     float            micronsPerPlane = 0.f;
