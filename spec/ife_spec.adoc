@@ -1,22 +1,24 @@
-= Iris Digital Slide File Extension — File Structure Technical Specification
+= Iris Digital Slide File Extension: File Structure Technical Specification
 :doctype: book
+:title-page:
 :toc: left
 :toclevels: 3
 :sectnums:
 :sectnumlevels: 4
 :sectanchors:
-:xrefstyle: short
+:sectlinks:
+:xrefstyle: full
 :icons: font
 :source-highlighter: rouge
 // Where the generated tables live. Overridden on the command line so the
 // document builds from a build tree as well as from the source tree.
 :generated: ../generated_docs
-// Draft marking: -a draft until the document is ratified. Deliberately a
-// visible admonition rather than a theme watermark, so it survives every
-// backend rather than only the PDF one.
-include::{generated}/provenance.adoc[]
+include::{generated}/attributes.adoc[]
 
-Version 1.0 (draft) — Copyright © 2025–2026 Iris Developers — CC BY-ND 4.0
+[discrete]
+== Revision History
+
+include::{generated}/revision_history.adoc[]
 
 == Introduction
 
@@ -57,7 +59,7 @@ and abbreviations follow the v1.0 specification, Section 1.3.
 
 == File Structure Elements
 
-=== Overview
+=== Overview and shared structures
 
 The file is a series of floating, tightly packed data-blocks within a sea of
 bytes. Statically sized *header blocks* contain data parameters and offsets
@@ -66,16 +68,8 @@ carry repeated entries or raw byte blobs. Entry into the structure is the
 *file preamble* and *file header* at the start of file; every other block is
 located exclusively through offset fields.
 
-=== Statically Defined Values
-
-include::{generated}/constants/statically_defined_values.adoc[]
-
-Null-type constants indicate an optional data-element is not present and
-*should* be used to indicate an unused optional parameter rather than
-creating a data-block with zero entries.
-
 [[ife-file-preamble]]
-=== File Preamble
+==== File Preamble
 
 include::{generated}/layout/primitive_FILE_HEADER.adoc[]
 
@@ -99,7 +93,7 @@ an Iris file and select the correct specification before parsing any block.
   this pattern and report a v1 file rather than a version mismatch.
 
 [[ife-block-header]]
-=== Universal Block Header
+==== Universal Block Header
 
 include::{generated}/layout/primitive_BLOCK.adoc[]
 
@@ -114,18 +108,7 @@ validation and corruption-recovery scans.
 * The recovery field *shall* encode the recovery code assigned to the
   block type.
 
-[[ife-recovery-codes]]
-==== Recovery Codes
-
-include::{generated}/constants/recovery_codes.adoc[]
-
-Recovery codes *shall* be encoded as 16-bit little-endian values. The
-numerical recovery sequence co-occurs with the high-entropy byte 0x55
-(0b01010101) to avoid spurious matches during recovery routines. Tags are
-stable forever once assigned; tags of retired blocks are never reused.
-
-[[ife-array-header]]
-=== Array Header
+==== Array Header
 
 include::{generated}/layout/primitive_ARRAY.adoc[]
 
@@ -142,10 +125,29 @@ header; entries follow the complete header region.
   array. Byte-blob arrays use a stride of one (1), making the count a byte
   count.
 
-== Header Blocks
+=== Statically Defined Values
+
+include::{generated}/constants/statically_defined_values.adoc[]
+
+Null-type constants indicate an optional data-element is not present and
+*should* be used to indicate an unused optional parameter rather than
+creating a data-block with zero entries.
+
+[[ife-recovery-codes]]
+==== Recovery Codes
+
+include::{generated}/constants/recovery_codes.adoc[]
+
+Recovery codes *shall* be encoded as 16-bit little-endian values. The
+numerical recovery sequence co-occurs with the high-entropy byte 0x55
+(0b01010101) to avoid spurious matches during recovery routines. Tags are
+stable forever once assigned; tags of retired blocks are never reused.
+
+[[ife-array-header]]
+=== Header blocks
 
 [[ife-file-header]]
-=== File Header
+==== File Header
 
 include::{generated}/layout/FILE_HEADER.adoc[]
 
@@ -171,7 +173,7 @@ statically defined location.
   NULL_OFFSET.
 
 [[ife-tile-table]]
-=== Tile Table
+==== Tile Table
 
 include::{generated}/layout/TILE_TABLE.adoc[]
 
@@ -188,7 +190,7 @@ include::{generated}/layout/TILE_TABLE.adoc[]
   array.
 
 [[ife-cipher]]
-=== Codec Cipher
+==== Codec Cipher
 
 include::{generated}/layout/CIPHER.adoc[]
 
@@ -196,7 +198,7 @@ The codec cipher is a reserved data-block for future use in the Iris Codec.
 Its offset in the tile table *shall* be encoded as NULL_OFFSET when unused.
 
 [[ife-metadata]]
-=== Metadata
+==== Metadata
 
 include::{generated}/layout/METADATA.adoc[]
 
@@ -223,7 +225,7 @@ include::{generated}/layout/METADATA.adoc[]
   value is available.
 
 [[ife-attributes]]
-=== Attributes
+==== Attributes
 
 include::{generated}/layout/ATTRIBUTES.adoc[]
 
@@ -239,10 +241,10 @@ include::{generated}/layout/ATTRIBUTES.adoc[]
 The IFE is not intended to validate clinical interoperability metadata
 specification conformance; that is outside the scope of this specification.
 
-== Array Blocks
+=== Array blocks
 
 [[ife-layer-extents]]
-=== Layer Extents Array
+==== Layer Extents Array
 
 include::{generated}/layout/LAYER_EXTENTS.adoc[]
 include::{generated}/layout/LAYER_EXTENTS_entry.adoc[]
@@ -257,7 +259,7 @@ include::{generated}/layout/LAYER_EXTENTS_entry.adoc[]
 // Equations 2.3/2.4, and Figure 2.6 from v1.0 Sections 2.4.1-2.4.2.
 
 [[ife-tile-offsets]]
-=== Tile Offsets Array
+==== Tile Offsets Array
 
 include::{generated}/layout/TILE_OFFSETS.adoc[]
 include::{generated}/layout/TILE_OFFSETS_entry.adoc[]
@@ -272,7 +274,7 @@ include::{generated}/layout/TILE_OFFSETS_entry.adoc[]
   consumes and *shall not* exceed the 24-bit maximum value (16.777 MB).
 
 [[ife-tile-data]]
-=== Tile Pixel Data
+==== Tile Pixel Data
 
 The compressed tile byte streams referenced by the tile offsets array are
 deliberately *not* framed blocks: streams carry no per-tile header, may
@@ -287,7 +289,7 @@ stream is located and sized exclusively by its tile offsets entry.
   follow no indexing scheme, arranged in any order the encoder chooses.
 
 [[ife-attribute-sizes]]
-=== Attribute Sizes Array
+==== Attribute Sizes Array
 
 include::{generated}/layout/ATTRIBUTE_SIZES.adoc[]
 include::{generated}/layout/ATTRIBUTE_SIZES_entry.adoc[]
@@ -303,7 +305,7 @@ include::{generated}/layout/ATTRIBUTE_SIZES_entry.adoc[]
   corresponding to the key or tag.
 
 [[ife-attribute-bytes]]
-=== Attribute Byte Array
+==== Attribute Byte Array
 
 include::{generated}/layout/ATTRIBUTE_BYTES.adoc[]
 
@@ -314,7 +316,7 @@ include::{generated}/layout/ATTRIBUTE_BYTES.adoc[]
   to the immediately preceding key or tag.
 
 [[ife-images]]
-=== Images Array
+==== Images Array
 
 include::{generated}/layout/IMAGES.adoc[]
 include::{generated}/layout/IMAGES_entry.adoc[]
@@ -333,7 +335,7 @@ include::{generated}/layout/IMAGES_entry.adoc[]
   constants are listed with the statically defined values in section 2.2.
 
 [[ife-image-bytes]]
-=== Image Bytes
+==== Image Bytes
 
 include::{generated}/layout/IMAGE_BYTES.adoc[]
 
@@ -345,7 +347,7 @@ include::{generated}/layout/IMAGE_BYTES.adoc[]
 * The count *shall* equal the sum of TITLE_SIZE and IMAGE_SIZE.
 
 [[ife-icc-profile]]
-=== ICC Color Profile
+==== ICC Color Profile
 
 include::{generated}/layout/ICC_PROFILE.adoc[]
 
@@ -353,7 +355,7 @@ include::{generated}/layout/ICC_PROFILE.adoc[]
   size of the contained ICC profile, stored without modification.
 
 [[ife-annotations]]
-=== Annotations Array
+==== Annotations Array
 
 include::{generated}/layout/ANNOTATIONS.adoc[]
 include::{generated}/layout/ANNOTATIONS_entry.adoc[]
@@ -377,7 +379,7 @@ slide-space convention (v1.0 Section 1.3 definitions).
   encode NULL_ID when no parent is referenced.
 
 [[ife-annotation-bytes]]
-=== Annotation Byte Array
+==== Annotation Byte Array
 
 include::{generated}/layout/ANNOTATION_BYTES.adoc[]
 
@@ -385,7 +387,7 @@ include::{generated}/layout/ANNOTATION_BYTES.adoc[]
   stream, encoded per the owning entry's annotation type.
 
 [[ife-annotation-group-sizes]]
-=== Annotation Group Sizes
+==== Annotation Group Sizes
 
 include::{generated}/layout/ANNOTATION_GROUP_SIZES.adoc[]
 include::{generated}/layout/ANNOTATION_GROUP_SIZES_entry.adoc[]
@@ -397,7 +399,7 @@ include::{generated}/layout/ANNOTATION_GROUP_SIZES_entry.adoc[]
   within the group.
 
 [[ife-annotation-group-bytes]]
-=== Annotation Group Bytes
+==== Annotation Group Bytes
 
 include::{generated}/layout/ANNOTATION_GROUP_BYTES.adoc[]
 

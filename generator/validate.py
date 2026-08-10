@@ -373,6 +373,66 @@ def validate(
                 "tags; every block needs exactly one and every tag exactly one block"
             )
 
+    _dv = document.get("version", {})
+    ceiling_major = int(_dv.get("major", 0))
+    ceiling_minor = int(_dv.get("minor", 0))
+
+    # ---- 5b. the revision history ---------------------------------------- #
+    # The version the document claims and the version its history records are
+    # the same fact stated twice; this is what stops them disagreeing. And a
+    # ratified entry without a date publishes an authority claim nobody can
+    # check, which is worse than an unratified one that says so.
+    revisions = document.get("revisions", [])
+    if not revisions:
+        problems.append("ife_header.json declares no revisions; every published version needs one")
+    seen_versions: set[str] = set()
+    for entry in revisions:
+        label = entry.get("version")
+        if label is None:
+            problems.append("a revision states no version")
+            continue
+        if label in seen_versions:
+            problems.append(f"revision {label!r} is listed more than once")
+        seen_versions.add(label)
+        if not entry.get("authors"):
+            problems.append(f"revision {label!r} names no author")
+        if not entry.get("summary"):
+            problems.append(f"revision {label!r} summarises no changes")
+        if entry.get("status") == "ratified" and not entry.get("date"):
+            problems.append(
+                f"revision {label!r} is marked ratified but states no date; a ratified "
+                "version is ratified on a day, and the document has to say which"
+            )
+        date = entry.get("date")
+        # Month precision is legitimate -- a specification is ratified in a
+        # month people remember, and a day nobody verified is worse than none.
+        if date and not re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", str(date)):
+            problems.append(
+                f"revision {label!r} has date {date!r}; use ISO 8601 "
+                "(YYYY-MM-DD, or YYYY-MM where only the month is known)"
+            )
+
+    current = f"{ceiling_major}.{ceiling_minor}" if revisions else None
+    if revisions and current not in seen_versions:
+        problems.append(
+            f"the document is version {current} but the revision history has no entry for "
+            f"it (found: {', '.join(sorted(seen_versions))})"
+        )
+
+    # ---- 6a. every block has a section for a points_to link to reach ----- #
+    # The layout tables render each points_to field as a cross-reference to the
+    # target block's section. A block whose section is missing an anchor turns
+    # that link into an unresolved xref in the published document, which
+    # Asciidoctor reports and then renders as literal text.
+    if anchors is not None:
+        for block_name in blocks:
+            expected = "ife-" + block_name.lower().replace("_", "-")
+            if expected not in anchors:
+                problems.append(
+                    f"block {block_name!r} has no section anchored {expected!r} in the "
+                    "narrative; its layout table's cross-references cannot resolve"
+                )
+
     # ---- 6. normative clauses point at a clause the document declares ---- #
     # A clause cites a stable anchor rather than a section number, and this is
     # what makes that worth anything: a dangling or renamed anchor fails here
@@ -392,8 +452,7 @@ def validate(
                         f"{clause!r}, which the specification narrative does not anchor"
                     )
 
-    document_version = document.get("version", {})
-    ceiling = (int(document_version.get("major", 0)), int(document_version.get("minor", 0)))
+    ceiling = (ceiling_major, ceiling_minor)
     for owner, spec in _every_versioned(fields_doc, blocks, primitives):
         for label in (spec or {}).get("ife_version", {}):
             try:

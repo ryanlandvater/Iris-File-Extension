@@ -40,7 +40,16 @@ def _banner() -> list[str]:
     ]
 
 
+def section_anchor(block_name: str) -> str:
+    """`TILE_TABLE` -> `ife-tile-table`, the anchor its section declares."""
+    return "ife-" + block_name.lower().replace("_", "-")
+
+
 def _type_column(field: FieldLayout) -> str:
+    if field.points_to:
+        # A cross-reference, so the reader can follow the offset to the block
+        # it addresses instead of hunting for it in the contents.
+        return f"`{field.type_name}` -> <<{section_anchor(field.points_to)}>>"
     if field.kind == "enum":
         return f"enum `{field.type_name}`"
     if field.kind == "constant":
@@ -145,6 +154,103 @@ def emit_constants_table(group_name: str, group: dict[str, Any], recovery_prefix
     return "\n".join(out)
 
 
+_MONTHS = ("January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December")
+
+
+def _readable_date(iso: str) -> str:
+    """`2025-05` -> `May 2025`; `2025-05-14` -> `14 May 2025`.
+
+    Month precision is allowed on purpose: a specification is usually ratified
+    in a month people remember, and inventing a day to satisfy a format would
+    be stating something nobody verified.
+    """
+    parts = iso.split("-")
+    if len(parts) < 2:
+        return iso
+    month = _MONTHS[int(parts[1]) - 1]
+    if len(parts) == 2:
+        return f"{month} {parts[0]}"
+    return f"{int(parts[2])} {month} {parts[0]}"
+
+
+def emit_revision_history(document: dict[str, Any]) -> str:
+    """The document's revision history, as a labelled list.
+
+    Deliberately not a table. One column holds a paragraph of prose and the
+    others hold a few characters each, which is exactly the shape a table
+    handles worst -- the summary wraps into a narrow column while Version and
+    Date sit in a sea of whitespace. A labelled list gives the version the role
+    a table gives a row key, and lets the summary run as a paragraph.
+
+    The label is the version itself rather than an ordinal: `1.0` is what a
+    reader looks up, and an auto-numbered `1.` beside it would be a second,
+    meaningless numbering.
+
+    Rendered from ife_header.json, so the version the document claims and the
+    version its history records are one fact. Oldest first.
+    """
+    out = _banner()
+    for entry in document.get("revisions", []):
+        version = entry.get("version", "?")
+        authors = ", ".join(entry.get("authors", [])) or "author not recorded"
+        date = entry.get("date")
+        status = entry.get("status", "unreleased")
+        when = f"{status} {_readable_date(date)}" if date else status
+        out += [
+            f"*Version {version}* — {when}, {authors}::",
+            _cell(entry.get("summary", "")),
+            "",
+        ]
+    return "\n".join(out)
+
+
+def emit_attributes(document: dict[str, Any], generator_version: str) -> str:
+    """The document header attributes, from the specification's identity.
+
+    Asciidoctor builds the title page out of document attributes rather than
+    body content, so the cover's version, date, authors and licence cannot be
+    an `include::` of a rendered block -- they have to *be* attributes. This
+    emits them, which keeps the cover page sourced from ife_header.json like
+    everything else rather than hand-copied into the narrative.
+
+    The newest revision is the one the cover states: it is the version this
+    document *is*.
+    """
+    version = document.get("version", {})
+    label = f"{version.get('major', 0)}.{version.get('minor', 0)}"
+    revisions = document.get("revisions", [])
+    current = next((r for r in revisions if r.get("version") == label), None) or {}
+    authors = current.get("authors", [])
+
+    out = [
+        "// Generated from spec/ife_header.json -- DO NOT EDIT BY HAND.",
+        "// No blank line or block comment below: either would end the document",
+        "// header, and the title page is built from header attributes alone.",
+        f":revnumber: {label}",
+        f":revdate: {_readable_date(current['date']) if current.get('date') else current.get('status', 'unreleased')}",
+        # The default title page has slots for title, subtitle, authors and the
+        # revision line only -- no copyright field. The remark is the one part
+        # of the revision line that takes free text, so the legal terms ride
+        # there rather than being hand-typed onto the cover and going stale.
+        # One line, deliberately: an attribute value cannot span lines, and the
+        # continuation would land inside the document header where it is read
+        # as content rather than as part of the value.
+        ":revremark: " + " · ".join(
+            x for x in (current.get("status"), document.get("copyright"), document.get("license")) if x
+        ),
+        # `author` drives the title page's byline; the published document words
+        # it "Prepared by", which asciidoctor-pdf renders from the same field.
+        # `author`, joined: the parser derives `authors` itself and does not
+        # take it as an input, so setting that one renders nothing.
+        f":author: {', '.join(authors)}" if authors else "",
+        f":copyright: {document.get('copyright', '')}",
+        f":license: {document.get('license', '')}",
+        f":generator-version: {generator_version}",
+    ]
+    return "\n".join(out)
+
+
 def emit_provenance(document: dict[str, Any], generator_version: str) -> str:
     """What produced this document.
 
@@ -175,7 +281,11 @@ def emit_documents(
     generator_version: str, recovery_prefix: int,
 ) -> dict[str, str]:
     """Every generated AsciiDoc file: relative path -> content."""
-    out: dict[str, str] = {"provenance.adoc": emit_provenance(document, generator_version)}
+    out: dict[str, str] = {
+        "provenance.adoc": emit_provenance(document, generator_version),
+        "revision_history.adoc": emit_revision_history(document),
+        "attributes.adoc": emit_attributes(document, generator_version),
+    }
 
     for primitive in layout.primitives.values():
         out[f"{LAYOUT_DIR}/primitive_{primitive.name}.adoc"] = emit_primitive_layout(primitive)
