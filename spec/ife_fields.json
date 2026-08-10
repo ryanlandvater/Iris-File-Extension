@@ -122,6 +122,21 @@
           ]
         }
       }
+    },
+    "TILE_FRAME": {
+      "description": "Prefix carried by a framed tile byte-stream. Its fields are laid out BACKWARD from the first byte the tile offsets entry addresses: VALIDATION ends where the stream begins, and each earlier-declared field sits further towards the start of file. A later version extends the frame further back still, so every field already published keeps the displacement it has always had -- which is what makes a structure found by measuring back from something else extensible at all. VALIDATION is a 40-bit self-reference rather than the universal block's 64-bit one, and that is what identifies a tile frame without a recovery tag: no other structure in the format stores its own offset in 40 bits.",
+      "fields": {
+        "ife_version": {
+          "1.1": [
+            {
+              "name": "VALIDATION",
+              "type": "u40",
+              "description": "Byte offset of this field itself, which is the address of the stream it precedes less five. The frame's own start is not stored because appending to the frame moves it."
+            }
+          ]
+        }
+      },
+      "layout": "trailer"
     }
   },
   "// MARK: - BLOCK INVENTORY": "Every data-block in the format, grouped by domain. Field lists are keyed by introducing version and concatenated in ascending order; no offset or size is ever stated.",
@@ -245,6 +260,13 @@
               "type": "u32",
               "description": "Height of the slide, in pixels, at the highest-resolution layer."
             }
+          ],
+          "1.1": [
+            {
+              "name": "TILE_SIZE",
+              "type": "u16",
+              "description": "Edge length in pixels of the square tiles this slide is divided into. Zero, and absence in a file written under 1.0, both denote the default of 256. Encoders are recommended to use 256."
+            }
           ]
         }
       }
@@ -320,6 +342,20 @@
               "type": "f32",
               "description": "Normalized magnification coefficient converting layer scale to microscope objective magnification."
             }
+          ],
+          "1.1": [
+            {
+              "name": "CLINICAL_OFFSET",
+              "type": "offset",
+              "points_to": "CLINICAL_METADATA",
+              "nullable": true,
+              "description": "Offset of the clinical metadata block, or NULL_OFFSET if none is encoded."
+            },
+            {
+              "name": "MICRONS_PLANE",
+              "type": "f32",
+              "description": "Physical distance in microns between adjacent focal planes of a Z-stacked tile. Zero when the slide is not Z-stacked or the spacing is unknown."
+            }
           ]
         }
       }
@@ -334,7 +370,7 @@
             {
               "name": "FORMAT",
               "enum": "metadata_formats",
-              "description": "The metadata standard by which the attributes were encoded.",
+              "description": "The vocabulary and discipline the attribute pairs conform to. This is a claim about what the arrays do not contain as much as what they do: METADATA_I2S undertakes that every pair is an acquisition fact and that nothing clinical or identifying is recorded here.",
               "conformance": {
                 "level": "shall",
                 "clause": "ife-attributes",
@@ -345,7 +381,7 @@
             {
               "name": "VERSION",
               "type": "u16",
-              "description": "Version of the claimed metadata standard; zero when format is METADATA_FREE_TEXT."
+              "description": "Version of the standard named by FORMAT, whose meaning that standard defines: the Iris Interoperability Specification version for METADATA_I2S, the encoding year for METADATA_DICOM. Zero where the format has no version."
             },
             {
               "name": "SIZES_OFFSET",
@@ -365,7 +401,7 @@
         }
       }
     },
-    "// MARK: - TILE DATA ARRAYS": "The pyramid geometry and the tile lookup table — everything needed to locate and reconstruct slide tiles.",
+    "// MARK: - TILE DATA ARRAYS": "The pyramid geometry and the tile lookup table \u2014 everything needed to locate and reconstruct slide tiles.",
     "LAYER_EXTENTS": {
       "primitive": "ARRAY",
       "recovery_tag": "RECOVER_LAYER_EXTENTS",
@@ -378,23 +414,23 @@
               {
                 "name": "X_TILES",
                 "type": "u32",
-                "description": "Number of 256-pixel tiles in the horizontal direction.",
+                "description": "Number of tiles in the horizontal direction, each TILE_TABLE.TILE_SIZE pixels square.",
                 "conformance": {
                   "level": "shall",
                   "clause": "ife-layer-extents",
                   "minimum": 1,
-                  "requirement": "encode the number of 256 pixel tiles in the horizontal direction and shall be greater than zero"
+                  "requirement": "encode the number of tiles in the horizontal direction and shall be greater than zero"
                 }
               },
               {
                 "name": "Y_TILES",
                 "type": "u32",
-                "description": "Number of 256-pixel tiles in the vertical direction.",
+                "description": "Number of tiles in the vertical direction, each TILE_TABLE.TILE_SIZE pixels square.",
                 "conformance": {
                   "level": "shall",
                   "clause": "ife-layer-extents",
                   "minimum": 1,
-                  "requirement": "encode the number of 256 pixel tiles in the vertical direction and shall be greater than zero"
+                  "requirement": "encode the number of tiles in the vertical direction and shall be greater than zero"
                 }
               },
               {
@@ -407,6 +443,13 @@
                   "ordering": "strictly_increasing",
                   "requirement": "increase strictly with each successive layer, the lowest-resolution layer first"
                 }
+              }
+            ],
+            "1.1": [
+              {
+                "name": "PLANES",
+                "type": "u16",
+                "description": "Greatest number of focal (Z) planes carried by any one tile byte-stream in this layer; an individual tile may carry fewer. Zero, and absence in a file written under 1.0, both denote a single plane."
               }
             ]
           }
@@ -519,7 +562,7 @@
               {
                 "name": "ORIENTATION",
                 "type": "f16",
-                "description": "Intended rendering rotation in degrees, IEEE half-precision, interpreted modulo 360. Any degree value is legal; the ORIENTATION_* constants are provided for convenience."
+                "description": "Intended rendering rotation in degrees, IEEE half-precision, interpreted modulo 360. Any rotation is legal; the image_orientations group names the common ones."
               }
             ]
           }
@@ -611,22 +654,22 @@
               {
                 "name": "X_LOCATION",
                 "type": "f32",
-                "description": "Horizontal origin (upper-left) of the annotation in slide space."
+                "description": "Horizontal origin (upper-left) of the annotation in slide space, measured against the highest-resolution layer."
               },
               {
                 "name": "Y_LOCATION",
                 "type": "f32",
-                "description": "Vertical origin (upper-left) of the annotation in slide space."
+                "description": "Vertical origin (upper-left) of the annotation in slide space, measured against the highest-resolution layer."
               },
               {
                 "name": "X_SIZE",
                 "type": "f32",
-                "description": "Rendered width of the annotation in slide space."
+                "description": "Rendered width of the annotation in slide space, measured against the highest-resolution layer."
               },
               {
                 "name": "Y_SIZE",
                 "type": "f32",
-                "description": "Rendered height of the annotation in slide space."
+                "description": "Rendered height of the annotation in slide space, measured against the highest-resolution layer."
               },
               {
                 "name": "PIXEL_WIDTH",
@@ -683,6 +726,37 @@
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ANNOTATION_GROUP_BYTES",
       "description": "Tightly packed group label strings each followed by that group's 24-bit annotation identifier sequence."
+    },
+    "TILE_PIXEL_DATA": {
+      "primitive": "TILE_FRAME",
+      "recovery_tag": null,
+      "description": "Optional frame preceding a compressed tile byte-stream. The stream itself is unframed and is addressed exactly by its tile offsets entry; this block sits in the bytes immediately before it, so a decoder that ignores it reads the stream unchanged. It exists to make tile data recoverable when the tile offsets array is lost.",
+      "fields": {
+        "ife_version": {
+          "1.1": [
+            {
+              "name": "TILE_INDEX",
+              "type": "u32",
+              "description": "Global tile index of the stream this frame precedes. An offset alone cannot say which tile it holds, because streams may be written in any order, so this is what lets a recovery scan put a recovered stream back in the right place."
+            },
+            {
+              "name": "PLANES",
+              "type": "u16",
+              "description": "Number of focal (Z) planes actually carried by this stream, never exceeding the layer's PLANES maximum. Zero denotes a single plane."
+            }
+          ]
+        }
+      }
+    },
+    "CLINICAL_METADATA": {
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": "RECOVER_CLINICAL_METADATA",
+      "description": "An opaque clinical metadata stream. The bytes are defined by the standard that wrote them and are not interpreted by this specification, exactly as the ICC colour profile block carries a profile this specification does not parse.",
+      "fields": {
+        "ife_version": {
+          "1.1": []
+        }
+      }
     }
   }
 }

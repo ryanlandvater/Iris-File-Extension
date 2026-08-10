@@ -16,8 +16,10 @@
 
 #include "IFE_Runtime.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace IrisCodec {
 
@@ -62,9 +64,6 @@ Result to_result(const b::Status& __status) noexcept try {
             return {IRIS_FAILURE, where + " declares " + std::to_string(__status.found) +
                                   " bytes of entries but only " + std::to_string(__status.expected) +
                                   " remain in the file"};
-        case b::Check::VERSION_TOO_NEW:
-            return {IRIS_WARNING, where + " was written by a newer IFE version; "
-                                  "the fields this build knows were read and the rest ignored"};
         case b::Check::CYCLE:
             return {IRIS_FAILURE, where + " is reached by an offset chain that returns to a block "
                                   "already on the path"};
@@ -141,16 +140,26 @@ Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
     abstraction.tileTable.format        = static_cast<Format>(table.format());
     abstraction.tileTable.extent.width  = table.x_extent();
     abstraction.tileTable.extent.height = table.y_extent();
+    // Absent before 1.1, and zero means the same thing as absent, so both
+    // normalise to the default here. The abstraction states the tile size
+    // there is; it does not make the caller decode the two ways the file can
+    // say "256".
+    if (const auto size = table.tile_size(); size && *size != 0)
+        abstraction.tileTable.tileSize = *size;
 
     const auto extents = table.layer_extents_offset();
     if (!extents) fail(extents.validate());
     abstraction.tileTable.extent.layers.resize(extents.count());
+    abstraction.tileTable.planes.resize(extents.count());
     for (uint32_t i = 0; i < extents.count(); ++i) {
         auto& layer      = abstraction.tileTable.extent.layers[i];
         const auto entry = extents.entry(i);
         layer.xTiles     = entry.x_tiles();
         layer.yTiles     = entry.y_tiles();
         layer.scale      = entry.scale();
+        // Same normalisation, same reason: one plane unless the file says more.
+        abstraction.tileTable.planes[i] =
+            std::max<uint16_t>(entry.planes().value_or(0), 1);
     }
     // Downsample is derived, not stored: the reciprocal of the scale relative
     // to the most magnified layer. Semantic, so it stays hand-written.
@@ -257,6 +266,13 @@ Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
         const ::IFE::ByteSpan bytes = profile.bytes();
         meta.ICC_profile.assign(reinterpret_cast<const char*>(bytes.data), bytes.size);
     }
+
+    if (const auto clinical = metadata.clinical_offset()) {
+        abstraction.clinicalOffset = clinical.__offset + b::CLINICAL_METADATA::header_size;
+        abstraction.clinicalSize   = clinical.count();
+    }
+
+    if (const auto plane = metadata.microns_plane()) abstraction.micronsPerPlane = *plane;
 
     if (const auto annotations = metadata.annotations_offset()) {
         for (uint32_t i = 0; i < annotations.count(); ++i) {
@@ -390,6 +406,9 @@ Abstraction::FileMap generate_file_map(BYTE* const __base, size_t __size) {
     if (const auto profile = metadata.icc_color_offset())
         note(map, MAP_ENTRY_ICC_PROFILE, profile.__offset, blob_span(profile));
 
+    if (const auto clinical = metadata.clinical_offset())
+        note(map, MAP_ENTRY_CLINICAL_METADATA, clinical.__offset, blob_span(clinical));
+
     if (const auto annotations = metadata.annotations_offset()) {
         note(map, MAP_ENTRY_ANNOTATIONS, annotations.__offset, array_span(annotations));
         for (uint32_t i = 0; i < annotations.count(); ++i)
@@ -430,6 +449,7 @@ Abstraction::MapEntryType entry_for(k::RecoveryCodes __tag) noexcept {
         case k::RecoveryCodes::RECOVER_ANNOTATION_BYTES:       return MAP_ENTRY_ANNOTATION_BYTES;
         case k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_SIZES: return MAP_ENTRY_ANNOTATION_GROUP_SIZES;
         case k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_BYTES: return MAP_ENTRY_ANNOTATION_GROUP_BYTES;
+        case k::RecoveryCodes::RECOVER_CLINICAL_METADATA:      return MAP_ENTRY_CLINICAL_METADATA;
         case k::RecoveryCodes::RECOVER_UNDEFINED:              break;
     }
     return MAP_ENTRY_UNDEFINED;
@@ -448,19 +468,49 @@ Abstraction::FileMap recover_file_structure(BYTE* const __base, size_t __size) {
     // eight bytes, and the shared 0x55 high byte on every tag is what keeps
     // the false-positive rate of the second test negligible.
     constexpr Size SIGNATURE = 8 + 2;
-    if (__size < SIGNATURE) return map;
 
-    for (Offset at = 0; at + SIGNATURE <= __size; ++at) {
-        if (::IFE::load<uint64_t>(__base + at) != at) continue;
+    // A tile frame has no tag: what identifies it is that its VALIDATION is
+    // forty bits rather than sixty-four, which no other structure in the
+    // format does. So the same pass tests both widths at each position.
+    constexpr Size FRAME_SIGNATURE = 5;
+    constexpr Size SMALLEST = SIGNATURE < FRAME_SIGNATURE ? SIGNATURE : FRAME_SIGNATURE;
+    if (__size < SMALLEST) return map;
 
-        const auto tag = static_cast<k::RecoveryCodes>(::IFE::load<uint16_t>(__base + at + 8));
-        const MapEntryType type = entry_for(tag);
-        if (type == MAP_ENTRY_UNDEFINED) continue;
+    // The scan has no file header to read a version from -- that header may be
+    // the very thing that was lost -- so frames are read at the version this
+    // build writes. Reading a frame from a *later* file still works: its
+    // fields are laid out backward from the stream, so the ones this build
+    // knows sit where they have always sat and the rest lie further back.
+    for (Offset at = 0; at < __size; ++at) {
+        if (at + SIGNATURE <= __size && ::IFE::load<uint64_t>(__base + at) == at) {
+            const auto tag = static_cast<k::RecoveryCodes>(::IFE::load<uint16_t>(__base + at + 8));
+            if (const MapEntryType type = entry_for(tag); type != MAP_ENTRY_UNDEFINED) {
+                // Size is unknown without trusting fields the corruption may
+                // have reached, so record the header only. A caller builds the
+                // handle for the type and asks it, having validated it first.
+                note(map, type, at, 0);
+                continue;
+            }
+        }
 
-        // Size is unknown without trusting fields the corruption may have
-        // reached, so record the header only. A caller builds the handle for
-        // the type and asks it, having validated it first.
-        note(map, type, at, 0);
+        if (at + FRAME_SIGNATURE > __size) continue;
+        if (::IFE::load_u40(__base + at) != at) continue;
+
+        // The frame must fit behind the stream it precedes; a match too near
+        // the start of file is a coincidence, not a frame.
+        const Offset stream_at = at + FRAME_SIGNATURE;
+        const b::TILE_PIXEL_DATA frame{__base, stream_at, __size, b::VERSION_WRITTEN};
+        if (!frame.validate()) continue;
+
+        // Recorded with the stream's extent left at zero, as every other type
+        // here is. The frame does not carry a length and deliberately does not
+        // -- how far a compressed stream runs is a question its codec answers,
+        // and this layer knows nothing about codecs. What the frame supplies
+        // is TILE_INDEX, which no amount of reading the stream can recover,
+        // because streams may be written in any order.
+        note(map, MAP_ENTRY_TILE_FRAME, stream_at - b::TILE_PIXEL_DATA::header_size,
+             b::TILE_PIXEL_DATA::header_size);
+        note(map, MAP_ENTRY_TILE_DATA, stream_at, 0);
     }
 
     return map;

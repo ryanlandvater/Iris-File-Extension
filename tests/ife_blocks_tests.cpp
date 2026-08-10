@@ -17,8 +17,11 @@
  */
 #include "IFE_Blocks.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -39,12 +42,23 @@ namespace vt = ::IFE::vtables;
 namespace b  = ::IFE::blocks;
 
 // Byte offsets of each block in the synthetic file, laid out head to tail.
+//
+// Derived from the generated sizes rather than written out. These were once
+// literals with the arithmetic in a comment, which meant that appending a
+// field to any block silently moved every block after it and the test failed
+// somewhere unrelated to the change. Appending is how this specification
+// grows, so the layout has to follow it.
+constexpr std::uint32_t LAYER_EXTENT_COUNT = 2;
+constexpr std::uint32_t TILE_OFFSET_COUNT  = 1;
+
 constexpr Offset FILE_HEADER_AT   = 0;
-constexpr Offset TILE_TABLE_AT    = 38;    // FILE_HEADER is 38 B at byte 0
-constexpr Offset LAYER_EXTENTS_AT = 82;    // TILE_TABLE is 44 B
-constexpr Offset TILE_OFFSETS_AT  = 122;   // 16 B header + 2 entries x 12 B
-constexpr Offset METADATA_AT      = 146;   // 16 B header + 1 entry x 8 B
-constexpr Offset FILE_END         = 202;   // METADATA is 56 B
+constexpr Offset TILE_TABLE_AT    = FILE_HEADER_AT + vt::FILE_HEADER::header_size;
+constexpr Offset LAYER_EXTENTS_AT = TILE_TABLE_AT + vt::TILE_TABLE::header_size;
+constexpr Offset TILE_OFFSETS_AT  = LAYER_EXTENTS_AT + vt::LAYER_EXTENTS::header_size
+                                  + LAYER_EXTENT_COUNT * vt::LAYER_EXTENTS::entry_size;
+constexpr Offset METADATA_AT      = TILE_OFFSETS_AT + vt::TILE_OFFSETS::header_size
+                                  + TILE_OFFSET_COUNT * vt::TILE_OFFSETS::entry_size;
+constexpr Offset FILE_END         = METADATA_AT + vt::METADATA::header_size;
 
 constexpr std::uint32_t VERSION_1_0 = (1u << 16) | 0u;
 
@@ -87,7 +101,7 @@ std::vector<BYTE> make_file() {
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_LAYER_EXTENTS));
     ::IFE::store<std::uint16_t>(at(LAYER_EXTENTS_AT, vt::ARRAY::offset::STRIDE),
                                 vt::LAYER_EXTENTS::entry_size);
-    ::IFE::store<std::uint32_t>(at(LAYER_EXTENTS_AT, vt::ARRAY::offset::COUNT), 2);
+    ::IFE::store<std::uint32_t>(at(LAYER_EXTENTS_AT, vt::ARRAY::offset::COUNT), LAYER_EXTENT_COUNT);
     for (std::uint32_t i = 0; i < 2; ++i) {
         BYTE* e = p + LAYER_EXTENTS_AT + vt::LAYER_EXTENTS::header_size + i * vt::LAYER_EXTENTS::entry_size;
         ::IFE::store<std::uint32_t>(e + vt::LAYER_EXTENTS::entry::offset::X_TILES, 8u << i);
@@ -101,7 +115,7 @@ std::vector<BYTE> make_file() {
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_OFFSETS));
     ::IFE::store<std::uint16_t>(at(TILE_OFFSETS_AT, vt::ARRAY::offset::STRIDE),
                                 vt::TILE_OFFSETS::entry_size);
-    ::IFE::store<std::uint32_t>(at(TILE_OFFSETS_AT, vt::ARRAY::offset::COUNT), 1);
+    ::IFE::store<std::uint32_t>(at(TILE_OFFSETS_AT, vt::ARRAY::offset::COUNT), TILE_OFFSET_COUNT);
     {
         BYTE* e = p + TILE_OFFSETS_AT + vt::TILE_OFFSETS::header_size;
         ::IFE::store_u40(e + vt::TILE_OFFSETS::entry::offset::OFFSET, 0xFEDCBA98ull);
@@ -804,9 +818,116 @@ void test_validation_hook_is_dispatched() {
     IFE_CHECK(g_hook_calls == 2);
 }
 
+/// The tile frame: laid out backward from the stream, and extensible for it.
+///
+/// The frame is the one block whose handle is anchored at something other than
+/// its own start. `__offset` is the stream offset -- the value the tile offsets
+/// entry already holds -- and the fields are read at negative displacements
+/// from it, so a caller never computes where the frame begins and never needs
+/// to know how big it is.
+///
+/// That is what makes it extensible. A frame laid out forward from its start
+/// would move that start every time a field was appended, and since the only
+/// way to find a frame is to measure back from the stream, an older reader
+/// would stop finding it. Growing backward moves the far end instead, and the
+/// displacements asserted here are the ones every later version must preserve.
+void test_tile_frame_reads_backward_from_the_stream() {
+    constexpr Offset  STREAM_AT   = 4096;
+    constexpr std::uint32_t STREAM_SIZE = 300;
+    constexpr std::uint32_t TILE_INDEX  = 12345;
+    constexpr std::uint16_t PLANES      = 9;
+    constexpr Offset  VALIDATION_AT = STREAM_AT + vt::TILE_FRAME::offset::VALIDATION;
+
+    // The displacements are the contract. Stated here rather than derived so
+    // that a change to them fails this test rather than sliding through it.
+    static_assert(vt::TILE_FRAME::offset::VALIDATION == -5);
+    static_assert(vt::TILE_PIXEL_DATA::offset::TILE_INDEX == -9);
+    static_assert(vt::TILE_PIXEL_DATA::offset::PLANES == -11);
+    static_assert(vt::TILE_PIXEL_DATA::header_size == 11);
+
+    std::vector<BYTE> f(STREAM_AT + STREAM_SIZE, 0);
+    BYTE* p = f.data();
+    for (std::uint32_t i = 0; i < STREAM_SIZE; ++i) p[STREAM_AT + i] = BYTE(i & 0xFF);
+
+    ::IFE::store_u40(p + STREAM_AT + vt::TILE_FRAME::offset::VALIDATION, VALIDATION_AT);
+    ::IFE::store<std::uint32_t>(p + STREAM_AT + vt::TILE_PIXEL_DATA::offset::TILE_INDEX, TILE_INDEX);
+    ::IFE::store<std::uint16_t>(p + STREAM_AT + vt::TILE_PIXEL_DATA::offset::PLANES, PLANES);
+
+    // Anchored at the stream, not at the frame: no arithmetic at the call site.
+    const b::TILE_PIXEL_DATA frame{p, STREAM_AT, f.size(), b::VERSION_WRITTEN};
+    IFE_CHECK(static_cast<bool>(frame.validate()));
+    IFE_CHECK(frame.validation() == VALIDATION_AT);
+    IFE_CHECK(frame.tile_index() == TILE_INDEX);
+    IFE_CHECK(frame.planes() == PLANES);
+
+    // The stream is untouched on both sides: OFFSET and SIZE still delimit the
+    // codec bytes exactly, which is the property the whole placement exists for.
+    IFE_CHECK(p[STREAM_AT] == BYTE(0));
+    IFE_CHECK(p[STREAM_AT + STREAM_SIZE - 1] == BYTE((STREAM_SIZE - 1) & 0xFF));
+
+    // Detection is by self-reference at a fixed distance behind the stream, so
+    // it keeps working however far back a later version extends the frame.
+    IFE_CHECK(::IFE::load_u40(p + VALIDATION_AT) == VALIDATION_AT);
+    std::vector<BYTE> unframed(STREAM_AT + STREAM_SIZE, 0xCD);
+    IFE_CHECK(::IFE::load_u40(unframed.data() + VALIDATION_AT) != VALIDATION_AT);
+
+    // Bounds run the other way too: a stream with fewer than header_size bytes
+    // behind it cannot carry a frame, and asking must not read past the file.
+    const b::TILE_PIXEL_DATA too_early{p, vt::TILE_PIXEL_DATA::header_size - 1, f.size(),
+                                       b::VERSION_WRITTEN};
+    IFE_CHECK(!static_cast<bool>(too_early));
+    const b::TILE_PIXEL_DATA exactly_fits{p, vt::TILE_PIXEL_DATA::header_size, f.size(),
+                                          b::VERSION_WRITTEN};
+    IFE_CHECK(static_cast<bool>(exactly_fits));
+
+    // A 1.0 file cannot hold a frame, so every field of one reads as absent
+    // rather than as five bytes that mean something else. validate() still
+    // passes: with VALIDATION gated empty there is nothing left to check, and
+    // a file newer than the reader is not a structural failure.
+    const b::TILE_PIXEL_DATA as_1_0{p, STREAM_AT, f.size(), VERSION_1_0};
+    IFE_CHECK(as_1_0.validation() == std::nullopt);
+    IFE_CHECK(as_1_0.tile_index() == std::nullopt);
+    IFE_CHECK(as_1_0.planes() == std::nullopt);
+}
+
+/// An appended *offset* field is version gated like any other appended field.
+///
+/// Regression. Offset-typed accessors return a block handle rather than a
+/// std::optional, and the emitter gated only the optional-returning ones --
+/// so METADATA::clinical_offset(), appended in 1.1, read eight bytes past the
+/// end of every 1.0 METADATA block and followed whatever it found there as a
+/// file offset. Deep validation then walked into it.
+///
+/// The bytes here are deliberately hostile: a plausible-looking offset sits
+/// exactly where the 1.1 field would be, so a missing gate follows it instead
+/// of reporting absence.
+void test_appended_offset_field_is_version_gated() {
+    auto f = make_file();
+
+    // Past the 1.0 metadata block, where a 1.1 file would keep CLINICAL_OFFSET.
+    const Offset field_at = METADATA_AT + vt::METADATA::offset::CLINICAL_OFFSET;
+    IFE_CHECK(field_at >= METADATA_AT + vt::METADATA::header_size_v1_0);
+    f.resize(std::max<std::size_t>(f.size(), field_at + 8), 0);
+    ::IFE::store<std::uint64_t>(f.data() + field_at, 0x40);  // not NULL_OFFSET
+
+    const b::FILE_HEADER as_1_0{f.data(), FILE_HEADER_AT, f.size(), VERSION_1_0};
+    const auto clinical = as_1_0.metadata_offset().clinical_offset();
+    IFE_CHECK(!static_cast<bool>(clinical));
+    IFE_CHECK(clinical.__offset != 0x40);
+
+    // The same bytes at 1.1 do follow it -- which is what proves the gate is
+    // what stopped the read, and not something else about this buffer.
+    constexpr std::uint32_t VERSION_1_1 = (1u << 16) | 1u;
+    const b::FILE_HEADER as_1_1{f.data(), FILE_HEADER_AT, f.size(), VERSION_1_1};
+    IFE_CHECK(as_1_1.metadata_offset().clinical_offset().__offset == 0x40);
+}
+
+
 }  // namespace
 
 int main() {
+    test_appended_offset_field_is_version_gated();
+    test_tile_frame_reads_backward_from_the_stream();
     test_visit_path();
     test_reads_what_was_written();
     test_valid_file_passes();

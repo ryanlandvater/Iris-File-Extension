@@ -41,6 +41,19 @@ INJECTED_FIELDS = [
 
 FIXTURE_VERSION = {"major": 200, "minor": 0}
 
+# The fixture spec is validated by the same rules as the real one, and those
+# require the version a document claims to appear in its revision history.
+# Injected here rather than relaxed in the validator: a fixture that skips a
+# consistency rule stops being evidence that the rule holds.
+FIXTURE_REVISION = {
+    "version": "200.0",
+    "status": "draft",
+    "authors": ["build_future_spec.py"],
+    "summary": "Synthetic version-gating fixture. Appends RUNTIME_FLAGS to the "
+               "file header and RESERVED_EXTENT to the layer extent entry so the "
+               "since-mechanism has fields to gate.",
+}
+
 
 def main() -> int:
     spec_dir, out_dir = Path(sys.argv[1]), Path(sys.argv[2])
@@ -53,6 +66,7 @@ def main() -> int:
 
     header = json.loads((spec_dir / "ife_header.json").read_text())
     header["version"] = FIXTURE_VERSION
+    header["revisions"] = header.get("revisions", []) + [FIXTURE_REVISION]
 
     documents = [
         ("ife_fields.json", fields),

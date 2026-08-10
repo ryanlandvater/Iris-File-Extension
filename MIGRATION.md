@@ -1894,7 +1894,45 @@ custom preprocessor in the pipeline.
       corpus.
 - [ ] **Iris-Codec coordinated update** consuming the generated API; boundary
       unchanged (structure here, compression/API there).
-- [ ] **Python and JS/WASM bindings** regenerated and tested.
+- [ ] **Python bindings (pybind11) over the abstraction layer.** Not a scope
+      question: modularity is decided by where the boundary is drawn, not by
+      how many languages cross it. This repository owns the byte structure and
+      its validation, and a Python caller manipulating that structure is
+      squarely inside it. The two binding sets are complementary rather than
+      duplicative — Iris-Codec's expose high-performance decode and encode;
+      these expose the low-level byte manipulation Iris-Codec deliberately
+      hides.
+
+      C++ remains the preferred language for an encoder or decoder, but that is
+      a preference and not a constraint the format imposes: someone writing an
+      encoder in Python is a legitimate consumer, and the specification is
+      machine-readable precisely so that implementations need not all look
+      alike.
+
+      **Bind the `Abstraction::` methods** — `is_Iris_Codec_file`,
+      `validate_file_structure`, `abstract_file_structure`,
+      `generate_file_map`, `recover_file_structure`, and the `Abstraction::`
+      structs. That is the same surface the C++ shared library exports, so the
+      binding and the linked library present one API in two languages rather
+      than two APIs.
+
+      **This costs the C++ ABI nothing**, which is worth stating because it
+      looks like it should. The export decision keeps `IFE::blocks` out of the
+      shared library and makes `IFE_HEADER_ONLY` the supported route to it — and
+      a pybind11 module is exactly such a consumer: it compiles the block layer
+      into its own extension module. Binding low-level access therefore widens
+      the exported surface by zero symbols, and the extension can reach as deep
+      as it needs to.
+
+      Ship it behind its own CMake option so a C++-only consumer never builds
+      it, generate the enum values and field keys from `spec/*.json` rather than
+      restating them, and add a CI job — a binding that is not built is a
+      binding that is broken.
+
+- [ ] **JS/WASM binding surface** — as above, and note the residency work is
+      already done: `IFE::Window`'s Emscripten branch fetches byte ranges on
+      demand, so a WASM consumer has a working transport before any binding
+      exists.
 - [ ] **Legacy retirement:** v1 hand-written serialization code removed from
       `main` (kept on a `v1.x` maintenance branch); README/docs rewritten
       around the generated tables.

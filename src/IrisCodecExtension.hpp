@@ -251,6 +251,14 @@ struct IFE_EXPORT AssociatedImage {
     Offset          offset      = NULL_OFFSET;
     Size            byteSize    = 0;
     Info            info;
+    bool operator==(const AssociatedImage& o) const noexcept {
+        return offset == o.offset && byteSize == o.byteSize
+            && info.imageLabel == o.info.imageLabel
+            && info.width == o.info.width && info.height == o.info.height
+            && info.encoding == o.info.encoding
+            && info.sourceFormat == o.info.sourceFormat
+            && info.orientation == o.info.orientation;
+    }
 };
 /**
  * @brief Label-image dictionary for associated images
@@ -277,11 +285,22 @@ struct IFE_EXPORT Annotation {
     uint32_t    width       = 0;
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
+    // MSVC's STL instantiates pair equality on unordered_map values where
+    // GCC/Clang stay lazy; without this the map cannot be instantiated there.
+    bool operator==(const Annotation& o) const noexcept {
+        return offset == o.offset && byteSize == o.byteSize && type == o.type
+            && xLocation == o.xLocation && yLocation == o.yLocation
+            && xSize == o.xSize && ySize == o.ySize
+            && width == o.width && height == o.height && parent == o.parent;
+    }
 };
 struct IFE_EXPORT AnnotationGroup {
     Offset      offset      = NULL_OFFSET;
     uint32_t    number      = 0;
     Size        byteSize    () {return number * 3;}
+    bool operator==(const AnnotationGroup& o) const noexcept {
+        return offset == o.offset && number == o.number;
+    }
 };
 struct IFE_EXPORT Annotations :
 public std::unordered_map<Annotation::Identifier, Annotation> {

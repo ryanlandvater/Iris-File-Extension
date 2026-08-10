@@ -274,6 +274,15 @@ endif(IFE_BUILD_EXAMPLES)
 if(IFE_BUILD_TESTS)
     enable_testing()
 
+    # Every test binary builds into its own tree — <binary>/cm/tests — so the
+    # build root stays a map of the library artifacts instead of a pile of
+    # executables. The libraries and the standalone example are declared
+    # above this point, so nothing else is swept along. The path is relative
+    # to the binary dir itself, whatever it is named (-B build/cm gives
+    # build/cm/tests). Multi-config generators (Xcode, Visual Studio) append
+    # the configuration subdirectory: tests/Debug.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tests")
+
     # Wire-format parity: compile-time proof that the generated layout equals
     # shipped IFE 1.0.  Pure static_assert - building it IS the test, so it is
     # registered only so `ctest` reports it.  Retired with the hand-written
@@ -389,12 +398,17 @@ if(IFE_BUILD_TESTS)
     # two version-gating tests below compile against. The version is extreme
     # on purpose: it proves the comparison is numeric, and stays a valid
     # future version for decades.
+    #
+    # The fixture lives under the test suite (tests/fixtures/future_versioning/),
+    # generated at configure time and gitignored — the same arrangement as
+    # generated_source/.
+    set(IFE_FUTURE_FIXTURE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/future_versioning)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     execute_process(
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/build_future_spec.py
                 ${CMAKE_CURRENT_SOURCE_DIR}/spec
-                ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+                ${IFE_FUTURE_FIXTURE_DIR}
         RESULT_VARIABLE IFE_FIXTURE_RESULT
     )
     if(NOT IFE_FIXTURE_RESULT EQUAL 0)
@@ -402,9 +416,9 @@ if(IFE_BUILD_TESTS)
     endif()
     execute_process(
         COMMAND ${Python3_EXECUTABLE} -m generator
-                --schema-dir ${CMAKE_CURRENT_BINARY_DIR}/spec_future
-                --out-dir ${CMAKE_CURRENT_BINARY_DIR}/generated_future
-                --docs-dir ${CMAKE_CURRENT_BINARY_DIR}/generated_docs_future
+                --schema-dir ${IFE_FUTURE_FIXTURE_DIR}
+                --out-dir ${IFE_FUTURE_FIXTURE_DIR}/generated
+                --docs-dir ${IFE_FUTURE_FIXTURE_DIR}/generated_docs
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         RESULT_VARIABLE IFE_FIXTURE_GEN_RESULT
     )
@@ -416,13 +430,13 @@ if(IFE_BUILD_TESTS)
     add_executable(
         ife_version_gating_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_version_gating_tests.cpp
-        ${CMAKE_CURRENT_BINARY_DIR}/generated_future/IFE_Blocks.cpp
+        ${IFE_FUTURE_FIXTURE_DIR}/generated/IFE_Blocks.cpp
     )
     target_include_directories(
         ife_version_gating_tests PRIVATE
         ${IFE_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/generated_future
-        ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+        ${IFE_FUTURE_FIXTURE_DIR}/generated
+        ${IFE_FUTURE_FIXTURE_DIR}
     )
     target_compile_features(ife_version_gating_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_version_gating_tests PRIVATE ${IFE_Dependencies})
@@ -437,8 +451,8 @@ if(IFE_BUILD_TESTS)
     target_include_directories(
         ife_version_gating_backward_tests PRIVATE
         ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/generated_future
-        ${CMAKE_CURRENT_BINARY_DIR}/spec_future
+        ${IFE_FUTURE_FIXTURE_DIR}/generated
+        ${IFE_FUTURE_FIXTURE_DIR}
     )
     target_compile_features(ife_version_gating_backward_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_version_gating_backward_tests PRIVATE ${IFE_Dependencies})
@@ -524,6 +538,17 @@ if(IFE_BUILD_TESTS)
         ife_v1_oracle_tests PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
     )
     add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests)
+
+    # Xcode/VS navigator hygiene: the test targets (and the slide-writer
+    # fixture tool) go under one "Tests" folder instead of a top-level entry
+    # each. The libraries and the example stay top-level.
+    foreach(t ife_wire_parity_tests ife_bytes_tests ife_blocks_tests
+              ife_blocks_header_only_tests ife_window_tests ife_v1_slide_writer
+              ife_runtime_tests ife_version_gating_tests
+              ife_version_gating_backward_tests ife_example_v1 ife_example_runtime
+              ife_validation_tests ife_v1_oracle_tests)
+        set_target_properties(${t} PROPERTIES FOLDER "Tests")
+    endforeach()
 
 endif()
 

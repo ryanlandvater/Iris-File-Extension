@@ -1,0 +1,21 @@
+# PDF theme for the IFE specification.
+#
+# Extends Asciidoctor PDF's default. The only deliberate departure is
+# alignment: the default justifies body text, which stretches inter-word
+# spacing badly in paragraphs carrying long unbreakable tokens -- and this
+# document is full of them (ANNOTATION_GROUP_SIZES, NULL_OFFSET, 0xFFFFFFFFFF).
+# Left alignment keeps the word spacing even and the ragged right edge is the
+# lesser artefact.
+extends: default
+
+base:
+  text_align: left
+
+# Table cells inherit their own alignment; set it for the same reason.
+table:
+  cell:
+    padding: [3, 4, 3, 4]
+
+# A caption above each table, as the published document has.
+caption:
+  align: left

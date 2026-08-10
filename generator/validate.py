@@ -41,8 +41,12 @@ from .model.layout import (
     _TYPE_WIDTH,
     RECOVERY_PREFIX,
     SpecError,
+    constants_groups,
     is_banner,
+    is_enum_group,
     parse_int,
+    value_groups,
+    value_members,
     version_key,
 )
 
@@ -66,9 +70,7 @@ def _versioned_fields(spec: dict[str, Any] | None) -> Iterator[tuple[str, dict[s
 
 def _enum_groups(constants_doc: dict[str, Any]) -> dict[str, Any]:
     return {
-        k: v
-        for k, v in constants_doc.items()
-        if k not in ("$schema", "spec", "statically_defined_values") and not is_banner(k)
+        k: v for k, v in constants_groups(constants_doc).items() if is_enum_group(v)
     }
 
 
@@ -112,10 +114,7 @@ def _canonical(types: dict[str, Any], name: str) -> str:
 
 
 def _sentinel(constants_doc: dict[str, Any], name: str) -> dict[str, Any]:
-    for entries in constants_doc.get("statically_defined_values", {}).get("ife_version", {}).values():
-        if name in entries:
-            return entries[name]
-    return {}
+    return value_members(constants_doc).get(name, {})
 
 
 def _narrative_anchors(narrative: str | None) -> set[str] | None:
@@ -201,6 +200,14 @@ def validate(
     claimed: dict[str, str] = {}
     for block_name, block in blocks.items():
         tag = block.get("recovery_tag")
+        # A block may decline a tag by declaring it null. The rule that every
+        # block carries one exists because the recovery scan finds blocks by
+        # tag; a block the scan finds another way needs no entry in a table
+        # capped at 256 values. TILE_PIXEL_DATA is the case: its 40-bit
+        # self-reference is unique to it, so the self-check identifies it and
+        # a tag would be two bytes per tile that nothing reads.
+        if tag is None:
+            continue
         if tag not in declared_names:
             problems.append(f"block {block_name!r} claims unknown recovery tag {tag!r}")
             continue
@@ -306,33 +313,39 @@ def validate(
                 f"emits it as {_TYPE_WIDTH[type_name] * 8}"
             )
 
-    sentinels = {
-        name
-        for entries in constants_doc.get("statically_defined_values", {})
-        .get("ife_version", {})
-        .values()
-        for name in entries
-    }
-    for name in sentinels:
-        entry = _sentinel(constants_doc, name)
+    # A value group's members carry their own type: unlike an enumeration,
+    # there is no group-wide underlying_type to inherit one from.
+    for name, entry in value_members(constants_doc).items():
         if "type" not in entry:
-            problems.append(f"statically defined value {name!r} declares no type")
+            problems.append(f"named value {name!r} declares no type")
         elif entry["type"] not in types:
-            problems.append(f"statically defined value {name!r} has unknown type {entry['type']!r}")
+            problems.append(f"named value {name!r} has unknown type {entry['type']!r}")
         if "value" not in entry:
-            problems.append(f"statically defined value {name!r} declares no value")
+            problems.append(f"named value {name!r} declares no value")
+
+    # One name, one meaning: two groups defining the same constant would emit
+    # two C++ definitions of it, and the document would show it twice.
+    seen_values: dict[str, str] = {}
+    for group_name, group in value_groups(constants_doc).items():
+        for entries in group.get("ife_version", {}).values():
+            for name in entries:
+                if name in seen_values and seen_values[name] != group_name:
+                    problems.append(
+                        f"named value {name!r} is defined in both "
+                        f"{seen_values[name]!r} and {group_name!r}"
+                    )
+                seen_values[name] = group_name
 
     for group_name, group in groups.items():
         underlying = group.get("underlying_type")
-        if underlying is None:
-            problems.append(f"enum {group_name}: no underlying_type")
-        elif underlying not in types:
+        if underlying not in types:
             problems.append(f"enum {group_name}: unknown underlying_type {underlying!r}")
         elif _canonical(types, underlying) in ("f16", "f32", "f64"):
             problems.append(
                 f"enum {group_name}: underlying_type {underlying!r} is floating point; "
                 "C++ has no 'enum class : float'. A set of named values over a "
-                "continuous domain belongs in statically_defined_values."
+                "continuous domain belongs in a value group — one declaring no "
+                "underlying_type — not in an enumeration."
             )
 
     # ---- 4. the specification document ---------------------------------- #
@@ -355,7 +368,7 @@ def validate(
     # Blocks must appear in the same order as the tags they claim, and neither
     # may be reordered: doing so silently redefines what every shipped file
     # says. This check is what makes derivation safe rather than clever.
-    declared = [b.get("recovery_tag") for b in blocks.values()]
+    declared = [b["recovery_tag"] for b in blocks.values() if b.get("recovery_tag") is not None]
     sequence = [n for n in declared_names if n != "RECOVER_UNDEFINED"]
     if declared != sequence:
         for index, (got, want) in enumerate(zip(declared, sequence)):
@@ -419,6 +432,9 @@ def validate(
             f"it (found: {', '.join(sorted(seen_versions))})"
         )
 
+    # Both anchor checks below need the narrative's declared anchors.
+    anchors = _narrative_anchors(narrative)
+
     # ---- 6a. every block has a section for a points_to link to reach ----- #
     # The layout tables render each points_to field as a cross-reference to the
     # target block's section. A block whose section is missing an anchor turns
@@ -439,7 +455,6 @@ def validate(
     # instead of rendering a diagnostic and a document that confidently cite a
     # requirement nobody can find. Section numbers were tried and are worse --
     # a renumbering that lands on another real section is undetectable.
-    anchors = _narrative_anchors(narrative)
     if anchors is not None:
         for owner, spec in _every_versioned(fields_doc, blocks, primitives):
             for _, field in _versioned_fields(spec):

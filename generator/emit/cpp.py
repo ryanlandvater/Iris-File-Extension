@@ -24,7 +24,7 @@ from __future__ import annotations
 import struct
 from typing import Any, NamedTuple
 
-from ..model.layout import RECOVERY_PREFIX, FieldLayout, LayoutResult, SpecError, _TYPE_CPP, _canonical_type, is_banner, parse_int, version_key
+from ..model.layout import RECOVERY_PREFIX, FieldLayout, LayoutResult, SpecError, _TYPE_CPP, _canonical_type, constants_groups, is_banner, is_enum_group, parse_int, value_groups, version_key
 
 
 def _banner(document: dict[str, Any]) -> str:
@@ -103,12 +103,12 @@ def emit_constants_header(
         "namespace constants {",
     ]
 
-    for group_name, group in doc.items():
-        if group_name in ("$schema", "spec", "statically_defined_values") or is_banner(group_name):
+    for group_name, group in constants_groups(doc).items():
+        # A group without an underlying_type names values rather than
+        # enumerating a domain; those are emitted as constants below.
+        if not is_enum_group(group):
             continue
-        underlying = group.get("underlying_type")
-        if underlying is None:
-            raise SpecError(f"enum group {group_name!r} has no underlying_type")
+        underlying = group["underlying_type"]
         # Resolve through the alias chain, exactly as a sentinel's "type" is
         # resolved. Looking underlying_type up in _TYPE_CPP directly made the
         # same word behave two ways: "type": "recovery" worked, while
@@ -117,7 +117,8 @@ def emit_constants_header(
             raise SpecError(
                 f"enum group {group_name!r} has underlying_type 'f16'; C++ has no "
                 "'enum class : float'. A set of named values over a continuous "
-                "domain belongs in statically_defined_values, not an enumeration."
+                "domain belongs in a value group — one that declares no "
+                "underlying_type — not in an enumeration."
             )
         cpp = _cpp_of(underlying, types)
 
@@ -155,37 +156,52 @@ def emit_constants_header(
             out.append(f"    {member_name} = {display},")
         out.append("};")
 
-    out.append("")
-    out.append("// Statically defined values (sentinel constants)")
-    sentinels = doc.get("statically_defined_values", {}).get("ife_version", {})
-    for _, entries in sorted(sentinels.items(), key=lambda kv: version_key(kv[0])):
-        for name, entry in entries.items():
-            out.extend(_comment(entry.get("description", ""), "///"))
-            if entry.get("errata"):
-                out.extend(_comment(f"errata: {entry['errata']}"))
-            canonical = _canonical_type(entry["type"], types)
-            if canonical == "f16":
-                bits = parse_int(entry["value"])
-                out.append(f"/// Wire value: {_value_display(entry['value'])} (IEEE binary16).")
-                literal = _half_literal(bits)
-            else:
-                literal = _value_display(entry["value"])
-            out.append(f"inline constexpr {_cpp_of(entry['type'], types)} {name} = {literal};")
+    # Named values, one C++ block per group. Each group keeps its own heading
+    # so the header reads the way the document does rather than as one
+    # undifferentiated wall of constants.
+    for group_name, group in value_groups(doc).items():
+        out.append("")
+        out.append(f"// {group_name}")
+        if group.get("description"):
+            out.extend(_comment(group["description"], "//"))
+        entries_by_version = group.get("ife_version", {})
+        for _, entries in sorted(entries_by_version.items(), key=lambda kv: version_key(kv[0])):
+            for name, entry in entries.items():
+                out.extend(_comment(entry.get("description", ""), "///"))
+                if entry.get("errata"):
+                    out.extend(_comment(f"errata: {entry['errata']}"))
+                canonical = _canonical_type(entry["type"], types)
+                if canonical == "f16":
+                    bits = parse_int(entry["value"])
+                    out.append(f"/// Wire value: {_value_display(entry['value'])} (IEEE binary16).")
+                    literal = _half_literal(bits)
+                else:
+                    literal = _value_display(entry["value"])
+                out.append(f"inline constexpr {_cpp_of(entry['type'], types)} {name} = {literal};")
 
     out += ["", "} // namespace constants", "} // namespace IFE", "", "#endif // IFE_Constants_hpp", ""]
     return "\n".join(out)
 
 
 def _emit_size_offset(fields: tuple[FieldLayout, ...], indent: str = "    ") -> list[str]:
-    """size{} and offset{} namespaces for a field list."""
+    """size{} and offset{} namespaces for a field list.
+
+    Offsets are signed where any of them is negative -- a trailer's fields sit
+    behind the anchor its handle is built at, so its displacements are
+    negative and `__base + __offset + displacement` reads backwards from it.
+    """
+    signed = any(field.offset < 0 for field in fields)
+    kind = "std::ptrdiff_t" if signed else "std::size_t"
     out = [f"{indent}namespace size {{"]
     for field in fields:
         out.extend(_comment(field.description, f"{indent}///"))
         out.append(f"{indent}    inline constexpr std::size_t {field.name} = {field.size};")
     out.append(f"{indent}}}")
     out.append(f"{indent}namespace offset {{")
+    if signed:
+        out.append(f"{indent}    // Negative: bytes before the anchor, not after it.")
     for field in fields:
-        out.append(f"{indent}    inline constexpr std::size_t {field.name} = {field.offset};")
+        out.append(f"{indent}    inline constexpr {kind} {field.name} = {field.offset};")
     out.append(f"{indent}}}")
     return out
 
@@ -300,11 +316,18 @@ def emit_vtables_header(layout: LayoutResult, document: dict[str, Any]) -> str:
             f" (see namespace {block.primitive}) is declared there and not repeated"
         )
         out.append("    // here, so each offset has exactly one definition. Offsets below")
-        out.append("    // remain absolute from the start of the block.")
-        out.append(
-            f"    inline constexpr ::IFE::constants::{recovery_enum} recovery_tag"
-            f" = ::IFE::constants::{recovery_enum}::{block.recovery_tag};"
-        )
+        if block.backward:
+            out.append("    // are displacements behind the anchor a handle is built at, and")
+            out.append("    // stay put as later versions extend the block further back.")
+        else:
+            out.append("    // remain absolute from the start of the block.")
+        # An untagged block emits no recovery_tag constant: there is no value
+        # to name, and a sentinel would invite a scan to look for one.
+        if block.recovery_tag:
+            out.append(
+                f"    inline constexpr ::IFE::constants::{recovery_enum} recovery_tag"
+                f" = ::IFE::constants::{recovery_enum}::{block.recovery_tag};"
+            )
         out.extend(_emit_size_offset(own))
         _emit_version_markers(out, "    ", "header_size", block.header_sizes)
         if block.from_sof is not None:
@@ -424,15 +447,27 @@ def _field_members(
                 if field.nullable
                 else "Required: never NULL_OFFSET in a valid file."
             )
-            body = [
+            body = []
+            if field.since != "1.0":
+                # An appended offset needs the same version gate as any other
+                # appended field. It reads as absent rather than as an empty
+                # optional because that is what an offset field's absence
+                # already looks like -- a falsy handle, exactly as NULL_OFFSET
+                # produces. Without this the accessor loads eight bytes past
+                # the end of the block a file of an earlier version wrote, and
+                # follows whatever it finds there.
+                body.append(f"    if (__version < {_version_of(field.since):#010x}u) return {target}{{}};")
+            body += [
                 f"    const ::IFE::Offset __at = ::IFE::load<::IFE::Offset>(",
                 f"        __base + __offset + ::IFE::vtables::{vtable}::offset::{field.name});",
             ]
             if field.nullable:
                 body.append(f"    if (__at == ::IFE::constants::NULL_OFFSET) return {target}{{}};")
             body.append(f"    return {target}{{__base, __at, __size, __version}};")
+            since_note = (f" Empty in a file written before {field.since}."
+                          if field.since != "1.0" else "")
             members.append(Member(
-                doc=doc + (f"/// Handle to the {target} block this offset references. {note}",),
+                doc=doc + (f"/// Handle to the {target} block this offset references. {note}{since_note}",),
                 attrs="[[nodiscard]]", ret=target, name=_accessor(field.name),
                 params="", quals="const noexcept", body=tuple(body),
             ))
@@ -491,9 +526,32 @@ def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
         body += [
             "    // A block stores its own offset, so a pointer that landed here can",
             "    // prove it landed where it meant to.",
-            "    if (const ::IFE::Offset __v = validation(); __v != __offset)",
-            '        return {Check::BAD_VALIDATION, type, "VALIDATION", __v, __offset, __offset};',
         ]
+        at = by_name["VALIDATION"].offset
+        # VALIDATION stores its own position. For a forward block that is the
+        # block's start, which is what the handle's offset already is; for a
+        # trailer the field sits at a fixed displacement behind the anchor, and
+        # the block's start is not a stable thing to store because appending
+        # moves it.
+        own = "__offset" if at == 0 else f"__offset + {prim_vt}::offset::VALIDATION"
+        if by_name["VALIDATION"].since != "1.0":
+            # The whole block postdates 1.0, so its own VALIDATION is version
+            # gated like any appended field. A file that predates the block
+            # cannot contain one: the gated accessor is empty, and there is
+            # nothing to compare against bytes that mean something else. Skip
+            # rather than reject — a newer file is never a structural failure.
+            body += [
+                "    // VALIDATION postdates this reader's version; the accessor is",
+                "    // gated empty, so there is nothing to check it against. Skip:",
+                "    // a newer file is never a structural failure.",
+                f"    if (const auto __vo = validation(); __vo && *__vo != {own})",
+                f'        return {{Check::BAD_VALIDATION, type, "VALIDATION", *__vo, {own}, __offset}};',
+            ]
+        else:
+            body += [
+                f"    if (const ::IFE::Offset __v = validation(); __v != {own})",
+                f'        return {{Check::BAD_VALIDATION, type, "VALIDATION", __v, {own}, __offset}};',
+            ]
     for field in primitive.fields:
         if field.kind == "constant":
             body += [
@@ -503,12 +561,15 @@ def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
                 f'        return {{Check::BAD_CONSTANT, type, "{field.name}", __c,',
                 f"                ::IFE::constants::{field.constant}, __offset}};",
             ]
-    body += [
-        "    if (const auto __r = recovery_field(); __r != recovery)",
-        '        return {Check::BAD_RECOVERY, type, "RECOVERY",',
-        "                static_cast<std::uint64_t>(__r),",
-        "                static_cast<std::uint64_t>(recovery), __offset};",
-    ]
+    # An untagged block has no RECOVERY field to check against -- what
+    # identifies it is the shape of its VALIDATION, checked above.
+    if "RECOVERY" in by_name and block.recovery_tag:
+        body += [
+            "    if (const auto __r = recovery_field(); __r != recovery)",
+            '        return {Check::BAD_RECOVERY, type, "RECOVERY",',
+            "                static_cast<std::uint64_t>(__r),",
+            "                static_cast<std::uint64_t>(recovery), __offset};",
+        ]
     if _has_count(block, layout):
         if block.entry_fields:
             floor = block.entry_sizes[0][1] if block.entry_sizes else block.entry_size
@@ -614,7 +675,6 @@ enum class Check : std::uint8_t {
     BAD_CONSTANT,      ///< a constant field does not hold its sentinel
     BAD_STRIDE,        ///< STRIDE is zero, or narrower than the entry it must hold
     ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
-    VERSION_TOO_NEW,   ///< reserved for the runtime; see below
     CYCLE,             ///< an offset chain returns to a block already on the path
     CONFORMANCE,       ///< a normative clause was violated; only the conformance layer raises this
 };
@@ -632,9 +692,9 @@ struct Status {
 };
 
 /// A newer file is never a structural failure: append-only guarantees its 1.0
-/// prefix is readable, so VERSION_TOO_NEW is never returned by a generated
-/// validator. It exists for the runtime to raise as a warning, matching v1
-/// (IrisCodecExtension.cpp:853-865), which warns and continues.
+/// prefix is readable, so generated validators have no newer-version code at
+/// all. Where a field postdates the reader's version it is gated empty by the
+/// accessor and is simply not checked.
 
 inline constexpr std::size_t MAX_BLOCK_DEPTH = 16;
 
@@ -712,11 +772,29 @@ def _emit_primitive_bases(out: list[str], layout: LayoutResult, types: dict[str,
                 "    /// v1's operator bool (IrisCodecExtension.cpp:774-777), which checks",
                 "    /// only that the offset is in range: requiring the whole header to fit",
                 "    /// makes a truncated file fail at construction rather than mid-read.",
-                "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
-                "        return __base != nullptr",
-                "            && __offset != ::IFE::constants::NULL_OFFSET",
-                "            && __offset + __header_size <= __size;",
-                "    }",
+            ]
+            if primitive.backward:
+                out += [
+                    "    ///",
+                    "    /// This primitive lays its fields out *before* `__offset`, so the",
+                    "    /// test is that the header fits behind it rather than ahead of it.",
+                    "    /// Getting that backwards underflows past the start of the file.",
+                    "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
+                    "        return __base != nullptr",
+                    "            && __offset != ::IFE::constants::NULL_OFFSET",
+                    "            && __offset >= __header_size",
+                    "            && __offset <= __size;",
+                    "    }",
+                ]
+            else:
+                out += [
+                    "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
+                    "        return __base != nullptr",
+                    "            && __offset != ::IFE::constants::NULL_OFFSET",
+                    "            && __offset + __header_size <= __size;",
+                    "    }",
+                ]
+            out += [
             ]
         inherited = layout.primitives[primitive.extends].fields if primitive.extends else ()
         introduced = tuple(f for f in primitive.fields if f not in inherited)
@@ -1097,8 +1175,9 @@ def emit_blocks_header(
         out.append(f"struct {name} : public primitives::{block.primitive} {{")
         out.append(f'    static constexpr char type[] = "{name}";')
         recovery_enum = _pascal("recovery_codes")
-        out.append(f"    static constexpr ::IFE::constants::{recovery_enum} recovery =")
-        out.append(f"        ::IFE::constants::{recovery_enum}::{block.recovery_tag};")
+        if block.recovery_tag:
+            out.append(f"    static constexpr ::IFE::constants::{recovery_enum} recovery =")
+            out.append(f"        ::IFE::constants::{recovery_enum}::{block.recovery_tag};")
         out.append(
             f"    static constexpr ::IFE::Size header_size = ::IFE::vtables::{name}::header_size;"
         )

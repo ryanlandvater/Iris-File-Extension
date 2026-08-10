@@ -173,7 +173,19 @@ void test_v1_bytes_read_through_generated_layer() {
     const b::FILE_HEADER root{p, header_at, file_size, b::VERSION_WRITTEN};
 
     IFE_CHECK(static_cast<bool>(root));
-    const auto deep = root.validate_deep();
+
+    // Deep validation follows the offset graph, so it must run at the version
+    // the file declares rather than the one this build was compiled against.
+    // At a newer version the walk would follow offset fields appended after
+    // 1.0, which a 1.0 block simply does not contain -- the same asymmetry
+    // recorded at the TILE_SIZE assertion below: an array field is gated by
+    // the stored stride as well as the version, a header field only by the
+    // version. Field reads below stay on the VERSION_WRITTEN handle, which is
+    // what puts the newest accessors over the oldest bytes.
+    const b::FILE_HEADER declared_root{
+        p, header_at, file_size,
+        (static_cast<std::uint32_t>(root.extension_major()) << 16) | root.extension_minor()};
+    const auto deep = declared_root.validate_deep();
     IFE_CHECK(static_cast<bool>(deep));
     if (!deep)
         std::fprintf(stderr, "  deep validation of a v1-written file failed in %s.%s\n",
@@ -209,6 +221,21 @@ void test_v1_bytes_read_through_generated_layer() {
     IFE_CHECK(to.entry(0).size_field() == TILE0_SIZE);
     IFE_CHECK(to.entry(1).offset()     == tile1_at);
     IFE_CHECK(to.entry(1).size_field() == TILE1_SIZE);
+
+    // TILE_SIZE, and the asymmetry that governs every appended header field.
+    //
+    // An appended *entry* field has two gates: the declared version and the
+    // stride the array stores. An appended *block header* field has only the
+    // first -- a block header records no size, so nothing cross-checks the
+    // version. The declared version is therefore load-bearing in a way it is
+    // not for arrays, which is why this is read the way a decoder reads it:
+    // with the version the file itself declares, not the one this build was
+    // compiled against.
+    const std::uint32_t declared =
+        (static_cast<std::uint32_t>(root.extension_major()) << 16) | root.extension_minor();
+    IFE_CHECK(declared < b::VERSION_WRITTEN);
+    const b::FILE_HEADER as_declared{p, header_at, file_size, declared};
+    IFE_CHECK(as_declared.tile_table_offset().tile_size() == std::nullopt);
 
     const auto md = root.metadata_offset();
     IFE_CHECK(md.codec_major() == 1);
@@ -292,11 +319,53 @@ void test_v1_packed_widths_at_full_width() {
     IFE_CHECK((to.entry(0).size_field() & ~0x00FFFFFFu) == 0);
 }
 
+// A 1.0 file read by a 1.1 decoder: the appended field must report absent.
+//
+// The version-gating tests prove this against a synthetic 200.0 spec, where
+// both the file and the field are invented. This proves it against the real
+// specification and bytes from the shipped 1.0 encoder -- the case that
+// actually occurs when a 1.1 build opens a slide written before PLANES
+// existed.
+//
+// The version alone cannot decide it. VERSION_WRITTEN is 1.1 here, so the
+// version gate is open and only the stride stored in v1's array -- 12 bytes,
+// two short of PLANES -- keeps the decoder from reading whatever follows the
+// entry. That is precisely the guarantee <<ife-array-header>> makes to every
+// future version, so it is worth an assertion of its own.
+void test_v1_layer_extents_gate_the_1_1_plane_count() {
+    using namespace IrisCodec;
+
+    const Iris::LayerExtents extents = {
+        {.xTiles = 2, .yTiles = 1, .scale = 1.f},
+        {.xTiles = 4, .yTiles = 2, .scale = 2.f},
+    };
+
+    std::vector<Iris::BYTE> f(S::SIZE_EXTENTS(extents), 0);
+    S::STORE_EXTENTS(f.data(), 0, extents);
+
+    const b::LAYER_EXTENTS le{f.data(), 0, f.size(), b::VERSION_WRITTEN};
+    IFE_CHECK(static_cast<bool>(le.validate()));
+
+    // The 1.0 stride is what gates it; if the entry ever stops being 12 bytes
+    // at 1.0 this test is measuring something else and should be revisited.
+    IFE_CHECK(le.stride() == ::IFE::vtables::LAYER_EXTENTS::entry_size_v1_0);
+    IFE_CHECK(b::VERSION_WRITTEN >= 0x00010001u);
+
+    IFE_CHECK(le.entry(0).planes() == std::nullopt);
+    IFE_CHECK(le.entry(1).planes() == std::nullopt);
+
+    // The 1.0 fields stay readable across the gate -- gating the tail must not
+    // disturb the prefix.
+    IFE_CHECK(le.entry(0).x_tiles() == 2);
+    IFE_CHECK(le.entry(1).y_tiles() == 2);
+}
+
 }  // namespace
 
 int main() {
     test_v1_bytes_read_through_generated_layer();
     test_v1_packed_widths_at_full_width();
+    test_v1_layer_extents_gate_the_1_1_plane_count();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

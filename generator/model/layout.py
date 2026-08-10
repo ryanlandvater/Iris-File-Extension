@@ -86,6 +86,52 @@ def is_banner(key: str) -> bool:
     return key.startswith("//")
 
 
+def constants_groups(doc: dict[str, Any]) -> dict[str, Any]:
+    """Every constants group in the document, banners and metadata removed."""
+    return {
+        key: value
+        for key, value in doc.items()
+        if key not in ("$schema", "spec") and not is_banner(key)
+    }
+
+
+def is_enum_group(group: dict[str, Any]) -> bool:
+    """True where a constants group is an enumeration.
+
+    A group that declares an ``underlying_type`` enumerates the whole domain of
+    some field: naming a value outside it is an error, which is what makes it
+    an enum. A group without one names *points* in a domain the field defines
+    for itself — the sentinels, and the orientation constants, whose field is a
+    continuous f16 where any rotation is legal.
+
+    Split on the declaration rather than on a group's name so a specification
+    can hold more than one table of named values. It used to be the single
+    group literally called ``statically_defined_values``, which forced the
+    orientations to share a table with MAGIC_BYTES and the NULL sentinels.
+    """
+    return "underlying_type" in group
+
+
+def value_groups(doc: dict[str, Any]) -> dict[str, Any]:
+    """The non-enumeration constants groups, in document order."""
+    return {
+        name: group
+        for name, group in constants_groups(doc).items()
+        if not is_enum_group(group)
+    }
+
+
+def value_members(doc: dict[str, Any]) -> dict[str, Any]:
+    """Every named value from every value group, flattened, oldest version first."""
+    out: dict[str, Any] = {}
+    for group in value_groups(doc).values():
+        for _, entries in sorted(
+            group.get("ife_version", {}).items(), key=lambda kv: version_key(kv[0])
+        ):
+            out.update(entries)
+    return out
+
+
 def version_key(version: str) -> tuple[int, int]:
     """Sort key for '1.0' / '1.1' version group labels."""
     major, _, minor = version.partition(".")
@@ -132,8 +178,9 @@ class BlockLayout:
     name: str
     primitive: str  # the primitive this block derives from
     description: str
-    recovery_tag: str  # JSON name, e.g. RECOVER_FILE_HEADER
-    recovery_value: int
+    backward: bool  # fields sit before the handle's anchor, not after
+    recovery_tag: str | None  # JSON name, e.g. RECOVER_FILE_HEADER; None = untagged
+    recovery_value: int | None
     header_fields: tuple[FieldLayout, ...]
     header_size: int
     from_sof: int | None  # fixed_location blocks: bytes occupied from SOF
@@ -163,6 +210,9 @@ class PrimitiveLayout:
     description: str
     fields: tuple[FieldLayout, ...]
     size: int
+    # True where the primitive lays its fields out before the handle's anchor
+    # rather than after it. Derived blocks inherit the direction.
+    backward: bool = False
 
 
 @dataclass(frozen=True)
@@ -182,15 +232,11 @@ class ConstantsIndex:
 
     @classmethod
     def build(cls, doc: dict[str, Any]) -> "ConstantsIndex":
-        groups = {
-            key: value
-            for key, value in doc.items()
-            if key not in ("$schema", "spec", "statically_defined_values")
-            and not is_banner(key)
-        }
-        sentinels: dict[str, dict[str, Any]] = {}
-        for version_entries in doc.get("statically_defined_values", {}).get("ife_version", {}).values():
-            sentinels.update(version_entries)
+        # Every group, enumeration or not: a field that names a value group in
+        # its `enum` key must fail with "missing underlying_type" rather than
+        # with "unknown group", which is the more useful of the two errors.
+        groups = constants_groups(doc)
+        sentinels: dict[str, dict[str, Any]] = value_members(doc)
         # Prefix plus the authored sequence number, matching the emitter.
         recovery_values: dict[str, int] = {}
         for version_entries in doc.get("recovery_codes", {}).get("ife_version", {}).values():
@@ -242,12 +288,23 @@ def _derive_fields(
     types: dict[str, Any],
     constants: ConstantsIndex,
     start_offset: int,
+    backward: bool = False,
 ) -> tuple[list[FieldLayout], int, list[tuple[str, int]]]:
     """Compute offsets for one field list.
 
     Returns (fields, end_offset, sizes_by_version) where the third element is
     the cumulative end offset at the close of each version group, ascending —
     what a version-gated reader needs to know how far its own version extends.
+
+    ``backward`` lays the fields out *before* the anchor a handle is built at,
+    the first declared field ending at the anchor and each one after it sitting
+    further back. Offsets come out negative and the cumulative width stays
+    positive, so `end_offset` is a size in both directions.
+
+    This is what makes a trailer extensible. Growing a forward block moves its
+    end; growing a backward one moves its *start*, leaving every field already
+    published at the displacement it has always had — which matters when the
+    only way to find the block is to measure back from something else.
     """
     fields: list[FieldLayout] = []
     seen: set[str] = set()
@@ -286,7 +343,7 @@ def _derive_fields(
                 name=name,
                 type_name=type_name,
                 size=size,
-                offset=offset,
+                offset=-(offset + size) if backward else offset,
                 cpp_type=cpp,
                 kind=kind,
                 description=spec.get("description", ""),
@@ -347,9 +404,12 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
         # already shipped, which the append-only invariant forbids. Once a
         # block derives from a primitive, that primitive is frozen; new data
         # is appended to the block or its entry instead.
+        backward = spec.get("layout") == "trailer" or (
+            parent is not None and primitives[parent].backward
+        )
         own, end, _ = _derive_fields(
             _concat_versioned(spec.get("fields", {}).get("ife_version", {})),
-            types, constants, start,
+            types, constants, start, backward,
         )
         primitives[name] = PrimitiveLayout(
             name=name,
@@ -357,6 +417,7 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
             description=spec.get("description", ""),
             fields=(*inherited, *own),
             size=end,
+            backward=backward,
         )
         return primitives[name]
 
@@ -374,8 +435,10 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
         if primitive is None:
             raise SpecError(f"block {name!r} references unknown primitive {primitive_name!r}")
 
+        # A null tag is a block that the recovery scan does not find by tag;
+        # see the validator for why that is allowed and which block does it.
         recovery = spec.get("recovery_tag")
-        if recovery not in constants.recovery_values:
+        if recovery is not None and recovery not in constants.recovery_values:
             raise SpecError(f"block {name!r} references unknown recovery tag {recovery!r}")
 
         header_fields = list(primitive.fields)
@@ -385,6 +448,7 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
         if own:
             more, header_size, header_sizes = _derive_fields(
                 _concat_versioned(own["ife_version"]), types, constants, primitive.size,
+                primitive.backward,
             )
             header_fields += more
         if not header_sizes:
@@ -406,8 +470,9 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
             name=name,
             primitive=primitive_name,
             description=spec.get("description", ""),
+            backward=primitive.backward,
             recovery_tag=recovery,
-            recovery_value=constants.recovery_values[recovery],
+            recovery_value=constants.recovery_values[recovery] if recovery else None,
             header_fields=tuple(header_fields),
             header_size=header_size,
             from_sof=header_size if spec.get("fixed_location") else None,

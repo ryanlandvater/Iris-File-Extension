@@ -233,8 +233,12 @@ needs, and moving a section never drags unrelated tables along.
 8. **Sentinel errata corrected** (`NULL_TILE` → 40-bit max, `NULL_ID` →
    24-bit max).
 9. **`METADATA_FREE_TEXT` gets a distinct value (3).**
-10. **`TILE_PIXEL_DATA` stays unframed** — specified in `ife_spec.adoc`
-    Section 4.3 only; it has no byte structure to generate.
+10. **Tile pixel streams stay unframed** — the bytes a tile offsets entry
+    addresses are exactly the codec stream, so they can be handed to a
+    decoder or served without arithmetic. IFE 1.1 adds the optional
+    `TILE_PIXEL_DATA` frame, but places it in the bytes *before* that range
+    rather than inside it, so the property above is unchanged and a 1.0
+    reader cannot tell a framed file from an unframed one.
 
 Derived layout consequences (computed, never stored): preamble 8 B;
 universal header 10 B; array header 16 B total; `FILE_HEADER` 38 B (46 B from

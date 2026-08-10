@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..model.layout import BlockLayout, FieldLayout, LayoutResult, is_banner, parse_int, version_key
+from ..model.layout import BlockLayout, FieldLayout, LayoutResult, constants_groups, is_banner, is_enum_group, parse_int, version_key
 
 # Emitted paths are relative to the docs root; the narrative includes them by
 # these names, so they are part of the contract with spec/ife_spec.adoc.
@@ -63,11 +63,15 @@ def _cell(text: str) -> str:
 
 
 def _layout_table(title: str, fields: tuple[FieldLayout, ...]) -> list[str]:
+    # A trailer's fields sit behind the anchor, so its column is a displacement
+    # rather than an offset and the heading has to say which -- "Offset -5" in
+    # a table whose other rows count forward would read as an erratum.
+    backward = any(field.offset < 0 for field in fields)
     out = [
         f".{title}",
         '[cols="2,2,1,1,1,5",options="header",frame=all,grid=all]',
         "|===",
-        "|Field |Type |Offset |Size |Optional |Description",
+        f"|Field |Type |{'Displacement' if backward else 'Offset'} |Size |Optional |Description",
         "",
     ]
     for field in fields:
@@ -86,8 +90,10 @@ def emit_block_layout(block: BlockLayout) -> str:
     out = _banner()
     out += _layout_table(
         f"`{block.name}` header — {block.header_size} bytes"
+        + (", ending where the stream it precedes begins" if block.backward else "")
         + (f", at byte 0 ({block.from_sof} B from start of file)" if block.from_sof is not None else "")
-        + f", recovery tag `{block.recovery_tag}` (0x{block.recovery_value:04X})",
+        + (f", recovery tag `{block.recovery_tag}` (0x{block.recovery_value:04X})"
+           if block.recovery_tag else ", no recovery tag"),
         block.header_fields,
     )
     return "\n".join(out)
@@ -108,8 +114,9 @@ def emit_primitive_layout(primitive: Any) -> str:
     """A shared prefix every derived block carries."""
     out = _banner()
     inherits = f", extending `{primitive.extends}`" if primitive.extends else ""
+    where = " before the anchor" if getattr(primitive, "backward", False) else ""
     out += _layout_table(
-        f"`{primitive.name}` primitive — {primitive.size} bytes{inherits}",
+        f"`{primitive.name}` primitive — {primitive.size} bytes{where}{inherits}",
         primitive.fields,
     )
     return "\n".join(out)
@@ -118,9 +125,8 @@ def emit_primitive_layout(primitive: Any) -> str:
 def emit_constants_table(group_name: str, group: dict[str, Any], recovery_prefix: int) -> str:
     """One enumeration, or the statically defined values."""
     out = _banner()
-    sentinels = group_name == "statically_defined_values"
     title = f"`{group_name}`"
-    if not sentinels and group.get("underlying_type"):
+    if is_enum_group(group):
         title += f" — `{group['underlying_type']}`"
 
     out += [
@@ -247,6 +253,7 @@ def emit_attributes(document: dict[str, Any], generator_version: str) -> str:
         f":copyright: {document.get('copyright', '')}",
         f":license: {document.get('license', '')}",
         f":generator-version: {generator_version}",
+        f":repository: {document.get('repository', '')}",
     ]
     return "\n".join(out)
 
@@ -295,9 +302,7 @@ def emit_documents(
         if block.entry_fields:
             out[f"{LAYOUT_DIR}/{name}_entry.adoc"] = emit_entry_layout(block)
 
-    for group_name, group in constants_doc.items():
-        if group_name in ("$schema", "spec") or is_banner(group_name):
-            continue
+    for group_name, group in constants_groups(constants_doc).items():
         out[f"{CONSTANTS_DIR}/{group_name}.adoc"] = emit_constants_table(
             group_name, group, recovery_prefix
         )

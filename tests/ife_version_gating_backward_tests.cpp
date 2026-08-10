@@ -161,8 +161,8 @@ void test_200_0_file_read_by_1_0_build() {
     IFE_CHECK(md.microns_pixel() == 0.25f);
     IFE_CHECK(!static_cast<bool>(md.annotations_offset()));
 
-    // And the whole file validates under the old build — no VERSION_TOO_NEW,
-    // no BAD_STRIDE, nothing.
+    // And the whole file validates under the old build — no newer-version
+    // rejection, no BAD_STRIDE, nothing.
     IFE_CHECK(static_cast<bool>(h.validate()));
     IFE_CHECK(static_cast<bool>(h.validate_deep()));
 }

@@ -244,9 +244,94 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     IFE_CHECK(threw);
 }
 
+
+/// Tile frames are found by the same scan, and carry enough to rebuild an entry.
+///
+/// This is the case the frame exists for: the tile offsets array is gone, so
+/// nothing says where any tile is or which tile it is. The frames are all that
+/// is left, and a frame is found without a recovery tag -- what marks it is a
+/// forty-bit value equal to its own position, which nothing else in the format
+/// writes.
+///
+/// The streams here are deliberately out of index order. Ordering is explicitly
+/// free (spec 2.4.3), so a scan that inferred an index from file position would
+/// pass a tidy fixture and be wrong on a real one written in parallel.
+void test_recovery_finds_tile_frames_and_rebuilds_entries() {
+    using namespace IrisCodec::Abstraction;
+    namespace vt = ::IFE::vtables;
+    namespace b  = ::IFE::blocks;
+
+    struct Tile { std::uint32_t index; std::uint32_t size; };
+    const Tile tiles[] = {{7, 300}, {2, 145}, {19, 64}};
+
+    // A run of framed streams, nothing else -- no header, no arrays. Recovery
+    // has to work from the frames alone.
+    std::vector<Iris::BYTE> f(64, 0xA5);   // leading junk, so nothing sits at 0
+    std::vector<IFE::Offset> stream_at;
+    for (const auto& t : tiles) {
+        f.resize(f.size() + vt::TILE_PIXEL_DATA::header_size);
+        const IFE::Offset at = f.size();
+        stream_at.push_back(at);
+        ::IFE::store_u40(f.data() + at + vt::TILE_FRAME::offset::VALIDATION,
+                         at + vt::TILE_FRAME::offset::VALIDATION);
+        ::IFE::store<std::uint32_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
+        ::IFE::store<std::uint16_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::PLANES, 1);
+        f.resize(f.size() + t.size, 0x5A);
+    }
+
+    const auto recovered = IrisCodec::recover_file_structure(f.data(), f.size());
+
+    int frames = 0, data = 0;
+    for (const auto& [offset, entry] : recovered) {
+        if (entry.type == MAP_ENTRY_TILE_FRAME) ++frames;
+        if (entry.type == MAP_ENTRY_TILE_DATA)  ++data;
+    }
+    IFE_CHECK(frames == 3);
+    IFE_CHECK(data == 3);
+
+    // What recovery is actually for: turn each frame back into the tile
+    // offsets entry that was lost. Index, offset and size all come from the
+    // frame, so the rebuilt entry is complete rather than a location alone.
+    for (std::size_t i = 0; i < std::size(tiles); ++i) {
+        const b::TILE_PIXEL_DATA frame{f.data(), stream_at[i], f.size(), b::VERSION_WRITTEN};
+        IFE_CHECK(static_cast<bool>(frame.validate()));
+        IFE_CHECK(frame.tile_index() == tiles[i].index);
+
+        // The recovered map agrees with the frame about where the payload is.
+        // Its extent is left at zero: the frame carries no length, and how far
+        // a compressed stream runs is the codec's question, not this layer's.
+        const auto it = recovered.find(stream_at[i]);
+        IFE_CHECK(it != recovered.end());
+        if (it != recovered.end()) {
+            IFE_CHECK(it->second.type == MAP_ENTRY_TILE_DATA);
+            IFE_CHECK(it->second.size == 0);
+        }
+    }
+
+    // Junk does not answer the self-reference test, so the leading region and
+    // the payload bytes contribute nothing.
+    IFE_CHECK(recovered.size() == 6);
+
+    // A frame must fit behind the stream it precedes. A self-referencing u40
+    // too near the start of file cannot be one, and is rejected on those
+    // grounds -- plant exactly that and confirm nothing is invented. A guard
+    // never exercised is a guard that rots.
+    //
+    // That bound is the only filter left now that the frame carries no length
+    // to sanity-check. A u40 equal to its own position is a 2^-40 event, which
+    // over a 2 GB file is an expected 0.002 false frames; the caller sees one
+    // extra entry whose tile index is nonsense, and nothing worse.
+    auto poisoned = f;
+    constexpr IFE::Offset FAKE = 2;   // anchor would be 7, short of the 11 a frame needs
+    ::IFE::store_u40(poisoned.data() + FAKE, FAKE);
+    IFE_CHECK(::IFE::load_u40(poisoned.data() + FAKE) == FAKE);   // the bait is set
+    IFE_CHECK(IrisCodec::recover_file_structure(poisoned.data(), poisoned.size()).size() == 6);
+}
+
 }  // namespace
 
 int main() {
+    test_recovery_finds_tile_frames_and_rebuilds_entries();
     test_validate_accepts_a_v1_file();
     test_abstraction_matches_what_was_encoded();
     test_file_map_finds_every_block();

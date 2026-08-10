@@ -31,6 +31,10 @@ command -v asciidoctor >/dev/null || {
 # not in a banner the reader has to scroll past on every build.
 common=(-a "generated=$root/generated_docs" -r asciidoctor)
 
+# Left-aligned body text: the default theme justifies, which spaces words
+# badly around the long identifiers this document is made of.
+pdf_opts=(-a "pdf-theme=$root/spec/ife-pdf-theme.yml")
+
 echo "==> HTML"
 asciidoctor "${common[@]}" -o "$out/ife_spec.html" "$root/spec/ife_spec.adoc"
 
@@ -46,7 +50,7 @@ fi
 
 if command -v asciidoctor-pdf >/dev/null; then
     echo "==> PDF"
-    asciidoctor-pdf "${common[@]}" -o "$out/ife_spec.pdf" "$root/spec/ife_spec.adoc"
+    asciidoctor-pdf "${common[@]}" "${pdf_opts[@]}" -o "$out/ife_spec.pdf" "$root/spec/ife_spec.adoc"
 else
     # asciidoctor-pdf needs a newer Ruby than some systems ship. HTML is the
     # gate that must always run; the PDF is the published artifact.

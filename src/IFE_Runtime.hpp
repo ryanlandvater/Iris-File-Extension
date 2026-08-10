@@ -96,9 +96,27 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __mapped_file_ptr,
  *
  * New in the generated layer. Where generate_file_map walks the offset graph — and therefore
  * finds nothing below a corrupted pointer — this ignores the graph entirely and scans for the
- * signature every block carries: a u64 equal to its own offset, immediately followed by a u16
- * in the recovery-tag set. The 0x55 high byte those tags share is what keeps the
- * false-positive rate of that scan negligible.
+ * two signatures a block can carry.
+ *
+ * Most blocks carry a u64 equal to their own offset followed by a u16 in the recovery-tag set;
+ * the 0x55 high byte those tags share is what keeps that scan's false-positive rate negligible.
+ * A tile frame carries no tag at all, and is instead identified by a *forty*-bit value equal to
+ * its own position, which nothing else in the format writes. Frames are reported as
+ * MAP_ENTRY_TILE_FRAME alongside the MAP_ENTRY_TILE_DATA stream each one describes.
+ *
+ * A frame supplies the part of a tile offsets entry that reading the slide cannot: its global
+ * tile index. Position cannot supply it, because streams may be written in any order. The
+ * stream's *length* is not in the frame and is not reported — that is a question its codec
+ * answers, and this layer knows nothing about codecs. FileMapEntry carries no index field, so as
+ * with every other type a caller builds the handle and asks it:
+ *
+ * ```cpp
+ * case MAP_ENTRY_TILE_FRAME: {
+ *     const auto stream_at = entry.offset + entry.size;   // the frame ends where the stream starts
+ *     IFE::blocks::TILE_PIXEL_DATA frame {base, stream_at, file_size, version};
+ *     if (frame.validate()) rebuilt[*frame.tile_index()] = stream_at;
+ * }
+ * ```
  *
  * The FILE_HEADER is not recoverable this way and is not reported: it is the one block with no
  * VALIDATION field, because it lives at byte 0 where that field could only ever store zero.
@@ -134,10 +152,25 @@ struct IFE_EXPORT TileEntry {
 struct IFE_EXPORT TileTable {
     using Layer  = std::vector<TileEntry>;
     using Layers = std::vector<Layer>;
+    /// Greatest number of focal (Z) planes any one tile of a layer carries,
+    /// one element per `extent.layers` entry; a given tile may carry fewer,
+    /// and its stream is what says how many. Always at least one: a file
+    /// written before 1.1 stores no plane count and reads back as
+    /// single-plane rather than as zero.
+    ///
+    /// Held here, parallel to extent.layers, only because Iris::LayerExtent
+    /// is defined in Iris-Headers rather than in this repository -- it is the
+    /// natural home, and reserves the field for it (IrisTypes.hpp `zPlanes`).
+    /// Fold this in and delete the vector once that field exists.
+    using Planes = std::vector<uint16_t>;
     Encoding encoding = TILE_ENCODING_UNDEFINED;
     Format   format   = FORMAT_UNDEFINED;
     Layers   layers;
     Extent   extent;
+    Planes   planes;
+    /// Edge length in pixels of this slide's square tiles; 256 unless the file
+    /// says otherwise, including for every file written before 1.1.
+    uint16_t tileSize = 256;
 };
 
 /// Abstraction of non-tile and named associated images within the slide file.
@@ -187,6 +220,23 @@ struct IFE_EXPORT File {
     AssociatedImages images;
     Annotations      annotations;
     Metadata         metadata;
+/// Byte range of the clinical metadata stream, NULL_OFFSET when absent.
+    ///
+    /// A range rather than a copy, unlike Metadata::ICC_profile. A colour
+    /// profile is a few kilobytes; a clinical stream is a whole document and
+    /// can be megabytes, and lifting payloads into the abstraction is the one
+    /// thing this abstraction exists not to do. Read it with IFE::Window, or
+    /// hand base + clinicalOffset straight to the reader for whatever format
+    /// the stream's leading bytes identify.
+    ///
+    /// Held on File rather than on Metadata beside ICC_profile only because
+    /// IrisCodec::Metadata is defined in Iris-Headers rather than in this
+    /// repository. Move it there when that header gains the field.
+    Offset           clinicalOffset = ::IFE::constants::NULL_OFFSET;
+    Size             clinicalSize   = 0;
+    /// Microns between adjacent focal planes of a Z-stacked tile; zero when
+    /// the slide is not Z-stacked or the spacing was not recorded.
+    float            micronsPerPlane = 0.f;
 };
 
 /// Which kind of block a file-map entry describes.
@@ -209,6 +259,8 @@ enum MapEntryType {
     MAP_ENTRY_ANNOTATION_BYTES,
     MAP_ENTRY_ANNOTATION_GROUP_SIZES,
     MAP_ENTRY_ANNOTATION_GROUP_BYTES,
+    MAP_ENTRY_CLINICAL_METADATA,
+    MAP_ENTRY_TILE_FRAME,
 };
 
 /**

@@ -130,7 +130,8 @@ void store_metadata(BYTE* p, Offset at) {
     ::IFE::store<std::uint16_t>(p + at + vt::METADATA::offset::CODEC_MINOR, 1);
     ::IFE::store<std::uint16_t>(p + at + vt::METADATA::offset::CODEC_BUILD, 3);
     for (auto field : {vt::METADATA::offset::ATTRIBUTES_OFFSET, vt::METADATA::offset::IMAGES_OFFSET,
-                       vt::METADATA::offset::ICC_COLOR_OFFSET, vt::METADATA::offset::ANNOTATIONS_OFFSET})
+                       vt::METADATA::offset::ICC_COLOR_OFFSET, vt::METADATA::offset::ANNOTATIONS_OFFSET,
+                       vt::METADATA::offset::CLINICAL_OFFSET})
         ::IFE::store<std::uint64_t>(p + at + field, k::NULL_OFFSET);
     ::IFE::store<float>(p + at + vt::METADATA::offset::MICRONS_PIXEL, 0.25f);
     ::IFE::store<float>(p + at + vt::METADATA::offset::MAGNIFICATION, 40.0f);
