@@ -12,7 +12,9 @@ if(NOT WRITER OR NOT EXAMPLE_V1 OR NOT EXAMPLE_RUNTIME OR NOT WORK)
     message(FATAL_ERROR "example_parity.cmake: WRITER, EXAMPLE_V1, EXAMPLE_RUNTIME and WORK are required")
 endif()
 
-set(SLIDE "${WORK}/example_parity.iris")
+# .test_slide for the same reason as ife_runtime_tests: a fixture should
+# not carry the extension of a real slide.
+set(SLIDE "${WORK}/example_parity.test_slide")
 
 execute_process(COMMAND "${WRITER}" "${SLIDE}" RESULT_VARIABLE wrote)
 if(NOT wrote EQUAL 0)

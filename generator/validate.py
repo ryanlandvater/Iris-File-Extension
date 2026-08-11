@@ -55,16 +55,6 @@ from .model.layout import (
 # prefix that makes the recovery scan's false-positive rate acceptable.
 MAX_RECOVERY_TAGS = 0x100
 
-# Field names that are macros in the Windows SDK (wingdi.h's PLANES, windef's
-# min/max, ...). A generated identifier equal to one of these expands before
-# the compiler sees it, so the layer fails to compile on MSVC only — the one
-# platform where it is never locally reproducible. Renaming the field is the
-# only fix, so the validator refuses the name up front.
-_MSVC_MACRO_NAMES = frozenset(
-    {"PLANES", "MIN", "MAX", "INTERFACE", "NEAR", "FAR", "SMALL", "DOMAIN", "CONSTANT"}
-)
-
-
 def _entries(doc: dict[str, Any], key: str) -> dict[str, Any]:
     """Non-banner children of a mapping."""
     return {k: v for k, v in doc.get(key, {}).items() if not is_banner(k)}
@@ -170,7 +160,29 @@ _PLATFORM_MACROS: dict[str, str] = {
     "FAR": "<minwindef.h>",
     "NULL": "the C standard library",
     "EOF": "<stdio.h>",
+    # <winbase.h> SetFilePointer move methods. FILE_END cost a second MSVC
+    # build after PLANES cost the first, and it was absent from this table --
+    # which is why the check now runs over sources as well as the schema.
+    "FILE_BEGIN": "<winbase.h> (SetFilePointer origin)",
+    "FILE_CURRENT": "<winbase.h> (SetFilePointer origin)",
+    "FILE_END": "<winbase.h> (SetFilePointer origin)",
+    "MAX_PATH": "<minwindef.h>",
+    "TRUE": "<windef.h>",
+    "FALSE": "<windef.h>",
+    "NO_ERROR": "<winerror.h>",
+    "interface": "<basetyps.h> (expands to struct)",
+    "small": "<rpcndr.h> (expands to char)",
+    "min": "<minwindef.h> (unless NOMINMAX)",
+    "max": "<minwindef.h> (unless NOMINMAX)",
+    "DOMAIN": "<math.h> (matherr type)",
+    "CONSTANT": "<wingdi.h>",
 }
+
+# Schema field names are UPPER_SNAKE, so they are matched case-insensitively:
+# a field named `domain` collides with the same macro as `DOMAIN`. C++ sources
+# are matched exactly, because `min` and `Min` are different identifiers and
+# only the first is the macro.
+_PLATFORM_MACROS_UPPER: dict[str, str] = {k.upper(): k for k in _PLATFORM_MACROS}
 
 
 def _field_names(fields_doc: dict[str, Any]) -> Iterator[tuple[str, str]]:
@@ -319,14 +331,6 @@ def validate(
                 if fname in names:
                     problems.append(f"{where}: field name declared more than once")
                 names.add(fname)
-                # A field name that is a Windows SDK macro (wingdi.h's PLANES,
-                # windef's min/max, ...) expands before the compiler sees the
-                # generated layer, which then fails to compile on MSVC only.
-                if fname.upper() in _MSVC_MACRO_NAMES:
-                    problems.append(
-                        f"{where}: field name {fname!r} is a Windows SDK macro and "
-                        "would break the generated layer on MSVC; rename it"
-                    )
                 target = field.get("points_to")
                 if target is not None and target not in blocks:
                     problems.append(f"{where}: points_to unknown block {target!r}")
@@ -550,9 +554,12 @@ def validate(
     # ---- 6. identifiers that a platform defines as macros --------------- #
     # Cheap, and the alternative is finding out from a Windows build.
     for where, name in _field_names(fields_doc):
-        if name in _PLATFORM_MACROS:
+        # Case-insensitive: schema names are UPPER_SNAKE, so `PLANES` and a
+        # hypothetical `Planes` collide with the same macro.
+        canonical = _PLATFORM_MACROS_UPPER.get(name.upper())
+        if canonical:
             problems.append(
-                f"{where}: field {name!r} is a macro in {_PLATFORM_MACROS[name]}. "
+                f"{where}: field {name!r} is a macro in {_PLATFORM_MACROS[canonical]}. "
                 "The preprocessor expands it before namespaces apply, so the "
                 "generated `offset::" + name + "` becomes whatever the macro "
                 "says and the compiler reports a line this schema never wrote. "
@@ -560,10 +567,11 @@ def validate(
             )
     for group_name, group in _enum_groups(constants_doc).items():
         for _, member, _raw in _members(group):
-            if member in _PLATFORM_MACROS:
+            canonical = _PLATFORM_MACROS_UPPER.get(member.upper())
+            if canonical:
                 problems.append(
                     f"enum {group_name}: member {member!r} is a macro in "
-                    f"{_PLATFORM_MACROS[member]}; rename it."
+                    f"{_PLATFORM_MACROS[canonical]}; rename it."
                 )
 
     return problems

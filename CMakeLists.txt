@@ -395,13 +395,13 @@ if(IFE_BUILD_TESTS)
         ife_runtime_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_runtime_tests PRIVATE cxx_std_20)
-    target_compile_definitions(
-        ife_runtime_tests PRIVATE
-        IFE_V1_SLIDE_WRITER="$<TARGET_FILE:ife_v1_slide_writer>"
-    )
+    # The writer's path is a test ARGUMENT, not a compile definition. As a
+    # definition it becomes a C string literal, and a Windows path does not
+    # survive one: the compiler reads the backslashes as escape sequences.
+    # CTest passes an argument through verbatim.
     add_dependencies(ife_runtime_tests ife_v1_slide_writer)
     target_link_libraries(ife_runtime_tests PRIVATE ${IFE_Dependencies})
-    add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests)
+    add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests $<TARGET_FILE:ife_v1_slide_writer>)
 
     # Version gating, executed. The real spec is 1.0-only, so the
     # since-mechanism — optional accessors gated by the file version and the

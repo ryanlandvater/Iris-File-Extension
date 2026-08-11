@@ -38,6 +38,11 @@ jobs:
       - run: python3 -m generator --validate
       - run: python3 -m generator
       - run: python3 -m generator --check
+      # Runs here rather than in the MSVC job so a Windows-only defect fails
+      # in twenty seconds on Linux instead of after a full matrix build. It
+      # replaces none of that job; it just gets there first.
+      - name: Portability lint
+        run: python3 tools/portability_lint.py
 
   tests:
     name: build and test (${{ matrix.compiler }})

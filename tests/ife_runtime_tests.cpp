@@ -38,16 +38,33 @@ int g_failures = 0;
 
 using ::Iris::BYTE;
 
+/// Path to the shipped encoder, from argv[1].
+///
+/// An argument rather than a compile definition, because the definition had to
+/// survive a C string literal and a Windows path does not: the compiler reads
+/// the backslashes in `D:\a\Iris-File-Extension\...` as escape sequences, so
+/// \a became a bell and \b a backspace and the program never held the path at
+/// all. CTest passes it through untouched.
+std::string g_writer;
+
 /// Run the shipped encoder (a separate binary -- see ife_v1_slide_writer.cpp)
 /// and read back what it wrote. The bytes under test are produced by the
 /// implementation that has been writing real slides, not by this test.
 std::vector<BYTE> v1_slide(v1_fixture::Expected& expected) {
     expected = v1_fixture::expectations();
 
-    const std::string path = std::string(IFE_V1_SLIDE_WRITER) + ".slide";
-    const std::string cmd  = std::string("\"") + IFE_V1_SLIDE_WRITER + "\" \"" + path + "\"";
+    // .test_slide, not .iris: nothing should mistake a build-tree fixture
+    // for a real slide, and no tool should try to open it as one.
+    const std::string path = g_writer + ".test_slide";
+    std::string cmd = "\"" + g_writer + "\" \"" + path + "\"";
+#ifdef _WIN32
+    // cmd.exe strips the first and last quote of a command that begins with
+    // one, which leaves the path split at its first space. Wrapping the whole
+    // command in one more pair is the documented way round it.
+    cmd = "\"" + cmd + "\"";
+#endif
     if (std::system(cmd.c_str()) != 0) {
-        std::fprintf(stderr, "FAIL: the v1 slide writer did not run\n");
+        std::fprintf(stderr, "FAIL: the v1 slide writer did not run: %s\n", cmd.c_str());
         ++g_failures;
         return {};
     }
@@ -330,8 +347,27 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: %s <path to ife_v1_slide_writer>\n", argv[0]);
+        return 2;
+    }
+    g_writer = argv[1];
+
+    // Needs no slide of its own.
     test_recovery_finds_tile_frames_and_rebuilds_entries();
+
+    // The rest read what the v1 writer produced. If it did not run there is
+    // nothing to read, and going on would turn a clear diagnostic into an
+    // uncaught exception from the first handle built over an empty buffer --
+    // which is how this failure presented on Windows before argv carried the
+    // path: a SEGFAULT report, with the real cause four lines further up.
+    v1_fixture::Expected probe;
+    if (v1_slide(probe).empty()) {
+        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+        return 1;
+    }
+
     test_validate_accepts_a_v1_file();
     test_abstraction_matches_what_was_encoded();
     test_file_map_finds_every_block();
