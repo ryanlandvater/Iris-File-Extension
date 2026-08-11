@@ -125,7 +125,17 @@ std::vector<BYTE> make_200_0_file() {
 
 void test_200_0_file_read_by_1_0_build() {
     const auto f = make_200_0_file();
-    const auto h = b::FILE_HEADER{f.data(), FH_AT, f.size(), (200u << 16) | 0u};
+
+    // 1.0 deliberately, and it is the whole point of the test: a *1.0 reader*
+    // opening a *200.0 file*. The file's version is 200.0 and appears in its
+    // header; this is the version the reader claims, and raising it to match
+    // the file removes the only thing being tested.
+    //
+    // It also breaks: at 200.0 the reader follows offset fields appended after
+    // 1.0, and make_200_0_file() nulls the four that 1.0 defines. CLINICAL_OFFSET
+    // is left zero, so validate_deep follows offset 0 and fails.
+    constexpr std::uint32_t READER_VERSION_1_0 = (1u << 16) | 0u;
+    const auto h = b::FILE_HEADER{f.data(), FH_AT, f.size(), READER_VERSION_1_0};
 
     // The newer version is visible, never rejected: the 1.0 prefix of a
     // 200.0 file must be readable because append-only froze it.
