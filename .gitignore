@@ -1,5 +1,6 @@
 /build
 /build-xcode
+/build-asan
 
 # Fetched dependencies (Iris-Headers).  Pulled by CMake into a fixed path so
 # tooling can find them; never part of this repository.

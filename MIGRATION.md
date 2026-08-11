@@ -1889,9 +1889,13 @@ custom preprocessor in the pipeline.
 
 ## Phase 6 — Ecosystem cutover & release
 
-- [ ] **Conversion tool** (if Phase 1 confirms) and re-encoded
+- [ ] **Conformance corpus** — refined in [`plans/phase-6-corpus.md`](plans/phase-6-corpus.md).
+      The published
       [Iris-Example-Files](https://github.com/IrisDigitalPathology/Iris-Example-Files)
-      corpus.
+      do not serve: both are the same specimen with entirely empty metadata and
+      reach 6 of 18 block types, so building on them would narrow real-byte
+      coverage rather than replace it. Purpose-built `.test_slide` fixtures,
+      hosted rather than committed, pinned by digest in a committed manifest.
 - [ ] **Iris-Codec coordinated update** consuming the generated API; boundary
       unchanged (structure here, compression/API there).
 - [ ] **Python bindings (pybind11) over the abstraction layer.** Not a scope
