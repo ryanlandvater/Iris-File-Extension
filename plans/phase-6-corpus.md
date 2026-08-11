@@ -16,7 +16,7 @@ Measured against `Iris-Example-Files@main`, both files (`425248_JPEG.iris`,
 | Version | IFE 1.0, revision 0 |
 | Size | 1,718,162,733 / 1,123,383,971 B |
 | Layers | 4 (8×6, 31×22, 124×87, 496×346 tiles) |
-| Tile offsets | 183,146 entries, **0** `NULL_TILE` slots |
+| Tile offsets | 183,134 entries, **0** `NULL_TILE` slots |
 | Structural bytes | 1,465,252 B — the last 0.09% of the file |
 | `ATTRIBUTES`, `IMAGES`, `ICC_PROFILE`, `ANNOTATIONS` | all `NULL` |
 | `MICRONS_PIXEL`, `MAGNIFICATION` | 0 |
@@ -43,10 +43,43 @@ Every block must appear at least once across the set. Blocks marked ⚠ appear i
 | `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES` ⚠ | ≥1 attribute key-value pair; one fixture per `metadata_formats` value that has meaning (`METADATA_I2S`, `METADATA_DICOM`) |
 | `IMAGES`, `IMAGE_BYTES` ⚠ | ≥2 associated images (label + thumbnail), differing in `ENCODING` and `ORIENTATION` |
 | `ICC_PROFILE` ⚠ | any embedded profile |
-| `ANNOTATIONS`, `ANNOTATION_BYTES` ⚠ | ≥1 of each `annotation_types` value — `ANNOTATION_PNG`, `JPEG`, `SVG`, `TEXT` |
-| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named annotation group |
+| `ANNOTATIONS`, `ANNOTATION_BYTES` ⚠ | ≥1 of each `annotation_types` value — **blocked, see below** |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named annotation group — **blocked, see below** |
 | `CIPHER` ⚠ | one encrypted fixture, if the encoder can write one; otherwise record it as permanently uncovered |
 | `CLINICAL_METADATA` ⚠ | 1.1 only — one fixture per `clinical_encodings` value the encoder supports |
+
+## Blocked: the shipped encoder cannot write annotations
+
+Four annotation blocks cannot be covered by an oracle fixture, because v1
+cannot produce one. Three defects, each verified against the source rather than
+read off it, and the first is why the other two were never found.
+
+1. **`AnnotationArrayCreateInfo::annotations` cannot be populated.** It is
+   `std::set<AnnotationInfo>` and `AnnotationInfo` defines no `operator<`, so
+   `insert` does not compile. `STORE_ANNOTATION_ARRAY` is therefore reachable
+   only with an empty set, and nothing in the repository calls it. A
+   compile-time wall, not a runtime one.
+2. **`STORE_ANNOTATION_ARRAY` never writes `GROUP_SIZES_OFFSET` or
+   `GROUP_BYTES_OFFSET`.** It writes `VALIDATION`, `RECOVERY`, `ENTRY_SIZE`,
+   `ENTRY_NUMBER` and the entries — 16 of the 32 header bytes are left as
+   whatever the buffer held. In a zero-filled encode buffer that is 0, and
+   `ANNOTATIONS::groups()` treats 0 as a valid pointer (it tests
+   `!= NULL_OFFSET && < __size`), so it reports **true** for a block with no
+   groups.
+3. **`ANNOTATIONS::validate_full` reads those two pointers from the wrong
+   place** — `LOAD_U64(__base + GROUP_SIZES_OFFSET)`, missing `+ __offset`, so
+   it reads absolute file offsets 16 and 24, which are inside `FILE_HEADER`.
+   `groups()` two functions away gets it right
+   (`__base + __offset + GROUP_SIZES_OFFSET`), which is what makes the omission
+   legible as a slip rather than a convention.
+
+Defect 1 masks 2 and 3: no caller can reach the code that would expose them.
+
+**Decide before encoding.** Either fix v1's annotation path (it must outlive
+the corpus anyway, so the fix is not wasted), or write these four blocks with
+the generated writers and record them as covered by construction rather than by
+oracle. The second is cheaper and weaker, and the weakness is precisely the one
+`ife_v1_oracle_tests` exists to avoid.
 
 ## Edge cases worth encoding deliberately
 

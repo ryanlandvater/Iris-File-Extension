@@ -1,6 +1,15 @@
-/build
-/build-xcode
-/build-asan
+# Build trees.  The glob rather than three literals: -asan, -xcode and whatever
+# the next configuration is called all belong here.
+/build*
+
+# macOS Finder droppings, at any depth.
+.DS_Store
+
+# Slide files, anywhere.  The corpus is hosted and fetched (see
+# plans/phase-6-corpus.md); fixtures produced or downloaded locally are never
+# committed, which is the whole point of pinning them by digest instead.
+*.iris
+*.test_slide
 
 # Fetched dependencies (Iris-Headers).  Pulled by CMake into a fixed path so
 # tooling can find them; never part of this repository.
