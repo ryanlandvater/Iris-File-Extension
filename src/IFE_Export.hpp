@@ -35,28 +35,41 @@
 #ifndef IFE_Export_hpp
 #define IFE_Export_hpp
 
-// Should we export the IFE API for low-level calls to the IFE bytestream.
-// If being compiled as a part of another project and you do not want to
-// or need to export calls that directly manipulate the byte stream,
-// set this preprocessor macro to false.
+// Three states, not two. Building the shared library exports; consuming that
+// shared library imports; everything else — a static archive, an object
+// library, a translation unit compiled straight into an executable — does
+// neither and needs no attribute at all.
+//
+// Collapsing the last two is what this used to do, and on MSVC it meant that
+// "not exporting" produced __declspec(dllimport). Every target that compiled
+// IFE_Runtime.cpp without IFE_EXPORT_API then failed with C2491, a definition
+// of a dllimport function, and every target that merely *used* an Iris type
+// emitted an __imp_ reference to a DLL the build never produced.
 #ifndef IFE_EXPORT_API
 #define IFE_EXPORT_API      false
 #endif
-#if IFE_EXPORT_API
-    #ifndef IFE_EXPORT
-    #if defined(_MSC_VER)
-    #define IFE_EXPORT      __declspec(dllexport)
-    #else
-    #define IFE_EXPORT      __attribute__ ((visibility ("default")))
+// Set this only when linking against a separately built IFE shared library.
+#ifndef IFE_IMPORT_API
+#define IFE_IMPORT_API      false
 #endif
-    #endif
-#else
-    #ifndef IFE_EXPORT
-    #if defined(_MSC_VER)
-    #define IFE_EXPORT      __declspec(dllimport)
+
+#ifndef IFE_EXPORT
+    #if IFE_EXPORT_API
+        #if defined(_MSC_VER)
+        #define IFE_EXPORT  __declspec(dllexport)
+        #else
+        #define IFE_EXPORT  __attribute__ ((visibility ("default")))
+        #endif
+    #elif IFE_IMPORT_API
+        #if defined(_MSC_VER)
+        #define IFE_EXPORT  __declspec(dllimport)
+        #else
+        #define IFE_EXPORT
+        #endif
     #else
-    #define IFE_EXPORT      // Default is hidden (see CMakeLists)
-    #endif
+        // Static or object linkage: no attribute. Default visibility is
+        // hidden by CXX_VISIBILITY_PRESET (see CMakeLists).
+        #define IFE_EXPORT
     #endif
 #endif
 

@@ -565,3 +565,33 @@ if(IFE_BUILD_TESTS)
 
 endif()
 
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# BEGIN Export macros for in-tree executables
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Nothing here links a DLL. Tests and examples compile the runtime and the
+# generated layer straight into the executable, or link the object library,
+# so neither IFE_EXPORT nor IRIS_EXPORT should carry an attribute.
+#
+# IFE_EXPORT resolves correctly on its own (src/IFE_Export.hpp distinguishes
+# "not exporting" from "importing"). IRIS_EXPORT is declared in Iris-Headers,
+# which still conflates the two: undefined, it becomes __declspec(dllimport)
+# on MSVC, and every use of Iris::Result or IrisCodec::AssociatedImageInfo
+# emits an __imp_ reference to a DLL this build never produces. Both headers
+# guard with #ifndef, so defining them here simply wins.
+#
+# Applied to the executables only. The library keeps IRIS_EXPORT_API=true so
+# its own shared-object exports are unchanged.
+foreach(target IN ITEMS
+        ife_bytes_tests ife_blocks_tests ife_blocks_header_only_tests
+        ife_window_tests ife_runtime_tests ife_wire_parity_tests
+        ife_version_gating_tests ife_version_gating_backward_tests
+        ife_validation_tests ife_v1_oracle_tests ife_v1_slide_writer
+        ife_example_v1 ife_example_runtime)
+    if(TARGET ${target})
+        target_compile_definitions(${target} PRIVATE IFE_EXPORT= IRIS_EXPORT=)
+    endif()
+endforeach()
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# END Export macros for in-tree executables
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
