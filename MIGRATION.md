@@ -1942,6 +1942,24 @@ custom preprocessor in the pipeline.
 **Exit:** downstream builds green on the generated layer; v1 code no longer on `main`;
 spec document published from the pipeline.
 
+### Open question — `METADATA_FREE_TEXT` and the I2S claim
+
+v1 defines `METADATA_FREE_TEXT` as an alias of `METADATA_I2S`; both are 1. The
+schema assigns it 3, recorded as an errata on the member, because two
+conformance claims sharing a value cannot be told apart — and `--validate`
+rejects aliases outright, so the schema could not have kept v1's spelling even
+if it wanted to.
+
+The consequence needs a decision before release. A v1 encoder that meant *free
+text* wrote 1, and a 1.1 reader reads 1 as `METADATA_I2S` — which since 1.1 is
+a claim that the attributes contain nothing identifying. No file is misparsed,
+but a v1 file may now assert a conformance property nobody checked, and it is
+precisely the property the schema says cannot be inferred from the keys
+present. Whether existing files can carry 1-as-free-text at all is a question
+about the corpus, not about the schema. `ife_wire_parity_tests` excludes this
+member with a pointer here; the exclusion is deliberate and should not be
+"fixed".
+
 ---
 
 ## Refinement workflow

@@ -237,11 +237,14 @@ inline void store_u40(BYTE* __p, std::uint64_t v) noexcept {
 // `float`: half -> float is exact, and float -> half rounds to nearest, ties
 // to even, as IEEE requires. The generated ORIENTATION_* constants are emitted
 // as float literals so a caller can compare an accessor result against them
-// directly.
+// directly. Both conversions are constexpr so that comparison can also happen
+// at compile time — ife_wire_parity_tests pins the ORIENTATION_* literals to
+// the binary16 patterns v1 published, which is a static_assert only if the
+// rounding runs during constant evaluation.
 
 /// Convert an IEEE binary16 bit pattern to `float`. Exact for every input,
 /// including subnormals, infinities and NaN payloads.
-[[nodiscard]] inline float half_to_float(std::uint16_t h) noexcept {
+[[nodiscard]] constexpr float half_to_float(std::uint16_t h) noexcept {
     const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000u) << 16;
     const std::uint32_t exp  = (h >> 10) & 0x1Fu;
     std::uint32_t       mant = h & 0x03FFu;
@@ -263,7 +266,7 @@ inline void store_u40(BYTE* __p, std::uint64_t v) noexcept {
 
 /// Convert a `float` to an IEEE binary16 bit pattern, rounding to nearest with
 /// ties to even. Values beyond half's range saturate to infinity.
-[[nodiscard]] inline std::uint16_t float_to_half(float f) noexcept {
+[[nodiscard]] constexpr std::uint16_t float_to_half(float f) noexcept {
     const std::uint32_t x    = std::bit_cast<std::uint32_t>(f);
     const std::uint16_t sign = static_cast<std::uint16_t>((x >> 16) & 0x8000u);
     const std::int32_t  fexp = static_cast<std::int32_t>((x >> 23) & 0xFFu);

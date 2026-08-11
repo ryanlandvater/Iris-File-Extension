@@ -26,12 +26,14 @@
 // relies on that having happened. Reproduce the same order here. The generated
 // headers deliberately do not inherit this fragility: they are self-contained.
 #include <cstdint>
+#include <type_traits>
 
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
 
 #include "IrisCodecExtension.hpp"
 
+#include "IFE_Bytes.hpp"
 #include "IFE_VTables.hpp"
 #include "IFE_Constants.hpp"
 
@@ -286,5 +288,174 @@ static_assert(static_cast<std::uint16_t>(gen::FILE_HEADER::recovery_tag) == v1::
 static_assert(static_cast<std::uint16_t>(gen::TILE_TABLE::recovery_tag) == v1::RECOVER_TILE_TABLE,
               "TILE_TABLE recovery tag diverged from shipped IFE 1.0");
 
-int main() { return 0; }   // 101 compile-time assertions; nothing to run
+
+// ============================================================================
+// Enumeration values vs shipped IFE 1.0
+// ============================================================================
+//
+// An enumerator is as much a wire value as an offset is: it is the byte a
+// field holds. Until this section existed the wall proved where a field sits
+// and said nothing about what may legally go in it, and that gap is not
+// hypothetical — the schema was authored without ANNOTATION_JPEG, silently
+// shifting SVG to 2 and TEXT to 3, and every offset assertion passed. It was
+// caught by reading, not by building. Below, it would not compile.
+//
+// Scope is the same 1.0 prefix the layout assertions use: every enumerator
+// IFE 1.0 shipped, compared against the header that shipped it. Members added
+// in 1.1 have no v1 counterpart and appear only in the exclusion list.
+//
+// v1 spells several of these differently and defines them in three places:
+// Iris:: (IrisTypes.hpp), IrisCodec:: (IrisCodecTypes.hpp) and
+// IrisCodec::Serialization:: (IrisCodecExtension.hpp). The pairing below is
+// the complete record of those renames; no value is affected by any of them.
+
+namespace {
+namespace con = IFE::constants;
+
+/// The generated enums are scoped; v1's are not. Comparing them requires one
+/// cast, and doing it here keeps 38 assertions readable.
+template <typename E>
+constexpr auto raw(E e) noexcept {
+    return static_cast<std::underlying_type_t<E>>(e);
+}
+}  // namespace
+
+// ---- tile_encodings vs v1 IrisCodec::Encoding ----
+// v1's TILE_ENCODING_DEFAULT is an alias of JPEG, not a distinct wire value,
+// and the schema forbids aliases outright (--validate rejects two members
+// sharing a value). It is deliberately absent here and there.
+static_assert(raw(con::TileEncodings::TILE_ENCODING_UNDEFINED) == IrisCodec::TILE_ENCODING_UNDEFINED,
+              "TILE_ENCODING_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::TileEncodings::TILE_ENCODING_IRIS) == IrisCodec::TILE_ENCODING_IRIS,
+              "TILE_ENCODING_IRIS: value diverged from shipped IFE 1.0");
+static_assert(raw(con::TileEncodings::TILE_ENCODING_JPEG) == IrisCodec::TILE_ENCODING_JPEG,
+              "TILE_ENCODING_JPEG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::TileEncodings::TILE_ENCODING_AVIF) == IrisCodec::TILE_ENCODING_AVIF,
+              "TILE_ENCODING_AVIF: value diverged from shipped IFE 1.0");
+
+// ---- pixel_formats vs v1 Iris::Format ----
+static_assert(raw(con::PixelFormats::FORMAT_UNDEFINED) == Iris::FORMAT_UNDEFINED,
+              "FORMAT_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::PixelFormats::FORMAT_B8G8R8) == Iris::FORMAT_B8G8R8,
+              "FORMAT_B8G8R8: value diverged from shipped IFE 1.0");
+static_assert(raw(con::PixelFormats::FORMAT_R8G8B8) == Iris::FORMAT_R8G8B8,
+              "FORMAT_R8G8B8: value diverged from shipped IFE 1.0");
+static_assert(raw(con::PixelFormats::FORMAT_B8G8R8A8) == Iris::FORMAT_B8G8R8A8,
+              "FORMAT_B8G8R8A8: value diverged from shipped IFE 1.0");
+static_assert(raw(con::PixelFormats::FORMAT_R8G8B8A8) == Iris::FORMAT_R8G8B8A8,
+              "FORMAT_R8G8B8A8: value diverged from shipped IFE 1.0");
+
+// ---- annotation_types vs v1 Iris::AnnotationTypes ----
+// The four assertions that would have caught the missing ANNOTATION_JPEG.
+static_assert(raw(con::AnnotationTypes::ANNOTATION_UNDEFINED) == Iris::ANNOTATION_UNDEFINED,
+              "ANNOTATION_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::AnnotationTypes::ANNOTATION_PNG) == Iris::ANNOTATION_PNG,
+              "ANNOTATION_PNG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::AnnotationTypes::ANNOTATION_JPEG) == Iris::ANNOTATION_JPEG,
+              "ANNOTATION_JPEG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::AnnotationTypes::ANNOTATION_SVG) == Iris::ANNOTATION_SVG,
+              "ANNOTATION_SVG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::AnnotationTypes::ANNOTATION_TEXT) == Iris::ANNOTATION_TEXT,
+              "ANNOTATION_TEXT: value diverged from shipped IFE 1.0");
+
+// ---- image_encodings vs v1 IrisCodec::ImageEncoding ----
+// IMAGE_ENCODING_DEFAULT is an alias, excluded for the reason given above.
+static_assert(raw(con::ImageEncodings::IMAGE_ENCODING_UNDEFINED) == IrisCodec::IMAGE_ENCODING_UNDEFINED,
+              "IMAGE_ENCODING_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::ImageEncodings::IMAGE_ENCODING_PNG) == IrisCodec::IMAGE_ENCODING_PNG,
+              "IMAGE_ENCODING_PNG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::ImageEncodings::IMAGE_ENCODING_JPEG) == IrisCodec::IMAGE_ENCODING_JPEG,
+              "IMAGE_ENCODING_JPEG: value diverged from shipped IFE 1.0");
+static_assert(raw(con::ImageEncodings::IMAGE_ENCODING_AVIF) == IrisCodec::IMAGE_ENCODING_AVIF,
+              "IMAGE_ENCODING_AVIF: value diverged from shipped IFE 1.0");
+
+// ---- metadata_formats vs v1 IrisCodec::MetadataType ----
+// METADATA_FREE_TEXT is **excluded, deliberately**. v1 defines it as an alias
+// of METADATA_I2S (both 1); the schema assigns it 3, recorded as an errata on
+// the member in spec/ife_constants.json. Asserting it would fail, and
+// "correcting" the schema to 1 would reintroduce an alias --validate rejects.
+// Leave it out. What it means for a v1 file that meant free text — it reads as
+// an I2S conformance claim now — is an open question recorded under Phase 6 in
+// MIGRATION.md, not something to reconcile here.
+static_assert(raw(con::MetadataFormats::METADATA_UNDEFINED) == IrisCodec::METADATA_UNDEFINED,
+              "METADATA_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::MetadataFormats::METADATA_I2S) == IrisCodec::METADATA_I2S,
+              "METADATA_I2S: value diverged from shipped IFE 1.0");
+static_assert(raw(con::MetadataFormats::METADATA_DICOM) == IrisCodec::METADATA_DICOM,
+              "METADATA_DICOM: value diverged from shipped IFE 1.0");
+
+// ---- recovery_codes vs v1 IrisCodec::Serialization::RECOVERY ----
+// Five renames, no value changes: HEADER -> FILE_HEADER, ATTRIBUTES_SIZES ->
+// ATTRIBUTE_SIZES, ATTRIBUTES_BYTES -> ATTRIBUTE_BYTES, ASSOCIATED_IMAGES ->
+// IMAGES, ASSOCIATED_IMAGE_BYTES -> IMAGE_BYTES. The two per-block
+// recovery_tag assertions above cover FILE_HEADER and TILE_TABLE from the
+// block side; these cover the enumeration itself, all seventeen of it.
+static_assert(raw(con::RecoveryCodes::RECOVER_UNDEFINED) == v1::RECOVER_UNDEFINED,
+              "RECOVER_UNDEFINED: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_FILE_HEADER) == v1::RECOVER_HEADER,
+              "RECOVER_FILE_HEADER: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_TILE_TABLE) == v1::RECOVER_TILE_TABLE,
+              "RECOVER_TILE_TABLE: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_CIPHER) == v1::RECOVER_CIPHER,
+              "RECOVER_CIPHER: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_METADATA) == v1::RECOVER_METADATA,
+              "RECOVER_METADATA: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ATTRIBUTES) == v1::RECOVER_ATTRIBUTES,
+              "RECOVER_ATTRIBUTES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_LAYER_EXTENTS) == v1::RECOVER_LAYER_EXTENTS,
+              "RECOVER_LAYER_EXTENTS: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_TILE_OFFSETS) == v1::RECOVER_TILE_OFFSETS,
+              "RECOVER_TILE_OFFSETS: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ATTRIBUTE_SIZES) == v1::RECOVER_ATTRIBUTES_SIZES,
+              "RECOVER_ATTRIBUTE_SIZES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ATTRIBUTE_BYTES) == v1::RECOVER_ATTRIBUTES_BYTES,
+              "RECOVER_ATTRIBUTE_BYTES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_IMAGES) == v1::RECOVER_ASSOCIATED_IMAGES,
+              "RECOVER_IMAGES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_IMAGE_BYTES) == v1::RECOVER_ASSOCIATED_IMAGE_BYTES,
+              "RECOVER_IMAGE_BYTES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ICC_PROFILE) == v1::RECOVER_ICC_PROFILE,
+              "RECOVER_ICC_PROFILE: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ANNOTATIONS) == v1::RECOVER_ANNOTATIONS,
+              "RECOVER_ANNOTATIONS: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ANNOTATION_BYTES) == v1::RECOVER_ANNOTATION_BYTES,
+              "RECOVER_ANNOTATION_BYTES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ANNOTATION_GROUP_SIZES) == v1::RECOVER_ANNOTATION_GROUP_SIZES,
+              "RECOVER_ANNOTATION_GROUP_SIZES: value diverged from shipped IFE 1.0");
+static_assert(raw(con::RecoveryCodes::RECOVER_ANNOTATION_GROUP_BYTES) == v1::RECOVER_ANNOTATION_GROUP_BYTES,
+              "RECOVER_ANNOTATION_GROUP_BYTES: value diverged from shipped IFE 1.0");
+
+// ---- image_orientations vs v1 IrisCodec::ImageOrientation ----
+// The only enumeration whose two layers disagree in representation rather than
+// value: v1 publishes binary16 bit patterns, the schema emits the degrees they
+// decode to. Rounding the float back is what makes them comparable, and it is
+// a compile-time comparison only because IFE::float_to_half is constexpr.
+// Asserting this direction (float -> pattern) keeps the comparison integral;
+// comparing decoded floats would compare floats.
+static_assert(IFE::float_to_half(con::ORIENTATION_0) == IrisCodec::ORIENTATION_0,
+              "ORIENTATION_0: binary16 pattern diverged from shipped IFE 1.0");
+static_assert(IFE::float_to_half(con::ORIENTATION_90) == IrisCodec::ORIENTATION_90,
+              "ORIENTATION_90: binary16 pattern diverged from shipped IFE 1.0");
+static_assert(IFE::float_to_half(con::ORIENTATION_180) == IrisCodec::ORIENTATION_180,
+              "ORIENTATION_180: binary16 pattern diverged from shipped IFE 1.0");
+static_assert(IFE::float_to_half(con::ORIENTATION_270) == IrisCodec::ORIENTATION_270,
+              "ORIENTATION_270: binary16 pattern diverged from shipped IFE 1.0");
+
+// The three negative orientations are **excluded, and not because they are
+// wrong**. v1 aliases each to its positive equivalent — ORIENTATION_minus_90
+// *is* ORIENTATION_270, one pattern — while the schema encodes the literal
+// negative: -90 is 0xD5A0, not 0x5C38. Both decode to the same rotation, since
+// the field is degrees interpreted modulo 360, so no file is misread either
+// way; they are simply not the same sixteen bits and an assertion here would
+// be asserting that two spellings of one rotation are one spelling.
+static_assert(IFE::float_to_half(con::ORIENTATION_MINUS_90) != IrisCodec::ORIENTATION_minus_90,
+              "ORIENTATION_MINUS_90: v1 aliased this to +270; if the patterns now "
+              "agree the schema changed and the exclusion above is stale");
+
+// Not asserted, for want of anything to assert against: CLINICAL_UNDEFINED,
+// CLINICAL_HL7_V2, CLINICAL_FHIR_JSON, CLINICAL_FASTFHIR and
+// RECOVER_CLINICAL_METADATA are 1.1 additions with no v1 counterpart. When v1
+// is retired this whole file goes with it; until then, that is the boundary.
+
+int main() { return 0; }   // compile-time assertions only; nothing to run
 
