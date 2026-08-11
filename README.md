@@ -48,7 +48,7 @@ open build-xcode/IrisFileExtension.xcodeproj
 ```
 
 Headers from `src/` and `generated_source/` are part of the project navigator.
-Of the schemes CMake generates, the four `ife_*_tests` schemes are the ones to
+Of the schemes CMake generates, the `ife_*` test schemes are the ones to
 use (`ALL_BUILD`, `RUN_TESTS`, `ZERO_CHECK` and `install` are CMake plumbing).
 
 Pick a scheme (the `ife_*` targets are the tests) and Run — no extra signing

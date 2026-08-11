@@ -2264,8 +2264,12 @@ void STORE_ATTRIBUTES_BYTES (BYTE* const __base, Offset offset, const Attributes
             ("Failed to store attributes bytes -- attribute key too long (" +
              std::to_string(attribute.first.size()) +
              " bytes). Per the IFE specification Section 2.4.10, the key length shall fit the 16-bit KEY_SIZE field.");
-        size += U16_CAST(attribute.first.size());
-        size += U32_CAST(attribute.second.size());
+        if (attribute.second.size() > UINT32_MAX) throw std::runtime_error
+            ("Failed to store attributes bytes -- attribute value too long (" +
+             std::to_string(attribute.second.size()) +
+             " bytes); VALUE_SIZE is a 32-bit field.");
+        size += attribute.first.size();
+        size += attribute.second.size();
     }
     if (size > UINT32_MAX) throw std::runtime_error
         ("Failed to store attributes bytes -- attribute bytes array length ("+

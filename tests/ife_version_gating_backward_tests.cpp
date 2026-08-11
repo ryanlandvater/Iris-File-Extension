@@ -125,7 +125,7 @@ std::vector<BYTE> make_200_0_file() {
 
 void test_200_0_file_read_by_1_0_build() {
     const auto f = make_200_0_file();
-    const auto h = b::FILE_HEADER{f.data(), FH_AT, f.size(), 0x00010000u};  // the 1.0 build
+    const auto h = b::FILE_HEADER{f.data(), FH_AT, f.size(), (200u << 16) | 0u};
 
     // The newer version is visible, never rejected: the 1.0 prefix of a
     // 200.0 file must be readable because append-only froze it.

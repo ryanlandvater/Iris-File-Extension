@@ -6,7 +6,7 @@ and nothing here is hand-edited. `README.md` is the only committed file.
 
 | Path | Content |
 |------|---------|
-| `layout/<BLOCK>.adoc` | One block's header table: field, type, derived offset, size, optionality, description, and its normative requirement. |
+| `layout/<BLOCK>.adoc` | One block's header table: field, type, derived offset, size, optionality, and description. |
 | `layout/<BLOCK>_entry.adoc` | That block's array-entry table, where it has one. |
 | `layout/primitive_<NAME>.adoc` | A shared prefix every derived block carries. |
 | `constants/<GROUP>.adoc` | One enumeration, or the statically defined values. |

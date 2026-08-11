@@ -246,12 +246,16 @@
           "value": 1,
           "description": "PNG image annotation."
         },
-        "ANNOTATION_SVG": {
+        "ANNOTATION_JPEG": {
           "value": 2,
+          "description": "JPEG image annotation."
+        },
+        "ANNOTATION_SVG": {
+          "value": 3,
           "description": "SVG vector annotation."
         },
         "ANNOTATION_TEXT": {
-          "value": 3,
+          "value": 4,
           "description": "Text-only annotation."
         }
       }
