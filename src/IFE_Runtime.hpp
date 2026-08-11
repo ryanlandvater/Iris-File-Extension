@@ -240,8 +240,12 @@ struct IFE_EXPORT File {
     Size             clinicalSize   = 0;
     /// Which parser the clinical stream needs. Declared by the file rather
     /// than sniffed from the bytes; undefined when no stream is present.
-    ::IFE::constants::ClinicalEncodings clinicalEncoding =
-        ::IFE::constants::ClinicalEncodings::CLINICAL_UNDEFINED;
+    /// A `clinical_encodings` value, held as its underlying type rather than
+    /// as IFE::constants::ClinicalEncodings. Naming the generated enum here
+    /// would put it in the exported ABI -- and with it every
+    /// std::optional<ClinicalEncodings> instantiation the runtime makes --
+    /// which decision 4.0-D keeps out. Zero is CLINICAL_UNDEFINED.
+    uint8_t          clinicalEncoding = 0;
     /// Microns between adjacent focal planes of a Z-stacked tile; zero when
     /// the slide is not Z-stacked or the spacing was not recorded.
     float            micronsPerPlane = 0.f;

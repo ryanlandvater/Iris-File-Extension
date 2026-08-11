@@ -183,11 +183,24 @@ target_compile_definitions (
     IrisFileExtensionLib
     PRIVATE IRIS_EXPORT_API=true #Do not export Iris Core Fn-ality
     PRIVATE IFE_EXPORT_API=true 
+    # Consumers in this tree link the objects or the static archive, never a
+    # DLL import library. Left undefined, both macros expand to
+    # __declspec(dllimport) on MSVC -- the export headers treat "not
+    # exporting" and "importing" as the same case -- and every use emits an
+    # __imp_ reference to a DLL this build never produces.
+    INTERFACE IFE_EXPORT=
+    INTERFACE IRIS_EXPORT=
 )
 set_target_properties(
     IrisFileExtensionLib 
     PROPERTIES 
     CXX_VISIBILITY_PRESET hidden
+    # Required alongside the preset, not implied by it. GCC leaves weak
+    # template and inline instantiations at default visibility even when the
+    # preset is hidden, so std::optional<IFE::constants::...> lands in the
+    # shared library's dynamic symbol table. Clang hides them already, which
+    # is why this only ever failed on the Linux runners.
+    VISIBILITY_INLINES_HIDDEN ON
     POSITION_INDEPENDENT_CODE ON
 )
 target_link_libraries (

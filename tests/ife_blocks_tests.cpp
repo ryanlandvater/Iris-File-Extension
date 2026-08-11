@@ -58,14 +58,14 @@ constexpr Offset TILE_OFFSETS_AT  = LAYER_EXTENTS_AT + vt::LAYER_EXTENTS::header
                                   + LAYER_EXTENT_COUNT * vt::LAYER_EXTENTS::entry_size;
 constexpr Offset METADATA_AT      = TILE_OFFSETS_AT + vt::TILE_OFFSETS::header_size
                                   + TILE_OFFSET_COUNT * vt::TILE_OFFSETS::entry_size;
-constexpr Offset FILE_END         = METADATA_AT + vt::METADATA::header_size;
+constexpr Offset END_OFFSET          = METADATA_AT + vt::METADATA::header_size;
 
 constexpr std::uint32_t VERSION_1_0 = (1u << 16) | 0u;
 
 /// A minimal file that satisfies every structural rule: header, tile table,
 /// both required arrays, and metadata with all optional offsets absent.
 std::vector<BYTE> make_file() {
-    std::vector<BYTE> f(FILE_END, 0);
+    std::vector<BYTE> f(END_OFFSET, 0);
     BYTE* p = f.data();
 
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
@@ -74,7 +74,7 @@ std::vector<BYTE> make_file() {
     ::IFE::store<std::uint32_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
     ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_FILE_HEADER));
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), FILE_END);
+    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
     ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::EXTENSION_MAJOR), 1);
     ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::EXTENSION_MINOR), 0);
     ::IFE::store<std::uint32_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_REVISION), 7);
@@ -149,7 +149,7 @@ void test_reads_what_was_written() {
     const auto f = make_file();
     const auto h = root(f);
     IFE_CHECK(static_cast<bool>(h));
-    IFE_CHECK(h.file_size() == FILE_END);
+    IFE_CHECK(h.file_size() == END_OFFSET);
     IFE_CHECK(h.file_revision() == 7);
     IFE_CHECK(h.extension_major() == 1);
     IFE_CHECK(h.extension_minor() == 0);
@@ -329,7 +329,7 @@ constexpr std::uint32_t GROUP_PAYLOAD      = 15;     // (1 + 2*3) + (5 + 1*3)
 
 // Head-to-tail offsets of the extended file's appended blocks, derived the
 // same way make_extended_file lays them out so the tests can reference them.
-constexpr Offset IMAGES_AT      = FILE_END;          // 202: end of make_file()
+constexpr Offset IMAGES_AT      = END_OFFSET;          // 202: end of make_file()
 constexpr Offset IMAGE_BYTES_AT = IMAGES_AT + vt::IMAGES::header_size + vt::IMAGES::entry_size;
 constexpr Offset ANNOTATIONS_AT = IMAGE_BYTES_AT + vt::IMAGE_BYTES::header_size + IMG_TITLE + IMG_DATA;
 constexpr Offset ANNOTATION_BYTES_AT = ANNOTATIONS_AT + vt::ANNOTATIONS::header_size + vt::ANNOTATIONS::entry_size;
@@ -337,12 +337,12 @@ constexpr Offset GROUP_SIZES_AT  = ANNOTATION_BYTES_AT + vt::ANNOTATION_BYTES::h
 constexpr Offset GROUP_BYTES_AT  = GROUP_SIZES_AT + vt::ANNOTATION_GROUP_SIZES::header_size
                                    + 2 * vt::ANNOTATION_GROUP_SIZES::entry_size;
 constexpr Offset ICC_AT          = GROUP_BYTES_AT + vt::ANNOTATION_GROUP_BYTES::header_size + GROUP_PAYLOAD;
-constexpr Offset FILE_END2       = ICC_AT + vt::ICC_PROFILE::header_size + ICC_BYTE_COUNT;
+constexpr Offset EXTENDED_END_OFFSET = ICC_AT + vt::ICC_PROFILE::header_size + ICC_BYTE_COUNT;
 
 std::vector<BYTE> make_extended_file() {
     auto f = make_file();  // skeleton: header, tile table, extents, offsets, metadata
 
-    f.resize(FILE_END2, 0);
+    f.resize(EXTENDED_END_OFFSET, 0);
     BYTE* p = f.data();
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
 
@@ -433,10 +433,10 @@ std::vector<BYTE> make_extended_file() {
     ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::IMAGES_OFFSET), IMAGES_AT);
     ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ICC_COLOR_OFFSET), ICC_AT);
     ::IFE::store<std::uint64_t>(at(METADATA_AT, vt::METADATA::offset::ANNOTATIONS_OFFSET), ANNOTATIONS_AT);
-    // FILE_END2, not make_file()'s FILE_END: handles bound against the buffer
+    // EXTENDED_END_OFFSET, not make_file()'s END_OFFSET: handles bound against the buffer
     // length today, but the runtime validates against this field, and a header
     // declaring 202 bytes over an 86 KB file would fail there instead of here.
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), FILE_END2);
+    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, vt::FILE_HEADER::offset::FILE_SIZE), EXTENDED_END_OFFSET);
     return f;
 }
 

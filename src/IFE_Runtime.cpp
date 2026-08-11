@@ -103,7 +103,7 @@ b::FILE_HEADER versioned_root(const BYTE* __base, size_t __size) noexcept {
 
 // MARK: - Entry points
 
-bool is_Iris_Codec_file(BYTE* const __base, size_t __size) {
+bool IFE_EXPORT is_Iris_Codec_file(BYTE* const __base, size_t __size) {
     // MAGIC is a `constant` field, so the generated layer validates it rather
     // than handing it back: FILE_HEADER::validate() checks the magic number,
     // the recovery tag, and that the header fits -- exactly the two loads v1
@@ -111,7 +111,7 @@ bool is_Iris_Codec_file(BYTE* const __base, size_t __size) {
     return static_cast<bool>(root_at(__base, __size).validate());
 }
 
-Result validate_file_structure(BYTE* const __base, size_t __size) noexcept {
+Result IFE_EXPORT validate_file_structure(BYTE* const __base, size_t __size) noexcept {
     const b::FILE_HEADER header = versioned_root(__base, __size);
 
     // v1 validated the header, then the tile table, then the metadata, each
@@ -121,7 +121,7 @@ Result validate_file_structure(BYTE* const __base, size_t __size) noexcept {
     return to_result(header.validate_deep());
 }
 
-Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
+Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t __size) {
     using namespace Abstraction;
     File abstraction;
 
@@ -270,8 +270,8 @@ Abstraction::File abstract_file_structure(BYTE* const __base, size_t __size) {
     if (const auto clinical = metadata.clinical_offset()) {
         abstraction.clinicalOffset = clinical.__offset + b::CLINICAL_METADATA::header_size;
         abstraction.clinicalSize   = clinical.count();
-        abstraction.clinicalEncoding =
-            clinical.encoding().value_or(k::ClinicalEncodings::CLINICAL_UNDEFINED);
+        abstraction.clinicalEncoding = static_cast<uint8_t>(
+            clinical.encoding().value_or(k::ClinicalEncodings::CLINICAL_UNDEFINED));
     }
 
     if (const auto plane = metadata.microns_plane()) abstraction.micronsPerPlane = *plane;
@@ -355,7 +355,7 @@ Size blob_span(const Block& __b) noexcept {
 
 }  // namespace
 
-Abstraction::FileMap generate_file_map(BYTE* const __base, size_t __size) {
+Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __base, size_t __size) {
     using namespace Abstraction;
     FileMap map;
     map.file_size = __size;
@@ -459,7 +459,7 @@ Abstraction::MapEntryType entry_for(k::RecoveryCodes __tag) noexcept {
 
 }  // namespace
 
-Abstraction::FileMap recover_file_structure(BYTE* const __base, size_t __size) {
+Abstraction::FileMap IFE_EXPORT recover_file_structure(BYTE* const __base, size_t __size) {
     using namespace Abstraction;
     FileMap map;
     map.file_size = __size;

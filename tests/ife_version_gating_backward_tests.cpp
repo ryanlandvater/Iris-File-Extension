@@ -48,13 +48,13 @@ constexpr Offset LE_AT = TT_AT + vt::TILE_TABLE::header_size;
 constexpr Offset TO_AT = LE_AT + vt::LAYER_EXTENTS::header_size
                          + 2 * ife_test::LAYER_EXTENT_ENTRY_SIZE;
 constexpr Offset MD_AT = TO_AT + vt::TILE_OFFSETS::header_size + vt::TILE_OFFSETS::entry_size;
-constexpr Offset FILE_END = MD_AT + vt::METADATA::header_size;
+constexpr Offset END_OFFSET = MD_AT + vt::METADATA::header_size;
 
 constexpr std::uint16_t ENTRY_STRIDE_200 = static_cast<std::uint16_t>(ife_test::LAYER_EXTENT_ENTRY_SIZE);
 constexpr std::uint32_t RUNTIME_FLAGS_VALUE = 0xCAFEBABEu;  // written, never read here
 
 std::vector<BYTE> make_200_0_file() {
-    std::vector<BYTE> f(FILE_END, 0);
+    std::vector<BYTE> f(END_OFFSET, 0);
     BYTE* p = f.data();
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
 
@@ -62,7 +62,7 @@ std::vector<BYTE> make_200_0_file() {
     ::IFE::store<std::uint32_t>(at(FH_AT, vt::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
     ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_FILE_HEADER));
-    ::IFE::store<std::uint64_t>(at(FH_AT, vt::FILE_HEADER::offset::FILE_SIZE), FILE_END);
+    ::IFE::store<std::uint64_t>(at(FH_AT, vt::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
     ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::EXTENSION_MAJOR), 200);
     ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::EXTENSION_MINOR), 0);
     ::IFE::store<std::uint32_t>(at(FH_AT, vt::FILE_HEADER::offset::FILE_REVISION), 7);
@@ -132,7 +132,7 @@ void test_200_0_file_read_by_1_0_build() {
     IFE_CHECK(static_cast<bool>(h));
     IFE_CHECK(h.extension_major() == 200);
     IFE_CHECK(h.extension_minor() == 0);
-    IFE_CHECK(h.file_size() == FILE_END);
+    IFE_CHECK(h.file_size() == END_OFFSET);
     IFE_CHECK(h.file_revision() == 7);
 
     // Every 1.0 field reads correctly through the 200.0 layout.
