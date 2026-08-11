@@ -1,0 +1,38 @@
+{
+  "// MARK: - SPECIFICATION IDENTITY": "Who this specification is, what version it is, and the terms it is published under. Held in one document because it belongs to neither the layout nor the constants: both describe the same specification, and a version or copyright stated twice is a version or copyright that can disagree with itself.",
+  "name": "Iris File Extension",
+  "abbreviation": "IFE",
+  "// MARK: - PUBLICATION SOURCES": "Where the specification and its reference implementation live. Stated here rather than typed into the narrative so the document, the README and any future binding cannot disagree about the address.",
+  "repository": "https://github.com/IrisDigitalPathology/Iris-File-Extension",
+  "// MARK: - VERSION": "The specification version, emitted as IFE_SCHEMA_VERSION_MAJOR / _MINOR. Every field's 'since' label is bounded by this: a version group newer than the document is a spec error. Append-only is inviolable, so a bump never invalidates a file written under an earlier one.",
+  "version": {
+    "major": 1,
+    "minor": 1
+  },
+  "status": "draft",
+  "// MARK: - REVISION HISTORY": "One entry per published version, oldest first, rendered into the document's Revision History. Authorship and ratification belong with the specification's identity rather than in the narrative, for the same reason the version does: stated once, they cannot disagree with themselves. A version bump without an entry here is a spec error, and a ratified entry without a date is too.",
+  "revisions": [
+    {
+      "version": "1.0",
+      "status": "ratified",
+      "date": "2025-05",
+      "authors": [
+        "Ryan Landvater MD",
+        "Mustafa Yousif MD",
+        "Ulysses Balis MD"
+      ],
+      "summary": "Initial specification. Defines the file header, tile table and metadata blocks; the universal block header and its recovery tags; the array and byte-array primitives; layer extents and tile offsets; attributes, associated images, ICC colour profiles and annotations. Establishes little-endian dense packing, the derived-offset rule, and the append-only versioning invariant."
+    },
+    {
+      "version": "1.1",
+      "status": "draft",
+      "authors": [
+        "Ryan Landvater MD"
+      ],
+      "summary": "Adds focal-plane support (PLANES on the layer extent entry, MICRONS_PLANE spacing), a configurable tile edge length (TILE_SIZE), an optional self-describing tile frame, a clinical metadata block reached by a new METADATA offset, carrying a stream whose serialization -- HL7 v2, FHIR as JSON, or FastFHIR -- is declared by an ENCODING field rather than inferred from the bytes, and redefines METADATA_I2S as Iris Interoperability Specification conformance. The two metadata channels divide by shape as well as by subject: laboratory metadata is key-value and stays in the attribute arrays under I2S or DICOM, while the clinical resource graph goes in the stream. Only the stream carries identity, so a slide is de-identified by dropping it alone."
+    }
+  ],
+  "// MARK: - PUBLICATION": "Legal terms, reproduced verbatim into generated file banners and the published document. The single source for both.",
+  "copyright": "Copyright 2025-2026 Iris Developers",
+  "license": "CC BY-ND 4.0"
+}

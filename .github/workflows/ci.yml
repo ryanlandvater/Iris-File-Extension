@@ -1,0 +1,172 @@
+name: CI
+
+# The gates, in one place. Five jobs, each pinning a
+# property nothing else can:
+#
+#   spec        the JSON is self-consistent, and generated_source/ is what the
+#               current spec produces (the drift gate)
+#   tests       the generated layer and the primitives behave -- including the
+#               v1 oracle, the only test that reads bytes the shipped encoder
+#               wrote rather than another description of the format. Run on
+#               GCC, Clang, AppleClang and MSVC, because an include that one
+#               toolchain resolves transitively is a bug on the others.
+#   sanitizers  the packed loads read exactly 3 and exactly 5 bytes. Without
+#               ASan those tests are ordinary passing round-trips and prove
+#               nothing
+#   wasm        the project's only __EMSCRIPTEN__ branch. Every native build
+#               takes the other side of that #if, so without this job the
+#               ranged-fetch path is never compiled at all
+#   document    the specification renders: a schema change that breaks it
+#               fails here rather than at publication
+#   big-endian  IFE is little-endian on disk at every version, which is a
+#               claim about every host, not about the one you build on
+#
+# The pattern across the last three: a branch no developer machine executes is
+# a branch no test can check, so each gets a job rather than a comment.
+
+on:
+  push:
+    branches: [main, 'spec/**']
+  pull_request:
+
+jobs:
+  spec:
+    name: spec documents and drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m generator --validate
+      - run: python3 -m generator
+      - run: python3 -m generator --check
+      # Runs here rather than in the MSVC job so a Windows-only defect fails
+      # in twenty seconds on Linux instead of after a full matrix build. It
+      # replaces none of that job; it just gets there first.
+      - name: Portability lint
+        run: python3 tools/portability_lint.py
+
+  tests:
+    name: build and test (${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, compiler: GCC}
+          - {os: ubuntu-latest, compiler: Clang, cxx: clang++}
+          - {os: macos-latest, compiler: AppleClang}
+          - {os: windows-latest, compiler: MSVC}
+    steps:
+      - uses: actions/checkout@v4
+      # The configuration is named three times on purpose. Visual Studio is a
+      # multi-config generator: it ignores CMAKE_BUILD_TYPE and picks a
+      # configuration when it builds and again when it tests. Omit --config
+      # and it silently builds Debug; omit ctest -C and every test reports
+      # "Test not available without configuration" and counts as a failure,
+      # which is what this job did. Makefiles and Ninja ignore the two flags
+      # and honour the cache variable instead, so naming all three is what
+      # makes one line work on every runner.
+      - name: Configure
+        run: >
+          cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+          -DCMAKE_BUILD_TYPE=Release
+          ${{ matrix.cxx && format('-DCMAKE_CXX_COMPILER={0}', matrix.cxx) || '' }}
+      - run: cmake --build build --config Release -j
+      - run: ctest --test-dir build -C Release --output-on-failure
+
+  sanitizers:
+    name: address and undefined behaviour
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with ASan + UBSan
+        run: >
+          cmake -B build-asan -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - run: cmake --build build-asan -j
+      - run: ctest --test-dir build-asan --output-on-failure
+
+  document:
+    name: specification document
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+      - run: gem install asciidoctor asciidoctor-pdf
+
+      # A schema change that breaks the document fails here rather than at
+      # publication. The narrative is hand-written; every layout and value
+      # table in it is an include:: of generated content, so a renamed block
+      # or a deleted enumeration surfaces as an unresolved include.
+      - name: Build HTML and PDF
+        run: spec/build_document.sh "$GITHUB_WORKSPACE/build/doc"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ife-specification
+          path: build/doc/
+
+  wasm:
+    name: emscripten (the residency branch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+
+      # src/IFE_Window.cpp holds the project's only __EMSCRIPTEN__ branch, and
+      # no other job compiles it: every native build takes the other side of
+      # the #if. Without this step the ranged-fetch path -- EM_ASYNC_JS body
+      # included -- is never seen by a compiler at all.
+      - name: Fetch dependencies (native)
+        run: cmake -B build
+      - name: Compile the Emscripten branch
+        run: |
+          emcc -std=c++20 -Werror -c src/IFE_Window.cpp \
+            -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv \
+            -o /tmp/ife_window_wasm.o
+
+  big-endian:
+    name: big-endian (s390x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+
+      # Native configure first: it fetches Iris-Headers into .deps/ and renders
+      # generated_source/, so the emulated container only has to compile. Doing
+      # the fetch and the generation under emulation would cost minutes for no
+      # extra coverage -- neither step is architecture dependent.
+      - name: Fetch dependencies and generate (native)
+        run: cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
+
+      # The three suites that touch bytes. ife_wire_parity_tests is a wall of
+      # static_asserts over generated constants and cannot vary by host, so it
+      # is left to the native job.
+      #
+      # The oracle earns its place here twice over: it is the shipped encoder
+      # writing and the generated layer reading, both on a host whose byte
+      # order is the opposite of every machine either was developed on.
+      - name: Compile and run on s390x
+        run: |
+          docker run --rm --platform linux/s390x -v "$PWD":/repo -w /repo alpine:latest sh -c '
+            set -e
+            apk add --no-cache g++ >/dev/null
+            echo "arch: $(uname -m)"
+            INC="-I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
+            g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/window tests/ife_window_tests.cpp src/IFE_Window.cpp
+            g++ -std=c++20 -O2 $INC -o /tmp/oracle tests/ife_v1_oracle_tests.cpp \
+                src/IrisCodecExtension.cpp generated_source/IFE_Blocks.cpp \
+                .deps/irisheaders-src/src/IrisBuffer.cpp
+            /tmp/bytes
+            /tmp/blocks
+            /tmp/window
+            /tmp/oracle
+          '

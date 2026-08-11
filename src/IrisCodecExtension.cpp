@@ -45,6 +45,7 @@
 #include "IrisCodecExtension.hpp"
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#include <emscripten/bind.h>
 #endif
 #ifdef _MSC_VER
 static_assert(sizeof(short)     == 2);
@@ -124,12 +125,21 @@ inline uint64_t F64_CONVERT_NON_IEEE (double val);
 inline uint8_t  LOAD_U8      (const void* ptr){return *static_cast<const uint8_t*>(ptr);}
 inline uint64_t __LE_LOAD_U64(const void* ptr){return load_unaligned<uint64_t>(ptr);}
 inline uint64_t __BE_LOAD_U64(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr));}
-inline uint64_t __LE_LOAD_U40(const void* ptr){return load_unaligned<uint64_t>(ptr)&U40_MASK;}
-inline uint64_t __BE_LOAD_U40(const void* ptr){return __builtin_bswap64(__LE_LOAD_U64(ptr))&U40_MASK;}
+// Exact-width u24/u40 reads, composed byte by byte.
+//
+// Two things are fixed here at once. Loading 8 bytes for a 5-byte field (or 4
+// for a 3-byte one) walks past the end of the mapping when the field is the
+// last thing in a file — the mask hid the garbage instead of preventing the
+// read. And composing arithmetically means wire byte i always carries bits
+// 8i..8i+7 whatever the host does, so there is no LE/BE pair to dispatch
+// between: one function is correct everywhere. A hand-written __BE_ variant
+// here would be a function no available host executes and no test can reach,
+// which is how the old one came to mask a u24 with U40_MASK unnoticed.
+// The generated IFE_Bytes layer composes the same way, for the same reason.
+inline uint64_t LOAD_U40(const void* ptr){const auto p=static_cast<const uint8_t*>(ptr);return uint64_t(p[0])|(uint64_t(p[1])<<8)|(uint64_t(p[2])<<16)|(uint64_t(p[3])<<24)|(uint64_t(p[4])<<32);}
 inline uint32_t __LE_LOAD_U32(const void* ptr){return load_unaligned<uint32_t>(ptr);}
 inline uint32_t __BE_LOAD_U32(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr));}
-inline uint32_t __LE_LOAD_U24(const void* ptr){return load_unaligned<uint32_t>(ptr)&U24_MASK;}
-inline uint32_t __BE_LOAD_U24(const void* ptr){return __builtin_bswap32(__LE_LOAD_U32(ptr))&U40_MASK;}
+inline uint32_t LOAD_U24(const void* ptr){const auto p=static_cast<const uint8_t*>(ptr);return uint32_t(p[0])|(uint32_t(p[1])<<8)|(uint32_t(p[2])<<16);}
 inline uint16_t __LE_LOAD_U16(const void* ptr){return load_unaligned<uint16_t>(ptr);}
 inline uint16_t __BE_LOAD_U16(const void* ptr){return __builtin_bswap16(__LE_LOAD_U16(ptr));}
 inline float __LE_LOAD_F32_IE3(const void* ptr){return std::bit_cast<float>(__LE_LOAD_U32(ptr));}
@@ -163,9 +173,9 @@ static std::function<float(const void*)>    __BE_LOAD_F32   = is_ieee754    ? __
 static std::function<void(void*,float)>     __LE_STORE_F32  = is_ieee754    ? __LE_STORE_F32_IE3 : __LE_STORE_F32_NON;
 static std::function<void(void*,float)>     __BE_STORE_F32  = is_ieee754    ? __BE_STORE_F32_IE3 : __BE_STORE_F32_NON;
 static std::function<uint64_t(const void*)> LOAD_U64        = little_endian ? __LE_LOAD_U64  : __BE_LOAD_U64;
-static std::function<uint64_t(const void*)> LOAD_U40        = little_endian ? __LE_LOAD_U40  : __BE_LOAD_U40;
+// LOAD_U40 and LOAD_U24 are plain functions above: host-independent, so there
+// is nothing to select between and no indirect call to pay for.
 static std::function<uint32_t(const void*)> LOAD_U32        = little_endian ? __LE_LOAD_U32  : __BE_LOAD_U32;
-static std::function<uint32_t(const void*)> LOAD_U24        = little_endian ? __LE_LOAD_U24  : __BE_LOAD_U24;
 static std::function<uint16_t(const void*)> LOAD_U16        = little_endian ? __LE_LOAD_U16  : __BE_LOAD_U16;
 static std::function<float(const void*)>    LOAD_F32        = little_endian ? __LE_LOAD_F32  : __BE_LOAD_F32;
 static std::function<void(void*,uint64_t)>  STORE_U64       = little_endian ? __LE_STORE_U64 : __BE_STORE_U64;
@@ -274,6 +284,9 @@ constexpr uint32_t IFE_VERSION = IRIS_EXTENSION_MAJOR<<16|IRIS_EXTENSION_MINOR;
 bool is_Iris_Codec_file (BYTE* const __base, size_t __size)
 {
     using namespace Serialization;
+    // The reads below touch bytes 0..9; refuse a shorter mapping up front
+    // (the size parameter was otherwise unused).
+    if (__size < FILE_HEADER::HEADER_V1_0_SIZE) return false;
     // There's a great chance that if these pass, it's an Iris file.
     if (LOAD_U32(__base + FILE_HEADER::MAGIC_BYTES_OFFSET) != MAGIC_BYTES) return false;
     if (LOAD_U16(__base + FILE_HEADER::RECOVERY) != RECOVER_HEADER) return false;
@@ -2239,32 +2252,42 @@ void STORE_ATTRIBUTES_BYTES (BYTE* const __base, Offset offset, const Attributes
         case METADATA_I2S:
         case METADATA_DICOM: break;
         case METADATA_UNDEFINED:
-            throw std::runtime_error("Failed to store attributes sizes -- undefined metadata attribute type");
+            throw std::runtime_error("Failed to store attributes bytes -- undefined metadata attribute type");
     }
     #endif
     
+    // Validate the whole payload before writing anything: a size rejected
+    // after the memcpy below leaves a half-written block behind.
+    Size size = 0;
+    for (auto&& attribute : attributes) {
+        if (attribute.first.size() > UINT16_MAX) throw std::runtime_error
+            ("Failed to store attributes bytes -- attribute key too long (" +
+             std::to_string(attribute.first.size()) +
+             " bytes). Per the IFE specification Section 2.4.10, the key length shall fit the 16-bit KEY_SIZE field.");
+        if (attribute.second.size() > UINT32_MAX) throw std::runtime_error
+            ("Failed to store attributes bytes -- attribute value too long (" +
+             std::to_string(attribute.second.size()) +
+             " bytes); VALUE_SIZE is a 32-bit field.");
+        size += attribute.first.size();
+        size += attribute.second.size();
+    }
+    if (size > UINT32_MAX) throw std::runtime_error
+        ("Failed to store attributes bytes -- attribute bytes array length ("+
+         std::to_string(size)+
+         " bytes) exceeds the 32-bit size limit.\n Per the IFE specification Section 2.4.10, the number entry shall encode the total byte size of the attribute byte array and shall not exceed the 32-bit integer max value (4.29 GB).");
+    
     auto __ptr = __base + offset;
-    Size size  = 0;
     STORE_U64(__ptr + ATTRIBUTES_BYTES::VALIDATION, offset);
     STORE_U16(__ptr + ATTRIBUTES_BYTES::RECOVERY, RECOVER_ATTRIBUTES_BYTES);
     __ptr += ATTRIBUTES_BYTES::HEADER_SIZE;
     
     for (auto&& attribute : attributes) {
-        uint16_t key_size = U16_CAST(attribute.first.size());
-        std::memcpy(__ptr, attribute.first.data(), key_size);
-        __ptr += key_size;
-        size  += key_size;
-        
-        uint32_t value_size = U32_CAST(attribute.second.size());
-        std::memcpy(__ptr, attribute.second.data(), value_size);
-        __ptr += value_size;
-        size  += value_size;
+        std::memcpy(__ptr, attribute.first.data(),  U16_CAST(attribute.first.size()));
+        __ptr += U16_CAST(attribute.first.size());
+        std::memcpy(__ptr, attribute.second.data(), U32_CAST(attribute.second.size()));
+        __ptr += U32_CAST(attribute.second.size());
     }
     
-    if (size > UINT32_MAX) throw std::runtime_error
-        ("Failed to store attributes bytes -- attribute bytes array length ("+
-         std::to_string(size)+
-         " bytes) exceeds key 32-bit size limit.\n Per the IFE specification Section 2.4.10, The number entry shall encode the total byte size of the annotation byte array and shall not exceed the 32-bit integer max value (4.29 GB).");
     STORE_U32(__base + offset + ATTRIBUTES_BYTES::ENTRY_NUMBER, U32_CAST(size));
 }
 #endif
@@ -2466,14 +2489,14 @@ void STORE_IMAGES_ARRAY (BYTE* const __base, const AssociatedImageCreateInfo& in
         #if IrisCodecExtensionValidateEncoding
         if (image.offset == NULL_OFFSET) throw std::runtime_error
             ("Failed to store associated image -- NULL_OFFSET provided as location");
-        if (image.info.width == 0 || image.info.width > UINT32_MAX) throw std::runtime_error
+        if (image.info.width == 0) throw std::runtime_error
             ("Failed to store associated image -- invalid width (" +
              std::to_string(image.info.width)+
-             " px). Per the IFE specification Section 2.4.6, width parameter shall encode the horizontal pixel extent of the encoded image and shall be greater than zero but less than the 32-bit max value.");
-        if (image.info.height == 0 || image.info.height > UINT32_MAX) throw std::runtime_error
+             " px). Per the IFE specification Section 2.4.6, the width parameter shall encode the horizontal pixel extent of the encoded image and shall be greater than zero but less than the 32-bit max value.");
+        if (image.info.height == 0) throw std::runtime_error
             ("Failed to store associated image -- invalid height (" +
-             std::to_string(image.info.width)+
-             " px). Per the IFE specification Section 2.4.6, height parameter shall encode the horizontal pixel extent of the encoded image and shall be greater than zero but less than the 32-bit max value.");
+             std::to_string(image.info.height)+
+             " px). Per the IFE specification Section 2.4.6, the height parameter shall encode the vertical pixel extent of the encoded image and shall be greater than zero but less than the 32-bit max value.");
         if (VALIDATE_IMAGE_ENCODING_TYPE(image.info.encoding, IFE_VERSION) == false) throw std::runtime_error
             ("Failed to store associated image -- undefined compression encoding (" +
              std::to_string(image.info.encoding) +
@@ -2508,7 +2531,10 @@ Size IMAGE_BYTES::size(const BYTE *const __base) const
     const auto TITLE    = LOAD_U16(__ptr + TITLE_SIZE);
     const auto BYTES    = LOAD_U32(__ptr + IMAGE_SIZE);
     
-    Size size = HEADER_V1_0_SIZE + TITLE * BYTES;
+    // Payload is the label plus the stream (TITLE + BYTES), never their
+    // product; the store side (SIZE_IMAGES_BYTES) and the bounds check
+    // in validate_full agree on the sum.
+    Size size = HEADER_V1_0_SIZE + TITLE + BYTES;
     if (__version > IRIS_EXTENSION_1_0); else return size;
     
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
@@ -2727,15 +2753,17 @@ void STORE_ICC_COLOR_PROFILE(BYTE *const __base, Offset offset, const std::strin
 {
     #if IrisCodecExtensionValidateEncoding
     if (offset == NULL_OFFSET) throw std::runtime_error
-        ("Failed to store associated image bytes -- NULL_OFFSET provided as location");
+        ("Failed to store ICC color profile -- NULL_OFFSET provided as location");
     if (color_profile.size() > UINT32_MAX) throw std::runtime_error
-        ("Failed to store associated image bytes -- profile too long. Per the IFE specification Section 2.4.8, an ICC color profile shall be shorter in length than the 32-bit max (4.29GB).");
+        ("Failed to store ICC color profile -- profile too long. Per the IFE specification Section 2.4.8, an ICC color profile shall be shorter in length than the 32-bit max (4.29GB).");
     #endif
     
     auto __ptr = __base + offset;
     STORE_U64(__ptr + ICC_PROFILE::VALIDATION, offset);
     STORE_U16(__ptr + ICC_PROFILE::RECOVERY, RECOVER_ICC_PROFILE);
-    STORE_U16(__ptr + ICC_PROFILE::ENTRY_NUMBER, U32_CAST(color_profile.size()));
+    // ENTRY_NUMBER is a u32 field; the previous STORE_U16 truncated every
+    // profile >= 64 KiB, which the reader then sized and bounds-checked wrong.
+    STORE_U32(__ptr + ICC_PROFILE::ENTRY_NUMBER, U32_CAST(color_profile.size()));
     memcpy(__ptr + ICC_PROFILE::HEADER_SIZE, color_profile.data(), color_profile.size());
     return;
 }
@@ -2975,10 +3003,21 @@ Size SIZE_ANNOTATION_ARRAY(const AnnotationArrayCreateInfo &info)
 {
     #if IrisCodecExtensionValidateEncoding
     Size size = ANNOTATIONS::HEADER_SIZE;
-    for (auto&& annotation : info.annotations)
-        if (annotation.identifier == Abstraction::Annotation::NULL_ID) printf
-                ("WARNING: Annotation does not contain an identifier. Per the IFE Specification, Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.");
-        else size += ANNOTATION_ENTRY::SIZE;
+    for (auto&& annotation : info.annotations) {
+        // Skip exactly what the store loop skips, so the precomputed size
+        // and the written block agree: NULL identifiers, absent byte
+        // arrays and undefined formats carry no entry on disk.
+        if (annotation.identifier >= Abstraction::Annotation::NULL_ID) continue;
+        if (annotation.bytesOffset == NULL_OFFSET) continue;
+        switch (annotation.type) {
+            case Iris::ANNOTATION_PNG:
+            case Iris::ANNOTATION_JPEG:
+            case Iris::ANNOTATION_SVG:
+            case Iris::ANNOTATION_TEXT: break;
+            default: continue;
+        }
+        size += ANNOTATION_ENTRY::SIZE;
+    }
     return size;
     #else
     return ANNOTATION_ARRAY::HEADER_SIZE +
@@ -2994,7 +3033,7 @@ void STORE_ANNOTATION_ARRAY(BYTE *const __base, const AnnotationArrayCreateInfo 
     if (info.annotations.size() > UINT32_MAX) throw std::runtime_error
         ("Failed to store annotations array -- array too large (" +
          std::to_string(info.annotations.size())+
-         "). Per the IFE specification Section 2.4.9, the number of associated / ancillary images must be less than the 32-bit max value.");
+         "). Per the IFE specification Section 2.4.9, the number of annotations must be less than the 32-bit max value.");
     #endif
     
     auto __ptr  = __base + info.offset;
@@ -3023,11 +3062,14 @@ void STORE_ANNOTATION_ARRAY(BYTE *const __base, const AnnotationArrayCreateInfo 
                 ("WARNING: Annotation (ID %d) does not contain a valid annotation type. Per the IFE Specification, Section 2.4.9, each annotation within the annotations array should be one of the valid formats (Enumeration 2.2.6).", annotation.identifier);
                     continue;
         }
-        if (annotation.parent > Annotation::NULL_ID) { printf
+        if (annotation.parent > Annotation::NULL_ID) printf
             ("WARNING: Annotation (ID %d) parent identifier is out of valid 24-bit range. Per the IFE Specification, Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier. The invalid parent identifier has been replaced with NULL_ID", annotation.identifier);
-            const_cast<uint32_t&>(annotation.parent) = Annotation::NULL_ID;
-        }
         #endif
+        
+        // Clamp locally: mutating the caller's CreateInfo through a
+        // const_cast was a side effect no caller could expect.
+        const uint32_t parent = annotation.parent > Annotation::NULL_ID
+            ? Annotation::NULL_ID : annotation.parent;
         
         STORE_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER,     annotation.identifier);
         STORE_U64(__ptr + ANNOTATION_ENTRY::BYTES_OFFSET,   annotation.bytesOffset);
@@ -3038,7 +3080,7 @@ void STORE_ANNOTATION_ARRAY(BYTE *const __base, const AnnotationArrayCreateInfo 
         STORE_F32(__ptr + ANNOTATION_ENTRY::Y_SIZE,         annotation.ySize);
         STORE_U32(__ptr + ANNOTATION_ENTRY::WIDTH,          annotation.width);
         STORE_U32(__ptr + ANNOTATION_ENTRY::HEIGHT,         annotation.height);
-        STORE_U24(__ptr + ANNOTATION_ENTRY::PARENT,         annotation.parent);
+        STORE_U24(__ptr + ANNOTATION_ENTRY::PARENT,         parent);
         __ptr   += ANNOTATION_ENTRY::SIZE;
         entries += 1;
     }
@@ -3143,7 +3185,9 @@ void STORE_ANNOTATION_BYTES(BYTE *const __base, Offset offset, const IrisCodec::
     STORE_U16(__ptr + ANNOTATION_BYTES::RECOVERY, RECOVER_ANNOTATION_BYTES);
     STORE_U32(__ptr + ANNOTATION_BYTES::ENTRY_NUMBER, U32_CAST(bytes->size()));
     
-    __ptr += IMAGE_BYTES::HEADER_SIZE;
+    // ANNOTATION_BYTES' header is 14 B (no TITLE_SIZE/IMAGE_SIZE); using
+    // IMAGE_BYTES' 16 B shifted every payload two bytes past its header.
+    __ptr += ANNOTATION_BYTES::HEADER_SIZE;
     memcpy(__ptr, bytes->data(), bytes->size());
     return;
 }
@@ -3207,8 +3251,8 @@ Result ANNOTATION_GROUP_SIZES::validate_full (const BYTE *const __base, Size& ex
     const BYTE* __array   = __base + start;
     expected_bytes  = 0;
     for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
-        expected_bytes += LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE);
-        expected_bytes += LOAD_U24(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER)
+        expected_bytes += LOAD_U16(__array + ANNOTATION_GROUP_SIZE::LABEL_SIZE);
+        expected_bytes += LOAD_U24(__array + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER)
         * TYPE_SIZE_UINT24 /*byte size of Annotation Identifier*/;
         
         if (__version > IRIS_EXTENSION_1_0); else continue;
@@ -3247,8 +3291,8 @@ ANNOTATION_GROUP_SIZES::GroupSizes ANNOTATION_GROUP_SIZES::read_group_sizes(cons
     const BYTE* __array   = __base + start;
     for (auto GI = 0; GI < ENTRIES; ++GI, __array+=STEP) {
         sizes[GI] = {
-            LOAD_U16(__ptr + ANNOTATION_GROUP_SIZE::LABEL_SIZE),
-            LOAD_U32(__ptr + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER),
+            LOAD_U16(__array + ANNOTATION_GROUP_SIZE::LABEL_SIZE),
+            LOAD_U24(__array + ANNOTATION_GROUP_SIZE::ENTRIES_NUMBER),
         };
         
         if (__version > IRIS_EXTENSION_1_0); else continue;
@@ -3314,7 +3358,7 @@ Result ANNOTATION_GROUP_BYTES::validate_full (const BYTE *const __base, Size exp
          std::to_string(BYTES) +
          ")");
     if (__offset + BYTES > __size) return Result
-        (IRIS_FAILURE, "ANNOTATION_GROUP_BYTES failed validation -- full attributes byte array block (location "+
+        (IRIS_FAILURE, "ANNOTATION_GROUP_BYTES failed validation -- full annotation group byte array block (location "+
          std::to_string(__offset)+ " - " +
          std::to_string(__offset + LOAD_U32(__ptr + ENTRY_NUMBER))+
          ") extends beyond end of file.");

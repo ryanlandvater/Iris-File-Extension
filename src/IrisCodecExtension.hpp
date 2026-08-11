@@ -48,30 +48,10 @@
 #ifndef IrisCodecExtension_hpp
 #define IrisCodecExtension_hpp
 
-// Should we export the IFE API for low-level calls to the IFE bytestream.
-// If being compiled as a part of another project and you do not want to
-// or need to export calls that directly manipulate the byte stream,
-// set this preprocessor macro to false.
-#ifndef IFE_EXPORT_API
-#define IFE_EXPORT_API      false
-#endif
-#if IFE_EXPORT_API
-    #ifndef IFE_EXPORT
-    #if defined(_MSC_VER)
-    #define IFE_EXPORT      __declspec(dllexport)
-    #else
-    #define IFE_EXPORT      __attribute__ ((visibility ("default")))
-#endif
-    #endif
-#else
-    #ifndef IFE_EXPORT
-    #if defined(_MSC_VER)
-    #define IFE_EXPORT      __declspec(dllimport)
-    #else
-    #define IFE_EXPORT      // Default is hidden (see CMakeLists)
-    #endif
-    #endif
-#endif
+// The IFE_EXPORT scheme moved to its own header so the generated successor
+// shares one definition with this one rather than duplicating it. Semantics
+// unchanged; see IFE_Export.hpp for what is deliberately not exported.
+#include "IFE_Export.hpp"
 
 namespace IrisCodec {
 using namespace Iris;
@@ -82,7 +62,12 @@ constexpr uint16_t IRIS_EXTENSION_MAJOR = 1;
 constexpr uint16_t IRIS_EXTENSION_MINOR = 0;
 
 // Iris' Magic Number is ASCII for 'Iris' 49 72 69 73
-#define MAGIC_BYTES 0x49726973
+// Deliberately not a macro: a macro has no namespace and clobbered the
+// generated IFE::MAGIC_BYTES, so the hand-written and generated layers could
+// not appear in one translation unit without an #undef. As a constexpr it
+// lives in IrisCodec:: and the two coexist, which is what lets a consumer
+// migrate file by file rather than all at once.
+constexpr uint32_t MAGIC_BYTES = 0x49726973;
 
 // These are the header and array datablocks defined in this file:
 namespace Serialization {
@@ -266,11 +251,19 @@ struct IFE_EXPORT AssociatedImage {
     Offset          offset      = NULL_OFFSET;
     Size            byteSize    = 0;
     Info            info;
+    bool operator==(const AssociatedImage& o) const noexcept {
+        return offset == o.offset && byteSize == o.byteSize
+            && info.imageLabel == o.info.imageLabel
+            && info.width == o.info.width && info.height == o.info.height
+            && info.encoding == o.info.encoding
+            && info.sourceFormat == o.info.sourceFormat
+            && info.orientation == o.info.orientation;
+    }
 };
 /**
  * @brief Label-image dictionary for associated images
  */
-using AssociatedImages = IFE_EXPORT std::unordered_map<std::string, AssociatedImage>;
+using AssociatedImages = std::unordered_map<std::string, AssociatedImage>;
 /**
  * @brief Annotation abstraction containing on-slide annotations by annotation
  * identifier (24-bit value) and annotation groups by group name (string)
@@ -292,11 +285,22 @@ struct IFE_EXPORT Annotation {
     uint32_t    width       = 0;
     uint32_t    height      = 0;
     uint32_t    parent      = 0;
+    // MSVC's STL instantiates pair equality on unordered_map values where
+    // GCC/Clang stay lazy; without this the map cannot be instantiated there.
+    bool operator==(const Annotation& o) const noexcept {
+        return offset == o.offset && byteSize == o.byteSize && type == o.type
+            && xLocation == o.xLocation && yLocation == o.yLocation
+            && xSize == o.xSize && ySize == o.ySize
+            && width == o.width && height == o.height && parent == o.parent;
+    }
 };
 struct IFE_EXPORT AnnotationGroup {
     Offset      offset      = NULL_OFFSET;
     uint32_t    number      = 0;
     Size        byteSize    () {return number * 3;}
+    bool operator==(const AnnotationGroup& o) const noexcept {
+        return offset == o.offset && number == o.number;
+    }
 };
 struct IFE_EXPORT Annotations :
 public std::unordered_map<Annotation::Identifier, Annotation> {

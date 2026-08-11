@@ -1,0 +1,741 @@
+= Iris Digital Slide File Extension: File Structure Technical Specification
+:doctype: book
+:title-page:
+:toc: left
+:toclevels: 3
+:sectnums:
+:sectnumlevels: 4
+:sectanchors:
+:sectlinks:
+:xrefstyle: full
+:icons: font
+:source-highlighter: rouge
+// Where the generated tables live. Overridden on the command line so the
+// document builds from a build tree as well as from the source tree.
+:generated: ../generated_docs
+include::{generated}/attributes.adoc[]
+
+[discrete]
+== Revision History
+
+include::{generated}/revision_history.adoc[]
+
+== Introduction
+
+=== Purpose
+
+// Narrative carried from the ratified v1.0 specification.
+The Iris Digital Slide file structure specification defines a portable
+serialization format for digital pathology whole slide image (WSI) pixel data
+and metadata: a highly performant binary structure amenable to massively
+multi-threaded encoding and immediate multi-threaded random access; a
+dynamically defined file layout that delegates information ordering to the
+encoder, allows optional data-blocks and unobtrusive file updates, and
+provides complete bi-directional file and encoder version compatibility; and
+a secure format that validates structures, prevents file-bound and buffer
+overflow violations, and recovers the file structure if header metadata is
+corrupted.
+
+[[ife-resources]]
+=== Official Implementation and Resources
+
+This specification is published as a *machine-readable schema* rather than as
+prose alone. Three JSON documents state the format's identity, its byte
+structure, and its enumerated values; every layout table and value table in
+this document is generated from them, so a table here cannot disagree with the
+schema an implementation is built against.
+
+Implementers *should* consume the schema rather than transcribe the tables in
+this document. A reference implementation is published from the same schema at
+the address below, and may be consumed in any of the following forms:
+
+* *Header-only.* Define `IFE_HEADER_ONLY` before including the generated
+  block header; the definitions fold in and nothing needs linking. Appropriate
+  where the byte layer should inline.
+* *Static library.* Linked into an application at build time.
+* *Shared library.* Dynamically linked, exporting the semantic API — file
+  validation, structure abstraction, file mapping and recovery. The generated
+  byte layer is deliberately not exported; it is reached header-only.
+* *WebAssembly.* The same sources compile under Emscripten, with remote byte
+  ranges fetched on demand rather than memory-mapped.
+
+
+The schema, **the reference implementation**, this document's sources, and the
+release artifacts are all available at:
+
+{repository}[IrisDigitalPathology/Iris-File-Extension]
+
+Two projects implement this specification, and they divide by layer and granularity. The reference implementation, below, provides the byte structure and its validation: the blocks, offsets and values this document defines. The Iris Codec Community Module builds on it and provides image compression, decompression and a high-level slide API:
+
+https://github.com/IrisDigitalPathology/Iris-Codec[IrisDigitalPathology/Iris-Codec]
+
+Implementers writing an encoder or decoder want the schema and the reference
+implementation. Implementers who simply need to *open* a slide want the Codec
+module. Each publishes bindings for its own layer, so a caller works at the
+level the task requires rather than at the level a language binding happens to
+expose. The reference implementation presently builds {cpp}; bindings that
+expose this layer to other languages are published alongside it as they become
+available.
+
+
+[[ife-definitions]]
+=== Definitions
+
+[[ife-terms]]
+==== Terms
+
+The use of "*shall*" indicates a mandatory requirement within the standard.
+Deviation from "*shall statements*" violates the standard.
+
+The use of "*should*" indicates an optional but suggested method for
+information formatting. Adhering to "*should statements*" may reduce future
+re-formatting for compliance, ensures non-explicitly defined requirements are
+intuitively defined, and follows good practice.
+
+The use of "*may*" indicates optional implementation and/or formatting without
+explicit requirements. Such statements should be implemented if contextually
+relevant circumstances arise but use or lack thereof does not explicitly
+violate the standard.
+
+The use of the term "*implementation*" or "*implementations*" shall refer to
+computer code, either source code or machine code, with the capacity to execute
+computational tasks in a way that adheres to this standard.
+
+The use of the term "*offset pointer*" or "*offset*" shall refer to an unsigned
+64-bit integer value corresponding to the number of bytes from the start of
+file (SOF) towards the end of file (EOF) that the first byte of a file
+structure element (<<ife-file-structure-elements>>) is located.
+
+The use of the term "*slide tile*" or "*tile*" shall correspond with a square
+sub-image comprising one or more color channels in a compressed or
+uncompressed format. The edge length of that square is the *tile size*, given
+by TILE_TABLE.TILE_SIZE (<<ife-tile-table>>) and 256 pixels unless a file
+states otherwise, so a tile is an array of 65,536 pixel values by default.
+
+The use of the term "*slide layer*" or "*layer*" shall correspond with a series
+of slide tiles that comprise a view of a whole slide image at a single defined
+magnification (scale). When arranged in a listed format of _N_ length, layers
+shall be arranged from lowest resolution (scale), index 0, to greatest
+resolution (scale), index _N_ − 1.
+
+NOTE: This layer arrangement is opposite to the layer arrangements in some
+contemporary API at the time of publication, such as OpenSlide. The IFE was
+designed from the perspective of integration with viewer systems, which will
+display the lowest-resolution layer first.
+
+The use of the term "*magnification*" shall differ from the term "*scale*" in
+that magnification shall refer to the true microscopic optical magnification
+whereas scale shall refer to the relative resolution of layers to a standard
+base resolution. The magnification shall be related to the scale as the product
+of the scale with an empirically derived scaling coefficient.
+
+The use of the term "*slide space*" or "*fractional tile location*" shall refer
+to a horizontal (_X_) and vertical (_Y_) floating point (decimal) spatial axis
+that can be used to define a location within a rendered slide that is layer
+independent. The value along an axis shall be defined as the pixel location at
+the *highest-resolution* layer (_l~N−1~_) divided by the tile size to give the
+decimal number of highest-resolution layer tiles such that a location or size
+(_x_, _y_) in *slide space* ranges from ([0, _T~(N−1)x~_], [0, _T~(N−1)y~_])
+where the origin (0, 0) is defined as the upper-left of the slide and the point
+(_T~(N−1)x~_, _T~(N−1)y~_) is defined as the lower-right of the slide using the
+same axis as the global slide indexing scheme (<<ife-tile-offsets>>), layer
+_N_ − 1.
+
+NOTE: Slide space is a single-precision float in fractional tiles, not an
+integer pixel count and not a fixed-point pair. Float is the shader's native
+type, so a coordinate reaches a GPU unconverted; the 24-bit significand
+represents every integer tile index exactly to 2^24^ and holds positional
+accuracy near one hundredth of a pixel across a large slide.
+
+[[ife-abbreviations]]
+==== Symbols and Abbreviations
+
+// `horizontal` puts the definition beside the term rather than beneath it: a
+// dozen two-word expansions each claiming two lines wastes most of a page.
+[horizontal]
+DICOM:: Digital Imaging and Communications in Medicine.
+EMR:: eletronic medical record (system)
+EOF:: end of file.
+FHIR:: Fast Healthcare Interoperability Resources (HL7).
+HL7:: Health Level Seven International.
+I2S:: Iris Interoperability Specification.
+ICC:: International Color Consortium.
+IEC:: International Electrotechnical Commission.
+IEEE:: Institute of Electrical and Electronics Engineers.
+IFE:: Iris File Extension.
+IMS:: image management system
+LIS:: laboratory informatics system
+NEMA:: National Electrical Manufacturers Association.
+SOF:: start of file.
+TIFF:: Tagged Image File Format.
+WASM:: WebAssembly.
+WSI:: whole slide image.
+
+=== Technical Requirements
+
+* All multi-byte values *shall* be stored in little-endian byte ordering
+  without exception.
+* Floating point values *shall* be encoded per the IEEE-754/IEC-559
+  standard (f16 half, f32 single, f64 double precision).
+* Data-blocks are tightly packed: every parameter's byte offset within a
+  block is derived from the cumulative widths of the fields preceding it.
+  Encoders *may* place blocks at any byte location within the file
+  (alignment padding between blocks is permitted but never required).
+* Metadata attribute keys *should* be encoded as ASCII with UTF-8 values;
+  DICOM tag-value encoding *shall* follow NEMA character-set requirements.
+
+[[ife-file-structure-elements]]
+== File Structure Elements
+
+=== Overview and shared structures
+
+The file is a series of floating, tightly packed data-blocks within a sea of
+bytes. Statically sized *header blocks* contain data parameters and offsets
+to other blocks, forming the offset-chain; dynamically sized *array blocks*
+carry repeated entries or raw byte blobs. Entry into the structure is the
+*file preamble* and *file header* at the start of file; every other block is
+located exclusively through offset fields.
+
+[[ife-file-preamble]]
+==== File Preamble
+
+include::{generated}/layout/primitive_FILE_HEADER.adoc[]
+
+The first eight bytes of every IFE file are version-invariant: their layout
+will never change in any future IFE version, so a reader can always identify
+an Iris file and select the correct specification before parsing any block.
+
+* The first four bytes of the file *shall* be the magic bytes 0x49726973
+  ('Iris') in little-endian order.
+* SPEC_MAJOR *shall* encode the major version of the IFE specification to
+  which the file conforms. A decoder whose supported major version is less
+  than the encoded major version *shall not* attempt to read the file
+  structure and *should* report the version mismatch.
+* SPEC_MINOR *shall* encode the minor version. A decoder whose supported
+  minor version is less than the encoded minor version *shall* read the
+  file, restricting itself to the fields defined by its own minor version,
+  and *should* surface a warning that later-version content is present but
+  inaccessible.
+* IFE v1.0 files are distinguished by the two bytes at offset 4 reading
+  0x5501 (the v1.0 recovery code position); readers *should* detect
+  this pattern and report a v1 file rather than a version mismatch.
+
+[[ife-block-header]]
+==== Universal Block Header
+
+include::{generated}/layout/primitive_BLOCK.adoc[]
+
+Every data-block begins with the universal header. The validation field
+stores the block's own byte offset, so a reader arriving at offset *x* can
+confirm *read(x) = x* before trusting any content; the recovery tag then
+confirms the block type. Together they enable computationally trivial deep
+validation and corruption-recovery scans.
+
+* The validation field *shall* encode the byte offset, from the start of
+  file, of the first byte of the block's universal header.
+* The recovery field *shall* encode the recovery code assigned to the
+  block type.
+
+[[ife-array-header]]
+==== Array Header
+
+include::{generated}/layout/primitive_ARRAY.adoc[]
+
+Every array block begins with the universal block header followed by the
+array header. Block-specific header fields, where defined, follow the array
+header; entries follow the complete header region.
+
+* The stride *shall* encode the byte size of each array entry at the time
+  of encoding, and *shall* be used by decoders for entry iteration
+  regardless of the entry size defined by the decoder's specification
+  version. This is the mechanism of forward compatibility: future versions
+  may expand an entry, and prior decoders skip the appended bytes as padding.
+* The count *shall* encode the number of stride-sized entries within the
+  array. Byte-blob arrays use a stride of one (1), making the count a byte
+  count.
+
+[[ife-byte-array-header]]
+==== Byte Array Header
+
+include::{generated}/layout/primitive_BYTE_ARRAY.adoc[]
+
+A byte array carries an opaque run of bytes rather than fixed-width entries.
+It stores no STRIDE, the stride of a byte array being intrinsically one, so
+COUNT is a byte count. The bytes begin at the end of the complete header
+region.
+
+* The count *shall* encode the number of bytes carried, exclusive of the
+  header.
+
+Every string in this specification is carried by a byte array, and its length
+*shall* come from a size field rather than from a terminator.
+
+[[ife-tile-frame-header]]
+==== Tile Frame Header
+
+include::{generated}/layout/primitive_TILE_FRAME.adoc[]
+
+The only prefix not laid out forward from a block's start. A tile frame is
+located by measuring back from the byte its tile offsets entry addresses, so
+its fields are placed backward from that byte and its displacements are
+negative. <<ife-tile-frame>> specifies its use.
+
+* VALIDATION *shall* encode the byte offset of the VALIDATION field itself.
+
+=== Statically Defined Values
+
+include::{generated}/constants/statically_defined_values.adoc[]
+
+Null-type constants indicate an optional data-element is not present and
+*should* be used to indicate an unused optional parameter rather than
+creating a data-block with zero entries.
+
+[[ife-recovery-codes]]
+==== Recovery Codes
+
+include::{generated}/constants/recovery_codes.adoc[]
+
+Recovery codes *shall* be encoded as 16-bit little-endian values. The
+numerical recovery sequence co-occurs with the high-entropy byte 0x55
+(0b01010101) to avoid spurious matches during recovery routines. Tags are
+stable forever once assigned; tags of retired blocks are never reused.
+
+[[ife-image-orientations]]
+==== Image Orientations
+
+include::{generated}/constants/image_orientations.adoc[]
+
+These name common rotations of the associated-image ORIENTATION field
+(<<ife-images>>). That field encodes degrees as an IEEE half-precision value
+interpreted modulo 360, so its domain is continuous and these constants
+enumerate nothing: they are the rotations an implementation most often needs,
+written out so that each is spelled one way. An implementation *shall not*
+reject an orientation for being absent from this table.
+
+[[ife-header-blocks]]
+=== Header blocks
+
+[[ife-file-header]]
+==== File Header
+
+include::{generated}/layout/FILE_HEADER.adoc[]
+
+The file header is the root of the file structure and the only block with a
+statically defined location.
+
+* The file header block *shall* begin at byte offset 8, immediately
+  following the file preamble (its validation field therefore always encodes
+  the value 8).
+* FILE_SIZE *shall* encode the size of the file in bytes, identical to the
+  value returned by an operating system file-size query, at all times other
+  than during active encoding. Validation *shall* fail, and file recovery
+  is indicated, when the encoded file size differs from the
+  operating-system-reported size. During encoding, this slot serves as the
+  atomic write-head (stream cursor) for lock-free space reservation and is
+  sealed to the final file size when encoding completes.
+* FILE_REVISION *shall* be incremented each time a file modification has
+  occurred.
+* TILE_TABLE_OFFSET *shall* contain a valid offset to the tile table
+  block; it *shall not* be NULL_OFFSET.
+* METADATA_OFFSET *shall* contain a valid offset to the metadata block
+  even if no optional metadata elements are encoded; it *shall not* be
+  NULL_OFFSET.
+
+[[ife-tile-table]]
+==== Tile Table
+
+include::{generated}/layout/TILE_TABLE.adoc[]
+
+* ENCODING *shall* be one of the tile encoding values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/tile_encodings.adoc[]
+* FORMAT *should* describe the pixel channel ordering and bits per channel;
+  it *may* encode the undefined value (0) when the original encoding
+  information is unavailable.
++
+include::{generated}/constants/pixel_formats.adoc[]
+* CIPHER_OFFSET *shall* be NULL_OFFSET unless the tile encoding is
+  TILE_ENCODING_IRIS.
+* TILE_OFFSETS_OFFSET *shall* contain a valid offset to the tile offsets
+  array.
+* LAYER_EXTENTS_OFFSET *shall* contain a valid offset to the layer extents
+  array.
+* TILE_SIZE *shall* encode the edge length in pixels of the square tiles the
+  slide is divided into. A value of zero, and the field's absence in a file
+  written under 1.0, *shall* both denote 256.
+
+[[ife-tile-size]]
+===== Tile Size
+
+Every tile in a slide is the same size. That size sets the axis of the global
+tile indexing scheme and of slide space (<<ife-terms>>), and is a property of
+the whole slide: layers differ in how many tiles they hold, never in how large
+a tile is.
+
+Encoders *should* use 256. Every IFE file written to date does, and it is what
+a reader that ignores this field assumes.
+
+IMPORTANT: A 1.0 reader does not read TILE_SIZE and will assume 256. A file
+that sets it to any other value is readable by a 1.0 decoder but will be
+rendered incorrectly by one. This is the only field added in 1.1 whose absence
+changes what a prior decoder computes.
+
+[[ife-cipher]]
+==== Codec Cipher
+
+include::{generated}/layout/CIPHER.adoc[]
+
+The codec cipher is a reserved data-block for future use in the Iris Codec.
+Its offset in the tile table *shall* be encoded as NULL_OFFSET when unused.
+
+[[ife-metadata]]
+==== Metadata
+
+include::{generated}/layout/METADATA.adoc[]
+
+* The codec version entries *should* correspond with the major, minor, and
+  build numbers of the Iris Codec implementation that wrote the slide file;
+  they *may* be zero if an Iris Codec module, or derived tool, did not
+  write the file.
+* ATTRIBUTES_OFFSET *should* point to a valid attributes block and
+  *shall* be NULL_OFFSET if no attributes are encoded.
+* IMAGES_OFFSET *should* point to an images array and *shall* be
+  NULL_OFFSET if no associated images are encoded.
+* ICC_COLOR_OFFSET *may* point to an ICC color profile byte array and
+  *shall* be NULL_OFFSET if no ICC color space is encoded.
+* ANNOTATIONS_OFFSET *may* point to an annotations array and *shall* be
+  NULL_OFFSET if no annotations are present.
+* CLINICAL_OFFSET *may* point to a clinical metadata block
+  (<<ife-clinical-metadata>>) and *shall* be NULL_OFFSET if no clinical
+  metadata is encoded.
+* MICRONS_PLANE *should* encode the physical distance in microns between
+  adjacent focal planes of a Z-stacked tile and *shall* encode zero where the
+  slide is not Z-stacked or the spacing is unknown.
+* MICRONS_PIXEL *should* encode a floating point coefficient describing
+  the number of microns of physical space each pixel occupies, normalized to
+  relative layer scale 1, and *may* encode zero (0.f) if no value is
+  available.
+// TODO(draft): migrate Equations 2.1/2.2 (MpP and Mc
+// normalization) from v1.0 Section 2.3.4.
+* MAGNIFICATION *should* encode a floating point coefficient that converts
+  layer scale to optical magnification and *may* encode zero (0.f) if no
+  value is available.
+
+[[ife-attributes]]
+==== Attributes
+
+include::{generated}/layout/ATTRIBUTES.adoc[]
+
+* FORMAT *shall* be one of the metadata format values below, and *should*
+  name the discipline the pairs actually follow rather than the undefined
+  value (0).
++
+include::{generated}/constants/metadata_formats.adoc[]
+* VERSION *should* encode the version of the standard FORMAT names — the Iris
+  Interoperability Specification version for METADATA_I2S, the encoding year
+  for METADATA_DICOM — and *shall* encode zero (0x0000) where that standard
+  has no version.
+* SIZES_OFFSET *shall* encode a valid offset to the attribute sizes array.
+* BYTES_OFFSET *shall* encode a valid offset to the attribute byte array.
+
+The IFE is not intended to validate clinical interoperability metadata
+specification conformance; that is outside the scope of this specification.
+
+These key-value arrays are intended to hold the slide's immutable *laboratory
+metadata*: what the instrument and the laboratory did, from the objective it
+was scanned through to the stain on the glass. Nested DICOM structures — an
+optical path, a specimen preparation sequence — reach that flat form through
+the key grammar those standards define.
+
+Clinical metadata covered by HL7 is not intended for this data block, as it is
+the province of the EMR. Information encoded by HL7 (and
+clinical DICOM metadata) may still be encoded in the __optional__
+<<ife-clinical-metadata>> block.
+
+NOTE: If DICOM tags are used in these laboratory attributes fields, we recommend
+still adhering to proper data province and including only acquisition information specific to
+WSI files (such as objective or stain type, for example). We recommend shifting
+clinical data such as patient identifiers or diagnoses to the <<ife-clinical-metadata>>.
+
+The names and admissibility of those pairs are specified separately, by the
+Iris Interoperability Specification (I2S), which states that a key is a DICOM-like
+keyword, gives the grammar for flattening DICOM's nested sequences into flat
+keys, and defines which facts may be recorded at all. This specification
+governs where the bytes are and takes no view on what they say; a file whose
+attributes follow no vocabulary is structurally valid and interoperably
+useless.
+
+=== Array blocks
+
+[[ife-layer-extents]]
+==== Layer Extents Array
+
+include::{generated}/layout/LAYER_EXTENTS.adoc[]
+include::{generated}/layout/LAYER_EXTENTS_entry.adoc[]
+
+* The number of layers *shall* be greater than zero.
+* X_TILES / Y_TILES *shall* encode the number of tiles in the horizontal /
+  vertical direction and *shall* be greater than zero.
+* SCALE *shall* have a value greater than zero and any subsequent layer
+  *shall* have a scale greater than the previous layer's scale.
+* Z_PLANES *shall* encode the greatest number of focal (Z) planes carried by any
+  one tile byte-stream in this layer. A value of zero, and the field's absence
+  in a file written under 1.0, *shall* both denote a single plane.
+
+[[ife-focal-planes]]
+===== Focal Planes
+
+A layer *may* be Z-stacked: each of its tiles holds several images of the same
+field of view captured at different focal depths. The stack is stored as one
+byte-stream per tile, not as several, and the tile's OFFSET and SIZE
+(<<ife-tile-offsets>>) address that stream whole.
+
+* Z_PLANES *shall* encode the greatest number of focal planes any one tile of
+  the layer carries. An individual tile *may* carry fewer.
+* A decoder *shall* obtain the number of planes a particular tile carries from
+  that tile's byte-stream, or from its frame where one is present
+  (<<ife-tile-frame>>). This specification does not record it per tile.
+
+Z_PLANES is a per-layer maximum rather than a per-tile count for two reasons:
+focal depth is a property of the acquisition, and a pyramid is normally
+stacked at its highest-resolution layer and single-plane above it. Recording
+it per tile would also widen the tile offsets array, which is the largest in
+the file.
+
+NOTE: A 1.0 reader steps through this array by the stride stored in the array
+header and never reads Z_PLANES, so a 1.1 file remains readable to it as a
+single-plane slide. See <<ife-array-header>>.
+
+// TODO(draft): migrate the global tile indexing scheme narrative,
+// Equations 2.3/2.4, and Figure 2.6 from v1.0 Sections 2.4.1-2.4.2.
+
+[[ife-tile-offsets]]
+==== Tile Offsets Array
+
+include::{generated}/layout/TILE_OFFSETS.adoc[]
+include::{generated}/layout/TILE_OFFSETS_entry.adoc[]
+
+* The count *shall* equal the total number of global tile indices derived
+  from the layer extents array.
+* OFFSET *shall* encode the byte offset location relative to the SOF where
+  the corresponding compressed tile byte-stream is located and *shall not*
+  exceed the 40-bit maximum value (1.0995 TB), or *shall* encode NULL_TILE
+  when the tile is not encoded.
+* SIZE *shall* encode the number of bytes the compressed tile byte-stream
+  consumes and *shall not* exceed the 24-bit maximum value (16.777 MB).
+
+[[ife-tile-pixel-data]]
+==== Tile Pixel Data
+
+The compressed tile byte streams referenced by the tile offsets array are
+deliberately *not* framed blocks: streams carry no header within the bytes
+they occupy, may appear anywhere in the file, in any order (including fully
+stochastic order from parallel encoding), and may be interrupted by
+intervening data. Each stream is located and sized exclusively by its tile
+offsets entry.
+
+* Each compressed byte stream *shall* be comprised of one or more bytes
+  encoded according to the encoding algorithm and pixel format encoded in
+  the tile table.
+* The ordering *may* follow the global tile indexing scheme or *may*
+  follow no indexing scheme, arranged in any order the encoder chooses.
+
+[[ife-tile-frame]]
+===== The Tile Frame
+
+An encoder *may* precede a tile byte-stream with the __optional__ frame below.
+Its fields are placed *backward* from the first byte the tile offsets entry
+addresses: the offsets in the table are displacements behind that byte, so
+VALIDATION ends where the stream begins and the frame extends towards the
+start of file.
+
+include::{generated}/layout/TILE_PIXEL_DATA.adoc[]
+
+* VALIDATION *shall* encode the byte offset of the VALIDATION field itself,
+  which is the address of the stream it precedes less five.
+* TILE_INDEX *shall* encode the global tile index of the stream that follows.
+* Z_PLANES *shall* encode the number of focal planes the stream carries and
+  *shall not* exceed the Z_PLANES maximum of the layer holding the tile
+  (<<ife-layer-extents>>).
+* A decoder *shall* determine whether a frame is present by reading the five
+  bytes ending at the tile's OFFSET; the frame is present when their value
+  equals their own position. No field records whether an encoder wrote frames.
+* The frame *shall not* be counted in OFFSET or SIZE, which continue to
+  delimit the codec stream exactly.
+
+The frame is a recovery structure. It records which tile a stream belongs to,
+which position alone cannot supply because tile ordering is free. It does not
+record the stream's length; that is the codec's to determine, and a second
+copy would only be a value to keep in agreement. Where the tile offsets array
+is intact the frame is redundant and *may* be omitted.
+
+NOTE: VALIDATION is 40 bits here rather than the 64 of the universal block
+header (<<ife-block-header>>). No other structure in the format stores its own
+offset in 40 bits, so the frame needs no recovery tag and consumes none of the
+256 the format has.
+
+NOTE: Because the fields are placed backward from the stream, a later version
+extends the frame away from it and every displacement above keeps its value. A
+decoder built against this version reads TILE_INDEX and Z_PLANES from a frame
+written by a later one.
+
+[[ife-attribute-sizes]]
+==== Attribute Sizes Array
+
+include::{generated}/layout/ATTRIBUTE_SIZES.adoc[]
+include::{generated}/layout/ATTRIBUTE_SIZES_entry.adoc[]
+
+* The number of attributes *should* be greater than zero but *may* be
+  zero.
+* Entry order *shall* match the attribute byte array's packing order: each
+  key immediately precedes its corresponding value.
+* KEY_SIZE *shall* contain the size, in bytes, of the attribute key
+  string; if encoded according to the DICOM standard this value *shall*
+  be 4.
+* VALUE_SIZE *shall* contain the size, in bytes, of the UTF-8 value string
+  corresponding to the key or tag.
+
+[[ife-attribute-bytes]]
+==== Attribute Byte Array
+
+include::{generated}/layout/ATTRIBUTE_BYTES.adoc[]
+
+* The count *shall* encode the total byte size of the attribute byte
+  array.
+* Key byte sequences *shall* contain ASCII strings (or 4-byte DICOM tag
+  values); value byte sequences *shall* contain UTF-8 strings corresponding
+  to the immediately preceding key or tag.
+
+[[ife-images]]
+==== Images Array
+
+include::{generated}/layout/IMAGES.adoc[]
+include::{generated}/layout/IMAGES_entry.adoc[]
+
+* BYTES_OFFSET *shall* encode the offset of the variable-length image data
+  in an image bytes block.
+* WIDTH / HEIGHT *shall* be greater than zero and less than the 32-bit
+  maximum value.
+* ENCODING *shall* be one of the image encoding values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/image_encodings.adoc[]
+* FORMAT *shall* be one of the pixel format values, excluding the
+  undefined value (0).
+* ORIENTATION *shall* encode the intended degree of rotation as an IEEE
+  half-precision float interpreted modulo 360, and *should* encode a value
+  < 360. Any degree value is legal; the `ORIENTATION_*` convenience
+  constants are listed with the statically defined values in section 2.2.
+
+[[ife-image-bytes]]
+==== Image Bytes
+
+include::{generated}/layout/IMAGE_BYTES.adoc[]
+
+* TITLE_SIZE *shall* encode a size greater than zero of a valid and unique
+  image title/label; label bytes *shall* be ASCII and *shall* precede
+  the image bytes.
+* IMAGE_SIZE *shall* encode a size greater than zero of a valid image byte
+  stream encoded per the entry's image encoding.
+* The count *shall* equal the sum of TITLE_SIZE and IMAGE_SIZE.
+
+[[ife-icc-profile]]
+==== ICC Color Profile
+
+include::{generated}/layout/ICC_PROFILE.adoc[]
+
+* The count *shall* be greater than zero and *shall* encode the byte
+  size of the contained ICC profile, stored without modification.
+
+[[ife-clinical-metadata]]
+==== Clinical Metadata
+
+include::{generated}/layout/CLINICAL_METADATA.adoc[]
+
+This *optional* block carries HL7 encodable information. The system of record for these data is
+the EMR; the block exists for the optional inclusion of such information, 
+rather than requiring it. A use case for such inclusion could be default or consultation sent to 
+another institution or for long-term archival purposes. While it may be default in DICOM institutions we recommend that an encoder
+*should not* write duplicate (and potentially conflicting) HL7 data from the EHR / LIS and IMS by default.
+
+* The count *shall* be greater than zero and *shall* encode the byte size of
+  the contained stream, stored without modification.
+* ENCODING *shall* be one of the clinical encoding values below, excluding
+  the undefined value (0), and a decoder *shall* select its parser from it.
++
+include::{generated}/constants/clinical_encodings.adoc[]
+* An implementation *may* additionally verify the stream against the signature
+  its format defines — an MSH segment, an opening brace, a FastFHIR magic
+  number — but *shall not* infer the format where ENCODING and the stream
+  disagree; such a file is malformed and *should* be rejected.
+* The stream itself is not interpreted by this specification, which records
+  only its encoding, where its bytes begin, and how many there are.
+
+Setting CLINICAL_OFFSET to NULL_OFFSET and dropping this block de-identifies
+a slide. No other block is affected and no pixel data is rewritten.
+
+IMPORTANT: An encoder declaring METADATA_I2S undertakes that its attribute
+arrays hold acquisition information only. Clinical and identifying data
+*shall not* be written to the attribute arrays under that declaration. A file
+that declares METADATA_I2S and records a patient identifier among its
+attributes is non-conformant, and nothing in the file reveals it — the
+declaration reads the same either way.
+
+[[ife-annotations]]
+==== Annotations Array
+
+include::{generated}/layout/ANNOTATIONS.adoc[]
+include::{generated}/layout/ANNOTATIONS_entry.adoc[]
+
+Annotations are positioned and sized at fractional tile locations within the
+slide-space convention (<<ife-terms>>), which is measured against the
+*highest-resolution* layer.
+
+// TODO(draft): migrate Figure 2.7 (slide-space diagram).
+
+* GROUP_SIZES_OFFSET / GROUP_BYTES_OFFSET *shall* be NULL_OFFSET when no
+  annotation groups are encoded.
+* IDENTIFIER *shall* encode a 24-bit tag uniquely identifying the
+  annotation and *shall not* be NULL_ID.
+* BYTES_OFFSET *shall* be a valid offset to the corresponding annotation
+  byte array.
+* FORMAT *shall* be one of the annotation type values below, excluding the
+  undefined value (0).
++
+include::{generated}/constants/annotation_types.adoc[]
+* PIXEL_WIDTH / PIXEL_HEIGHT *shall* be greater than zero and less than
+  the 32-bit maximum value.
+* PARENT_ID *may* encode a parent annotation identifier and *should*
+  encode NULL_ID when no parent is referenced.
+
+[[ife-annotation-bytes]]
+==== Annotation Byte Array
+
+include::{generated}/layout/ANNOTATION_BYTES.adoc[]
+
+* The count *shall* encode the total byte size of the annotation byte
+  stream, encoded per the owning entry's annotation type.
+
+[[ife-annotation-group-sizes]]
+==== Annotation Group Sizes
+
+include::{generated}/layout/ANNOTATION_GROUP_SIZES.adoc[]
+include::{generated}/layout/ANNOTATION_GROUP_SIZES_entry.adoc[]
+
+* Ordering *shall* match the annotation group bytes array: each title
+  immediately precedes its identifier sequence.
+* TITLE_SIZE *shall* contain the byte size of the group title string.
+* MEMBER_COUNT *shall* contain the number of 24-bit annotation identifiers
+  within the group.
+
+[[ife-annotation-group-bytes]]
+==== Annotation Group Bytes
+
+include::{generated}/layout/ANNOTATION_GROUP_BYTES.adoc[]
+
+* Label byte sequences *shall* contain ASCII strings; identifier sequences
+  *shall* contain 24-bit annotation identifiers; each label *shall*
+  immediately precede the identifier sequence it describes.
+* The count *shall* encode the total byte size of the array: for each
+  group, the label character bytes plus three bytes per member identifier.

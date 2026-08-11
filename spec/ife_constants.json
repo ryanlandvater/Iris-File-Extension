@@ -1,0 +1,312 @@
+{
+  "// MARK: - STATICALLY DEFINED VALUES": "The file's identity and its absence sentinels. Each carries its own type; this is not an enumeration.",
+  "statically_defined_values": {
+    "description": "Constants defined by the specification and reserved for use in the designated contexts. Null-type constants indicate an optional data-element is not present and should be used to indicate an unused optional parameter rather than creating a data-block with zero entries.",
+    "ife_version": {
+      "1.0": {
+        "MAGIC_BYTES": {
+          "type": "u32",
+          "value": "0x49726973",
+          "description": "ASCII 'Iris' (49 72 69 73). The first four bytes of every IFE file."
+        },
+        "NULL_OFFSET": {
+          "type": "offset",
+          "value": "0xFFFFFFFFFFFFFFFF",
+          "description": "Indicates an optional offset field references nothing."
+        },
+        "NULL_TILE": {
+          "type": "u40",
+          "value": "0xFFFFFFFFFF",
+          "description": "Indicates a tile offset slot with no encoded tile data.",
+          "errata": "IFE v1.0 published this constant as 0xFFFFFFFFFFFF (48-bit), which cannot fit the 40-bit tile-offset field; this schema corrects the sentinel to the 40-bit maximum."
+        },
+        "NULL_ID": {
+          "type": "u24",
+          "value": "0xFFFFFF",
+          "description": "Indicates an absent annotation identifier (e.g. an annotation with no parent).",
+          "errata": "IFE v1.0 published this constant as 0xFFFFFFFFFFFF (48-bit), which cannot fit the 24-bit identifier field; this schema corrects the sentinel to the 24-bit maximum."
+        }
+      }
+    }
+  },
+  "// MARK: - IMAGE ORIENTATIONS": "Named rotations for the associated-image ORIENTATION field. A value group rather than an enumeration: the field is a continuous f16 where any rotation is legal, so these name common points in that domain rather than bounding it.",
+  "image_orientations": {
+    "description": "Convenience constants for the associated-image ORIENTATION field. The field encodes a rotation in degrees as an IEEE half-precision value interpreted modulo 360; any rotation is legal, and these name the ones an implementation is most likely to need. A decoder shall not reject an orientation because it is absent from this table.",
+    "ife_version": {
+      "1.0": {
+        "ORIENTATION_0": {
+          "type": "f16",
+          "value": "0x0000",
+          "description": "No rotation."
+        },
+        "ORIENTATION_90": {
+          "type": "f16",
+          "value": "0x55A0",
+          "description": "90 degree clockwise rotation."
+        },
+        "ORIENTATION_180": {
+          "type": "f16",
+          "value": "0x59A0",
+          "description": "Rotational inversion."
+        },
+        "ORIENTATION_270": {
+          "type": "f16",
+          "value": "0x5C38",
+          "description": "270 degree clockwise rotation."
+        },
+        "ORIENTATION_MINUS_90": {
+          "type": "f16",
+          "value": "0xD5A0",
+          "description": "90 degree counter-clockwise rotation."
+        },
+        "ORIENTATION_MINUS_180": {
+          "type": "f16",
+          "value": "0xD9A0",
+          "description": "Rotational inversion (negative)."
+        },
+        "ORIENTATION_MINUS_270": {
+          "type": "f16",
+          "value": "0xDC38",
+          "description": "270 degree counter-clockwise rotation."
+        }
+      }
+    }
+  },
+  "// MARK: - STRUCTURAL ENUMERATIONS": "Values that describe the file's own structure rather than its content. Every block declares one recovery tag; the corruption-recovery scan matches against this set.",
+  "recovery_codes": {
+    "description": "Recovery tags identify the type of a data-block during validation and corruption-recovery scans. The 0x55 high byte is a deliberately high-entropy pattern (0b01010101) that reduces spurious matches when scanning a damaged file. Tags are stable forever once assigned; new blocks receive new tags, and tags of retired blocks are never reused.",
+    "underlying_type": "u16",
+    "ife_version": {
+      "1.0": {
+        "RECOVER_UNDEFINED": {
+          "value": 0,
+          "description": "Reserved sentinel marking an undefined block type. Never written to a file; a scan that finds it has found corruption, not a block."
+        },
+        "RECOVER_FILE_HEADER": {
+          "value": 1,
+          "description": "Tags the FILE_HEADER block at byte 0, the root of the file structure."
+        },
+        "RECOVER_TILE_TABLE": {
+          "value": 2,
+          "description": "Tags the TILE_TABLE block holding the information needed to reconstruct the slide image."
+        },
+        "RECOVER_CIPHER": {
+          "value": 3,
+          "description": "Tags the CIPHER block, reserved for future Iris Codec use."
+        },
+        "RECOVER_METADATA": {
+          "value": 4,
+          "description": "Tags the METADATA block holding encoder identity and the optional-structure offsets."
+        },
+        "RECOVER_ATTRIBUTES": {
+          "value": 5,
+          "description": "Tags the ATTRIBUTES block heading the key-value metadata arrays."
+        },
+        "RECOVER_LAYER_EXTENTS": {
+          "value": 6,
+          "description": "Tags the LAYER_EXTENTS array of pyramidal layer dimensions."
+        },
+        "RECOVER_TILE_OFFSETS": {
+          "value": 7,
+          "description": "Tags the TILE_OFFSETS array locating each compressed tile stream."
+        },
+        "RECOVER_ATTRIBUTE_SIZES": {
+          "value": 8,
+          "description": "Tags the ATTRIBUTE_SIZES array of slicing tuples for the attribute byte array."
+        },
+        "RECOVER_ATTRIBUTE_BYTES": {
+          "value": 9,
+          "description": "Tags the ATTRIBUTE_BYTES byte array holding packed key and value strings."
+        },
+        "RECOVER_IMAGES": {
+          "value": 10,
+          "description": "Tags the IMAGES array of associated (ancillary) image entries."
+        },
+        "RECOVER_IMAGE_BYTES": {
+          "value": 11,
+          "description": "Tags an IMAGE_BYTES block holding one associated image's label and compressed stream."
+        },
+        "RECOVER_ICC_PROFILE": {
+          "value": 12,
+          "description": "Tags the ICC_PROFILE byte array holding a colour profile verbatim."
+        },
+        "RECOVER_ANNOTATIONS": {
+          "value": 13,
+          "description": "Tags the ANNOTATIONS array of on-slide annotation entries."
+        },
+        "RECOVER_ANNOTATION_BYTES": {
+          "value": 14,
+          "description": "Tags an ANNOTATION_BYTES byte array holding one annotation's visual-object stream."
+        },
+        "RECOVER_ANNOTATION_GROUP_SIZES": {
+          "value": 15,
+          "description": "Tags the ANNOTATION_GROUP_SIZES array of slicing tuples for the group byte array."
+        },
+        "RECOVER_ANNOTATION_GROUP_BYTES": {
+          "value": 16,
+          "description": "Tags the ANNOTATION_GROUP_BYTES byte array holding group titles and member identifiers."
+        }
+      },
+      "1.1": {
+        "RECOVER_CLINICAL_METADATA": {
+          "value": 17,
+          "description": "Clinical metadata byte array."
+        }
+      }
+    }
+  },
+  "// MARK: - CONTENT ENUMERATIONS": "Value domains for block fields describing slide content: codecs, pixel layout, metadata standards, annotation and image kinds.",
+  "tile_encodings": {
+    "description": "The compressed byte-stream format of slide tile pixel data within the tile pixel data region.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "TILE_ENCODING_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid encoding."
+        },
+        "TILE_ENCODING_IRIS": {
+          "value": 1,
+          "description": "Iris Codec encoding (reserved, unused)."
+        },
+        "TILE_ENCODING_JPEG": {
+          "value": 2,
+          "description": "JPEG compressed tiles."
+        },
+        "TILE_ENCODING_AVIF": {
+          "value": 3,
+          "description": "AVIF compressed tiles."
+        }
+      }
+    }
+  },
+  "pixel_formats": {
+    "description": "Pixel channel ordering and bits per channel, following the channel-then-bit-count notation.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "FORMAT_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid format."
+        },
+        "FORMAT_B8G8R8": {
+          "value": 1,
+          "description": "8-bit blue-green-red."
+        },
+        "FORMAT_R8G8B8": {
+          "value": 2,
+          "description": "8-bit red-green-blue."
+        },
+        "FORMAT_B8G8R8A8": {
+          "value": 3,
+          "description": "8-bit blue-green-red-alpha."
+        },
+        "FORMAT_R8G8B8A8": {
+          "value": 4,
+          "description": "8-bit red-green-blue-alpha."
+        }
+      }
+    }
+  },
+  "metadata_formats": {
+    "description": "The vocabulary and discipline the attribute key-value pairs conform to. A file states this rather than leaving it to be inferred, because the part of a conformance claim that matters most is negative -- what the arrays undertake NOT to contain -- and absence cannot be read off the keys that are present.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "METADATA_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid format."
+        },
+        "METADATA_I2S": {
+          "value": 1,
+          "description": "Conforms to the Iris Interoperability Specification: keys are DICOM keywords, and every pair is a fact fixed when the slide was scanned that identifies no individual. Clinical and identifying facts are carried by the clinical metadata stream instead. I2S covers the acquisition attributes of DICOM only, deliberately and incompletely, and may diverge from DICOM as it develops."
+        },
+        "METADATA_DICOM": {
+          "value": 2,
+          "description": "DICOM PS3.3 tag-value pairs (32-bit tags, UTF-8 values per NEMA character-set requirements), carried without restriction. Unlike METADATA_I2S this undertakes nothing about which DICOM modules appear, so a decoder cannot assume the pairs are free of patient identity."
+        },
+        "METADATA_FREE_TEXT": {
+          "value": 3,
+          "description": "Key-value pairs following the I2S byte structure without claiming conformance to any clinical standard.",
+          "errata": "v1.0 defined METADATA_FREE_TEXT as an alias of METADATA_I2S's value; this schema assigns it a distinct value so conformance claims are unambiguous."
+        }
+      }
+    }
+  },
+  "annotation_types": {
+    "description": "The byte format of an annotation visual-object byte stream. Encoded streams shall follow the corresponding external specification (e.g. PNG, SVG).",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "ANNOTATION_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid annotation."
+        },
+        "ANNOTATION_PNG": {
+          "value": 1,
+          "description": "PNG image annotation."
+        },
+        "ANNOTATION_JPEG": {
+          "value": 2,
+          "description": "JPEG image annotation."
+        },
+        "ANNOTATION_SVG": {
+          "value": 3,
+          "description": "SVG vector annotation."
+        },
+        "ANNOTATION_TEXT": {
+          "value": 4,
+          "description": "Text-only annotation."
+        }
+      }
+    }
+  },
+  "image_encodings": {
+    "description": "Compression codec of an associated (ancillary) image. Distinct from tile_encodings, which governs WSI tiles.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "IMAGE_ENCODING_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid encoding."
+        },
+        "IMAGE_ENCODING_PNG": {
+          "value": 1,
+          "description": "PNG image."
+        },
+        "IMAGE_ENCODING_JPEG": {
+          "value": 2,
+          "description": "JPEG image."
+        },
+        "IMAGE_ENCODING_AVIF": {
+          "value": 3,
+          "description": "AVIF image."
+        }
+      }
+    }
+  },
+  "clinical_encodings": {
+    "description": "The serialization of the clinical metadata stream. Stated rather than sniffed: each of these formats can be recognised from its opening bytes, but a decoder should be told which parser to use rather than made to guess, and a guess is a heuristic that a truncated or unusual stream defeats.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.1": {
+        "CLINICAL_UNDEFINED": {
+          "value": 0,
+          "description": "Invalid encoding."
+        },
+        "CLINICAL_HL7_V2": {
+          "value": 1,
+          "description": "HL7 version 2 pipe-delimited messages, beginning with an MSH segment."
+        },
+        "CLINICAL_FHIR_JSON": {
+          "value": 2,
+          "description": "HL7 FHIR resources serialized as JSON text."
+        },
+        "CLINICAL_FASTFHIR": {
+          "value": 3,
+          "description": "FastFHIR, the binary encoding of the FHIR resource model; offsets resolve against the start of the stream and the leading bytes carry its magic number, FHIR revision and layout mode."
+        }
+      }
+    }
+  }
+}
