@@ -1,0 +1,5 @@
+# Build trees — same glob as .gitignore's `/build*`. The arbiter indexer now
+# honors anchored globs, so one pattern covers every build configuration
+# (build/, build-asan/, build-xcode/, …). `.gitignore` itself is also loaded,
+# so this file only needs patterns that are arbiter-specific.
+/build*

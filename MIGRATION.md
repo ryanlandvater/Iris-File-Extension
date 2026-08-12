@@ -1,12 +1,15 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
-> **Status (2026-08-07):** Phase 4 is under way. Tasks 4.0 (decisions A–H),
-> 4.0-H, 4.1, 4.2a, 4.2b and 4.2c are **done**; 4.2d is next, then 4.3 and
-> 4.4. The generated layer reads and validates; it does not yet write, and
-> nothing outside the tests consumes it — `IrisFileExtensionLib` still
-> compiles the hand-written `IrisCodecExtension.cpp`, and the cutover is
-> Phase 6. **All 4.0 decisions are now closed**, 4.0-D last (2026-08-09:
-> export the semantic API, keep the generated block layer out of the ABI).
+> **Status (2026-08-12):** Phase 4's read side is built and green; Phase 5
+> is DONE; Phase 6 is next. The generated layer reads, validates, maps and
+> recovers files through `IFE_Runtime` (validation, file map, recovery,
+> abstraction), exercised by `ife_blocks_tests`, the version-gating pair,
+> `ife_runtime_tests`, `ife_validation_tests`, the oracle/parity tests and
+> the >4 GiB sparse-file test — 13/13 ctest on macOS. It still does **not**
+> write: block writers remain v1's (`IrisCodecExtension.cpp`), and
+> `generated_source/IFE_Blocks.hpp` emits no `STORE_*`. Open Phase 4 items:
+> generated writers, corruption tests (`ife_blocks_corruption_tests.cpp`),
+> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing.
 > Gates in force: `--validate`, `--check`, the `static_assert` parity wall, an
 > exported-symbol check, and the test binaries under ASan+UBSan, on both byte
 > orders.
@@ -278,11 +281,20 @@ CI drift gate green.
 - [ ] **Serialization/deserialization core** built on the generated layer:
       block writers/readers, offset-chain traversal, version-gated reads
       driven by generated tables (no hand-written `// VERSION CONTROL`
-      sentinels anywhere).
+      sentinels anywhere). **Status (2026-08-12): readers, offset-chain
+      traversal and version-gated reads are done (generated handles +
+      IFE_Runtime); block writers remain v1's — the generated layer emits no
+      `STORE_*` (none in `IFE_Blocks.hpp`).**
 - [ ] **Validation:** offset validation, recovery-tag checks, deep
       `validate_file_structure` equivalent, with error messages sourced from
-      the JSON's normative clauses.
-- [ ] **Recovery:** file-map generation and corruption-recovery scan
+      the JSON's normative clauses. **Status (2026-08-12): generated
+      validators + the runtime's `validate_file_structure` exist and pass
+      (`ife_validation_tests`); error messages are formatted by
+      `IFE_Runtime::to_result`, not sourced from the JSON's normative
+      clauses.**
+- [x] **Recovery — done (2026-08-12): IFE_Runtime's `generate_file_map` /
+      `recover_file_structure`, covered by `ife_runtime_tests`:** file-map
+      generation and corruption-recovery scan
       matching against the generated recovery-tag value set.
 - [x] **Memory substrate decision — executed: delete (4.0-F).**
       `IFE_Memory.hpp/.cpp`, `tests/ife_memory_tests.cpp`, and the
@@ -1576,14 +1588,17 @@ The original task description follows, for the record.
       including `u24`/`u40` at boundary values (0, 1, max, max-1) and at
       unaligned addresses; assert `load_u40` touches exactly 5 bytes by
       placing the field at the end of a guarded buffer.
-- [ ] `tests/ife_blocks_tests.cpp` (gates 4.2b–d) — `store → validate → read`
+- [x] `tests/ife_blocks_tests.cpp` (gates 4.2b–d) — **done (2026-08-12).**
+      `store → validate → read`
       property tests over randomized `CreateInfo`s for all **16** blocks
       (v1 round-trip pair to model on: `STORE_EXTENTS`
       `src/IrisCodecExtension.cpp:1756-1772` against `read_layer_extents`
       `:1687-1732`);
       `stride() > entry_size` forward-compat read; a synthetic `1.1` field
       group added to a **copy** of the spec under `tests/fixtures/` to exercise
-      version gating without touching `spec/`.
+   x] **Version-gating test (the core feature — do not skip) — done
+      (2026-08-12): `ife_version_gating_tests` + `ife_version_gating_backward_tests`
+      in the suite (both green
 - [ ] **Version-gating test (the core feature — do not skip).** Against the
       `1.1` fixture assert, in order: a 1.0 file read by the 1.1 build returns
       empty `std::optional` for every 1.1 field and correct values for every
@@ -1601,7 +1616,7 @@ The original task description follows, for the record.
       and `:1641-1686`. Truncation,
       clobbered `VALIDATION`, clobbered `RECOVERY`, `stride == 0`,
       `count` overflow, and an offset cycle; each must return the specific
-      `Check` code, never crash and never read out of bounds (run under
+   x] `tests/ife_runtime_tests.cpp` (gates 4.4) — **done (2026-08-12).**t of bounds (run under
       `-fsanitize=address,undefined`).
 - [ ] `tests/ife_runtime_tests.cpp` (gates 4.4) — v1 source:
       `src/IrisCodecExtension.cpp:283-330`. Encode a synthetic slide,
@@ -1857,12 +1872,17 @@ professional structure of the ratified v1.0 document" is precisely what that
 toolchain exists for; Markdown plus a homegrown templating layer is the
 harder road to the same place.
 
-- [ ] **Convert the narrative** `spec/ife_spec.md` → `spec/ife_spec.adoc`:
-      headings, lists, tables, and normative shall/should/may prose. Replace
+- [x] **Convert the narrative — done (2026-08-12): `spec/ife_spec.md` removed;
+      `spec/ife_spec.adoc` pulls each generated fragment via Asciidoctor
+      `include::`.** Headings, lists, tables, and normative
+      shall/should/may prose. Replace
       each `{{...}}` anchor with an `include::` of the corresponding
       generated file. Nothing about the *content* changes in this step — it
       is a format conversion, reviewed as one.
-- [ ] **Re-target the doc emitter.** `generator/emit/docs.py` currently
+- [x] **Re-target the doc emitter — done (2026-08-12): one `.adoc` per item
+      (`layout/<BLOCK>.adoc`, `constants/<GROUP>.adoc`, `provenance.adoc`),
+      registered in `generator/pipeline.py::_render`; `generated_docs/`
+      regenerates them and `--check` covers them.** `generator/emit/docs.py` currently
       writes a single `generated_docs/layout_tables.md`. AsciiDoc includes
       work best fine-grained, as Vulkan's do: emit **one file per item** —
       per block layout, per enumeration, per shared structure — so the
@@ -1870,20 +1890,31 @@ harder road to the same place.
       moved section does not drag unrelated tables with it. Register the
       new outputs in `generator/pipeline.py::_render`; `--check` then covers
       them automatically.
-- [ ] **Assembly**: `asciidoctor-pdf` for the published document,
+- [x] **Assembly — done (2026-08-12): `spec/build_document.sh` renders HTML
+      and PDF from the one source (`ife_spec.adoc` + `generated_docs/**`),
+      with "no preprocessor here and no hand-written layout content" — the
+      exit criterion, verbatim.** `asciidoctor-pdf` for the published document,
       `asciidoctor` for HTML, from the same source. Carry the document
       furniture the ratified v1.0 has — contents, revision history, numbered
       sections, figure references — as AsciiDoc attributes rather than
       hand-maintained text.
-- [ ] **Record provenance in the document itself.** The published PDF states
+- [x] **Record provenance in the document itself — done (2026-08-12):
+      `emit_provenance` writes the schema version and the generator version
+      that produced the build into `generated_docs/provenance.adoc`, which
+      the narrative includes.** The published PDF states
       the spec version *and the generator version that produced it*. A
       ratified document that cannot be reproduced years later is not
       reproducible in any useful sense — and the generator is now part of the
       standard, not merely a build tool.
-- [ ] **CI docs build** so a schema change that breaks the document fails
+- [x] **CI docs build — done (2026-08-12): the `spec documents and drift` job
+      runs `--validate` + `--check`, and the `specification document` job
+      renders `build_document.sh` (HTML + PDF) and uploads the artifact, so a
+      schema change that breaks the document fails before merge.** A schema
+      change that breaks the document fails
       before merge; draft watermark until ratification.
 
-**Exit:** one command produces the complete draft PDF and HTML from
+**Exit (met 2026-08-12):** one command (`spec/build_document.sh`) produces the
+complete draft PDF and HTML from
 `ife_spec.adoc` + the JSON, with zero hand-written layout content and no
 custom preprocessor in the pipeline.
 
@@ -1945,6 +1976,24 @@ custom preprocessor in the pipeline.
 
 **Exit:** downstream builds green on the generated layer; v1 code no longer on `main`;
 spec document published from the pipeline.
+
+### High-priority lift — shared Virtual Memory Arena — ✅ DONE
+
+**Done (2026-08-12).** `Iris::MemoryArena` is upstream on Iris-Headers main
+(`68d6812`) as `priv/IrisMemory.hpp` + `src/IrisMemory.cpp` (extracted from
+FastFHIR's MPL-2.0 `FF_Memory`, relicensed MIT). IFE compiles the `.cpp`,
+`SparseFile` maps through the arena, the `NOT WIN32` gate is gone (64-bit
+only), and the `.deps` fetch is back on `origin/main`. Verified: 13/13 ctest,
+"4.00 GiB file, 28 KiB actually allocated". `IFE_Window` needed no migration
+(it never maps a file). Design record: Iris-Headers `NOTES_FROM_IFE.md` §7.
+
+**Remaining:** the Windows branch (arena + test shims) is written but
+uncompiled — needs a CI leg.
+
+**Record.** The topology rationale (Iris-Headers `priv/`, not Iris-Codec),
+the extract-don't-copy scope, and the MPL-2.0→MIT license note are preserved
+in Iris-Headers `NOTES_FROM_IFE.md` §7 and in the headers of
+`IrisMemory.{hpp,cpp}`.
 
 ### Open question — `METADATA_FREE_TEXT` and the I2S claim
 

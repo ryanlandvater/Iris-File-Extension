@@ -20,9 +20,11 @@
  * two descriptions of the format agreeing proves nothing, and this is a case
  * where they could agree and both be wrong.
  *
- * POSIX only, and CMake builds it only there: ftruncate on NTFS writes zeros
- * unless the file is first marked sparse with FSCTL_SET_SPARSE, which would
- * turn a 32 KB test into a 4 GB one.
+ * 64-bit hosts only (a 32-bit address space cannot map 4 GiB). Sparse on both
+ * platforms: the mapping goes through Iris::MemoryArena (priv/IrisMemory.hpp),
+ * which marks NTFS files sparse (FSCTL_SET_SPARSE) before mapping — matching
+ * what ftruncate gives POSIX for free — so Windows no longer needs its own
+ * gate.
  *
  * Usage: ife_large_file_tests <writable-directory>
  */
@@ -38,6 +40,7 @@
 
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
+#include "IrisMemory.hpp"           // priv/: the cross-platform sparse arena
 
 #include "IrisCodecExtension.hpp"   // the oracle: v1 writers
 #include "IFE_Blocks.hpp"           // under test: generated readers
@@ -87,53 +90,96 @@ constexpr std::uint32_t REVISION = 0x00C0FFEEu;
 constexpr std::uint32_t X_EXTENT = 512;
 constexpr std::uint32_t Y_EXTENT = 256;
 
-/// A sparse file, mapped. Unlinks itself.
+/// Portable file lifecycle + allocation measurement. The arena owns the
+/// mapping; truncating, unlinking and sizing the backing file are consumer
+/// concerns this test exercises directly.
+
+/// Create (or truncate to empty) the backing file, so a crashed earlier run
+/// cannot leave stale bytes inside the mapped range.
+bool create_empty_file(const std::string& __path) {
+#ifdef _WIN32
+    HANDLE h = CreateFileA(__path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    return true;
+#else
+    int fd = ::open(__path.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0644);
+    if (fd < 0) return false;
+    ::close(fd);
+    return true;
+#endif
+}
+
+void remove_file(const std::string& __path) {
+#ifdef _WIN32
+    DeleteFileA(__path.c_str());
+#else
+    ::unlink(__path.c_str());
+#endif
+}
+
+/// Bytes the filesystem actually allocated for the file. Flushes the mapping
+/// first: until the dirty pages reach the filesystem, the size query reports
+/// the pre-write state and the sparseness claim would be vacuously small.
+std::uint64_t file_allocated_bytes(const std::string& __path,
+                                   void* __base, std::size_t __len) {
+#ifdef _WIN32
+    if (__base) FlushViewOfFile(__base, __len);
+    DWORD high = 0;
+    const DWORD low = GetCompressedFileSizeA(__path.c_str(), &high);
+    if (low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) return 0;
+    return (static_cast<std::uint64_t>(high) << 32) | low;
+#else
+    if (__base) ::msync(__base, __len, MS_SYNC);
+    struct stat st {};
+    if (::stat(__path.c_str(), &st) != 0) return 0;
+    return static_cast<std::uint64_t>(st.st_blocks) * 512ull;
+#endif
+}
+
+/// A sparse file, mapped through Iris::MemoryArena. Unlinks itself.
+///
+/// The arena (priv/IrisMemory.hpp) is what makes this portable: it marks NTFS
+/// files sparse (FSCTL_SET_SPARSE) before mapping, so the file stays sparse on
+/// Windows exactly as ftruncate makes it on POSIX. 64-bit only, like the
+/// mapping itself.
 class SparseFile {
 public:
     SparseFile(const std::string& __path, std::uint64_t __size)
-        : _path(__path), _size(__size) {
-        _fd = ::open(_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
-        if (_fd < 0) return;
-        // Sets the length without writing: the file is all hole until stored to.
-        if (::ftruncate(_fd, static_cast<off_t>(_size)) != 0) { close_fd(); return; }
-        void* p = ::mmap(nullptr, static_cast<size_t>(_size),
-                         PROT_READ | PROT_WRITE, MAP_SHARED, _fd, 0);
-        if (p == MAP_FAILED) { close_fd(); return; }
-        _base = static_cast<Iris::BYTE*>(p);
+        : _path(__path) {
+        if (!create_empty_file(__path)) return;
+        _arena = Iris::MemoryArena::create_from_file(__path, __size);
     }
 
     ~SparseFile() {
-        if (_base) ::munmap(_base, static_cast<size_t>(_size));
-        close_fd();
-        if (!_path.empty()) ::unlink(_path.c_str());
+        // Unmap and close before unlinking: DeleteFileA refuses to remove a
+        // file that is still mapped, while POSIX tolerates it.
+        //
+        // close() rather than dropping the handle. Assigning an empty arena
+        // only unmaps if this happens to hold the last reference; close()
+        // releases regardless, which is the guarantee the unlink below needs.
+        _arena.close();
+        if (!_path.empty()) remove_file(_path);
     }
 
     SparseFile(const SparseFile&)            = delete;
     SparseFile& operator=(const SparseFile&) = delete;
 
-    [[nodiscard]] bool          ok()   const noexcept { return _base != nullptr; }
-    [[nodiscard]] Iris::BYTE*   base() const noexcept { return _base; }
-    [[nodiscard]] std::uint64_t size() const noexcept { return _size; }
+    [[nodiscard]] bool          ok()   const noexcept { return static_cast<bool>(_arena); }
+    [[nodiscard]] Iris::BYTE*   base() const noexcept { return _arena.base(); }
+    [[nodiscard]] std::uint64_t size() const noexcept { return _arena.capacity(); }
 
     /// Bytes the filesystem actually allocated, which is the claim that makes
     /// this test cheap enough to run anywhere.
     [[nodiscard]] std::uint64_t allocated_bytes() const {
-        // Flush first: until the dirty pages reach the filesystem, st_blocks
-        // reports zero and the measurement would be vacuously small rather
-        // than evidence of anything.
-        if (_base) ::msync(_base, static_cast<size_t>(_size), MS_SYNC);
-        struct stat st {};
-        if (_fd < 0 || ::fstat(_fd, &st) != 0) return 0;
-        return static_cast<std::uint64_t>(st.st_blocks) * 512ull;
+        return file_allocated_bytes(_path, _arena.base(), _arena.capacity());
     }
 
 private:
-    void close_fd() { if (_fd >= 0) { ::close(_fd); _fd = -1; } }
-
-    std::string   _path;
-    std::uint64_t _size = 0;
-    int           _fd   = -1;
-    Iris::BYTE*   _base = nullptr;
+    std::string       _path;
+    Iris::MemoryArena _arena;
 };
 
 void test_v1_slide_above_4GiB(const std::string& __dir) {

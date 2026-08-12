@@ -104,6 +104,10 @@ set (
     ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
     ${IFE_SOURCE_DIR}/IFE_Window.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
+    # Iris::MemoryArena's OS calls.  Split out of priv/IrisMemory.hpp so that
+    # windows.h -- and the PLANES/TRANSPARENT/ERROR/IN/OUT macros the lint
+    # table exists for -- stays out of every consumer's translation unit.
+    ${irisheaders_SOURCE_DIR}/src/IrisMemory.cpp
 )
 set (
     IFE_IncludeDir
@@ -562,19 +566,23 @@ if(IFE_BUILD_TESTS)
     # need their fifth byte.  Sparse: over 4 GiB long, tens of kilobytes on
     # disk.
     #
-    # Not on Windows, and not on a 32-bit host.  ftruncate's equivalent on NTFS
-    # writes zeros unless the file is first marked with FSCTL_SET_SPARSE, which
-    # would turn a 32 KB test into a 4 GB one; and a 32-bit address space cannot
-    # map the file at all.  The u40 primitives themselves are covered
-    # everywhere by ife_bytes_tests and ife_blocks_tests -- what only this test
-    # reaches is a complete, validated file whose offsets exceed 32 bits.
-    if (NOT WIN32 AND CMAKE_SIZEOF_VOID_P GREATER_EQUAL 8)
+    # Not on a 32-bit host: a 32-bit address space cannot map the file at all.
+    # Windows is fine -- the test maps through Iris::MemoryArena
+    # (priv/IrisMemory.hpp), which marks NTFS files sparse with
+    # FSCTL_SET_SPARSE before mapping, so the file stays sparse there too.
+    # The u40 primitives themselves are covered everywhere by ife_bytes_tests
+    # and ife_blocks_tests -- what only this test reaches is a complete,
+    # validated file whose offsets exceed 32 bits.
+    if (CMAKE_SIZEOF_VOID_P GREATER_EQUAL 8)
         add_executable(
             ife_large_file_tests
             ${PROJECT_SOURCE_DIR}/tests/ife_large_file_tests.cpp
         )
+        # priv/ as well: the test's SparseFile maps through Iris::MemoryArena,
+        # declared in IrisMemory.hpp there.
         target_include_directories(
             ife_large_file_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+                                        ${irisheaders_SOURCE_DIR}/priv
         )
         target_compile_features(ife_large_file_tests PRIVATE cxx_std_20)
         target_link_libraries(
