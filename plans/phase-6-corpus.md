@@ -43,53 +43,75 @@ Every block must appear at least once across the set. Blocks marked ⚠ appear i
 | `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES` ⚠ | ≥1 attribute key-value pair; one fixture per `metadata_formats` value that has meaning (`METADATA_I2S`, `METADATA_DICOM`) |
 | `IMAGES`, `IMAGE_BYTES` ⚠ | ≥2 associated images (label + thumbnail), differing in `ENCODING` and `ORIENTATION` |
 | `ICC_PROFILE` ⚠ | any embedded profile |
-| `ANNOTATIONS`, `ANNOTATION_BYTES` ⚠ | ≥1 of each `annotation_types` value — **blocked, see below** |
-| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named annotation group — **blocked, see below** |
+| `ANNOTATIONS`, `ANNOTATION_BYTES` | ≥1 of each `annotation_types` value — `ANNOTATION_PNG`, `JPEG`, `SVG`, `TEXT`. **Unblocked**, see below |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named annotation group — **still blocked: v1 has no group writer**, see below |
 | `CIPHER` ⚠ | one encrypted fixture, if the encoder can write one; otherwise record it as permanently uncovered |
 | `CLINICAL_METADATA` ⚠ | 1.1 only — one fixture per `clinical_encodings` value the encoder supports |
 
-## Blocked: the shipped encoder cannot write annotations
+## Annotations: unblocked (2026-08-12)
 
-Four annotation blocks cannot be covered by an oracle fixture, because v1
-cannot produce one. Three defects, each verified against the source rather than
-read off it, and the first is why the other two were never found.
+`ANNOTATIONS` and `ANNOTATION_BYTES` were listed here as impossible to cover by
+oracle, because the shipped encoder could not write them and its reader could
+not return them. Seven defects, fixed in `62eaeeb`; the first masked the rest,
+which is why none had been found.
 
-1. **`AnnotationArrayCreateInfo::annotations` cannot be populated.** It is
-   `std::set<AnnotationInfo>` and `AnnotationInfo` defines no `operator<`, so
-   `insert` does not compile. `STORE_ANNOTATION_ARRAY` is therefore reachable
-   only with an empty set, and nothing in the repository calls it. A
-   compile-time wall, not a runtime one.
-2. **`STORE_ANNOTATION_ARRAY` never writes `GROUP_SIZES_OFFSET` or
-   `GROUP_BYTES_OFFSET`.** It writes `VALIDATION`, `RECOVERY`, `ENTRY_SIZE`,
-   `ENTRY_NUMBER` and the entries — 16 of the 32 header bytes are left as
-   whatever the buffer held. In a zero-filled encode buffer that is 0, and
-   `ANNOTATIONS::groups()` treats 0 as a valid pointer (it tests
-   `!= NULL_OFFSET && < __size`), so it reports **true** for a block with no
-   groups.
-3. **`ANNOTATIONS::validate_full` reads those two pointers from the wrong
-   place** — `LOAD_U64(__base + GROUP_SIZES_OFFSET)`, missing `+ __offset`, so
-   it reads absolute file offsets 16 and 24, which are inside `FILE_HEADER`.
-   `groups()` two functions away gets it right
-   (`__base + __offset + GROUP_SIZES_OFFSET`), which is what makes the omission
-   legible as a slip rather than a convention.
+| | Defect | Effect |
+|---|---|---|
+| A | `METADATA::validate_full` built the `ANNOTATIONS` handle from `IMAGES_OFFSET` | any file with annotations failed validation |
+| B | `AnnotationInfo` in a `std::set` with no `operator<` | the writer could not be given entries — a compile-time wall |
+| C | `STORE_ANNOTATION_ARRAY` left both group offsets unwritten | `groups()` read 0 as a pointer and claimed groups that did not exist |
+| D | `ANNOTATIONS::validate_full` read the group pointers without `__offset` | reached absolute offsets 16 and 24, inside `FILE_HEADER` |
+| E | the entry loop read `BYTES_OFFSET` through `IMAGE_ENTRY` (0), not `ANNOTATION_ENTRY` (3) | the pointer came back as `(bytesOffset << 24) \| identifier` |
+| F | `read_annotations` read nine fields from the block header, not the entry | every entry decoded to identical bytes |
+| G | `read_annotations` never inserted what it built | the reader returned an **empty map** for any file with annotations |
 
-Defect 1 masks 2 and 3: no caller can reach the code that would expose them.
+A and E are the same confusion the block table exists to prevent: associated
+images and annotations are unrelated blocks, and an annotation merely *carrying*
+a PNG or SVG payload does not make it one.
 
-**Decide before encoding.** Either fix v1's annotation path (it must outlive
-the corpus anyway, so the fix is not wasted), or write these four blocks with
-the generated writers and record them as covered by construction rather than by
-oracle. The second is cheaper and weaker, and the weakness is precisely the one
-`ife_v1_oracle_tests` exists to avoid.
+**Coverage now in place**, so a fixture only has to contain annotations rather
+than work around the encoder:
+
+* `ife_v1_oracle_tests` — v1 writes two annotations, the generated layer reads
+  them back, all nine fields plus both payloads. They differ in every field
+  deliberately: one entry read through the block header decodes correctly by
+  accident, and only a differing sibling exposes it.
+* `ife_v1_fixture` — four annotations, one per `annotation_types` value, so
+  every format the specification defines appears in a slide the shipped encoder
+  wrote.
+* `ife_example_parity` — the example prints annotations, so v1's
+  `abstract_file_structure` and the runtime's are compared on the annotation
+  path and must agree byte for byte. Iterated through
+  `Metadata::annotations`, a `std::set`, because an `unordered_map`'s order is
+  not a property two implementations must share.
+
+## Still blocked: annotation groups
+
+`ANNOTATION_GROUP_SIZES` and `ANNOTATION_GROUP_BYTES` remain uncovered, and for
+a different reason than the above: v1 can read and validate groups but has no
+`STORE_` for either, and `AnnotationArrayCreateInfo` carries no group fields.
+That is a **feature the shipped encoder never had**, not a defect in it, so
+`STORE_ANNOTATION_ARRAY` now writes `NULL_OFFSET` to both — the honest value
+for "no groups" — rather than leaving the buffer's contents in place.
+
+Covering them means writing group support into a layer that is being retired.
+Deferred deliberately; if it stays deferred, record both blocks as covered by
+the generated writers alone and say so, rather than leaving them looking
+pending.
 
 ## Edge cases worth encoding deliberately
 
 These are the cases where a reader can be wrong at the right offset, which is
 the class no self-consistent test reaches.
 
-* **`u40` tile offsets above 4 GB.** Every published file is under 2 GB, so the
-  top byte of every `TILE_OFFSETS` entry is zero and a `u40` read as `u32`
-  would pass. One fixture must exceed 4 GB, or the case stays covered only by
-  `test_v1_packed_widths_at_full_width` and dies with v1.
+* **`u40` tile offsets above 4 GB — covered, and no longer a fixture
+  requirement.** `ife_large_file_tests` (`130bb97`) validates a whole slide
+  over 4 GiB, written by v1 and read through the generated layer. The file is
+  sparse: 4.00 GiB long, 28 KiB actually allocated, so it runs in CI rather
+  than needing a hosted download. **No hosted fixture needs to exceed 4 GB**,
+  which removes the one requirement that would have made the corpus expensive.
+  POSIX and 64-bit only — NTFS needs `FSCTL_SET_SPARSE` first, or the same
+  test writes 4 GB for real.
 * **`NULL_TILE` slots.** Both published files are fully dense. A sparse layer
   is the only thing that exercises the sentinel.
 * **A non-zero `FILE_REVISION`**, so the field is not confirmed only at 0.
@@ -134,6 +156,34 @@ touch the host at all.
 
 Step 4 is the one that keeps this honest: without it the corpus degrades
 silently, exactly as `ANNOTATION_JPEG` did.
+
+## Where oracle coverage stands
+
+Counted from what v1 actually writes across `ife_v1_oracle_tests` and
+`ife_v1_fixture`: **13 of the 18 block types**, each written by the shipped
+encoder and read back through the generated layer.
+
+Covered: `FILE_HEADER`, `TILE_TABLE`, `LAYER_EXTENTS`, `TILE_OFFSETS`,
+`METADATA`, `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES`, `IMAGES`,
+`IMAGE_BYTES`, `ICC_PROFILE`, `ANNOTATIONS`, `ANNOTATION_BYTES`.
+
+The remaining five, each with a reason rather than a gap:
+
+| Block | Why not |
+|---|---|
+| `CIPHER` | deferred; the encoder may never write one |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` | v1 has no group writer |
+| `CLINICAL_METADATA` | 1.1 — v1 writes 1.0 and cannot produce it |
+| `TILE_PIXEL_DATA` | the framed form is 1.1, same reason |
+
+**This changes what the corpus is still for.** Its original argument was that
+twelve block types had no real-encoder bytes behind them; eleven of those now
+do. What hand-built fixtures cannot supply is a file produced by the *whole*
+Iris-Codec pipeline from real scanner output — realistic pyramids, real
+attribute vocabularies, values nobody thought to write by hand — and the last
+three blocks above, which need encoder features that do not exist yet. That is
+a narrower and more honest case for the corpus than the one this document
+opened with, and it is still worth making.
 
 ## Exit
 
