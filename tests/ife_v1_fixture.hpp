@@ -22,6 +22,29 @@
 
 namespace v1_fixture {
 
+/// One annotation the fixture encodes.
+///
+/// Plain types only, for the reason the file header gives: this is included by
+/// a translation unit that cannot see either layer, so `format` carries the
+/// annotation_types value rather than the enumeration.
+struct AnnotationSpec {
+    std::uint32_t identifier = 0;
+    std::uint8_t  format     = 0;   ///< PNG 1, JPEG 2, SVG 3, TEXT 4
+    float         xLocation  = 0.f;
+    float         yLocation  = 0.f;
+    float         xSize      = 0.f;
+    float         ySize      = 0.f;
+    std::uint32_t width      = 0;
+    std::uint32_t height     = 0;
+    std::uint32_t parent     = 0;
+    std::string   payload;
+};
+
+/// 24-bit sentinel for "no parent". Spelled out because v1 declares its
+/// NULL_ID as a non-static member and the runtime as a static one, so neither
+/// spelling of Annotation::NULL_ID compiles against both.
+inline constexpr std::uint32_t NULL_ANNOTATION_ID = 16777215U;
+
 /// The values the fixture encodes, so a reader can assert against the inputs
 /// rather than against another reader.
 struct Expected {
@@ -39,6 +62,7 @@ struct Expected {
     std::uint32_t image_height   = 0;
     std::string   attribute_key;
     std::string   attribute_value;
+    std::vector<AnnotationSpec> annotations;
     std::uint64_t tile_table_at  = 0;
     std::uint64_t metadata_at    = 0;
 };
@@ -62,6 +86,31 @@ inline Expected expectations() {
     e.image_height    = 256;
     e.attribute_key   = "SCANNER";
     e.attribute_value = "TestCo";
+    // One annotation per annotation_types value, so every format the
+    // specification defines appears in a slide the shipped encoder wrote.
+    // They differ in every field on purpose: reading an entry through the
+    // block header rather than the entry pointer decodes a single annotation
+    // correctly by accident, and only differing siblings expose it.
+    // Identifiers ascend because Metadata::AnnotationIDs is a std::set, so
+    // this is also the order a consumer iterating it will see.
+    e.annotations = {
+        {.identifier = 0x000101, .format = 1,  // ANNOTATION_PNG
+         .xLocation = 0.10f, .yLocation = 0.20f, .xSize = 0.05f,  .ySize = 0.025f,
+         .width = 256, .height = 128, .parent = NULL_ANNOTATION_ID,
+         .payload = std::string("\x89PNG\r\n\x1a\n", 8) + "not-a-real-png"},
+        {.identifier = 0x000202, .format = 2,  // ANNOTATION_JPEG
+         .xLocation = 0.30f, .yLocation = 0.40f, .xSize = 0.10f,  .ySize = 0.050f,
+         .width = 128, .height = 64,  .parent = 0x000101,
+         .payload = std::string("\xFF\xD8\xFF\xE0", 4) + "not-a-real-jpeg"},
+        {.identifier = 0x000303, .format = 3,  // ANNOTATION_SVG
+         .xLocation = 0.50f, .yLocation = 0.60f, .xSize = 0.20f,  .ySize = 0.100f,
+         .width = 64,  .height = 32,  .parent = NULL_ANNOTATION_ID,
+         .payload = "<svg viewBox='0 0 16 16'><rect width='16' height='16'/></svg>"},
+        {.identifier = 0x000404, .format = 4,  // ANNOTATION_TEXT
+         .xLocation = 0.70f, .yLocation = 0.80f, .xSize = 0.40f,  .ySize = 0.200f,
+         .width = 32,  .height = 16,  .parent = 0x000303,
+         .payload = "a plain-text annotation"},
+    };
     return e;
 }
 

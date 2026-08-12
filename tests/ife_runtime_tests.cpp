@@ -205,7 +205,8 @@ void test_file_map_finds_every_block() {
     for (auto type : {MAP_ENTRY_TILE_TABLE, MAP_ENTRY_METADATA, MAP_ENTRY_LAYER_EXTENTS,
                       MAP_ENTRY_TILE_OFFSETS, MAP_ENTRY_ATTRIBUTES, MAP_ENTRY_ATTRIBUTE_SIZES,
                       MAP_ENTRY_ATTRIBUTES_BYTES, MAP_ENTRY_ICC_PROFILE,
-                      MAP_ENTRY_ASSOCIATED_IMAGES, MAP_ENTRY_ASSOCIATED_IMAGE_BYTES})
+                      MAP_ENTRY_ASSOCIATED_IMAGES, MAP_ENTRY_ASSOCIATED_IMAGE_BYTES,
+                      MAP_ENTRY_ANNOTATIONS, MAP_ENTRY_ANNOTATION_BYTES})
         IFE_CHECK(has(type));
 
     int blocks = 0, tile_data = 0;
@@ -215,8 +216,9 @@ void test_file_map_finds_every_block() {
         else ++blocks;
     }
     // Header, tile table, extents, offsets, metadata, attributes, sizes,
-    // bytes, ICC, images, image bytes.
-    IFE_CHECK(blocks == 11);
+    // bytes, ICC, images, image bytes, the annotations array, and one
+    // ANNOTATION_BYTES per annotation.
+    IFE_CHECK(blocks == 12 + static_cast<int>(expected.annotations.size()));
     IFE_CHECK(tile_data == static_cast<int>(expected.tiles));
 
     // upper_bound is the documented use: everything after a write point.
@@ -248,11 +250,14 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     IFE_CHECK(found(MAP_ENTRY_ICC_PROFILE));
     IFE_CHECK(recovered.count(0) == 0);   // the root has no VALIDATION to find
 
-    // Ten self-validating blocks were written; the scan finds all of them and
-    // invents nothing. A false positive needs eight bytes equal to their own
-    // offset followed by a u16 in the 0x55 tag set -- the reason that prefix
-    // is worth keeping.
-    IFE_CHECK(recovered.size() == 10);
+    IFE_CHECK(found(MAP_ENTRY_ANNOTATIONS));
+    IFE_CHECK(found(MAP_ENTRY_ANNOTATION_BYTES));
+
+    // Every self-validating block written is found, and nothing is invented:
+    // ten, plus the annotations array and one ANNOTATION_BYTES apiece. A false
+    // positive needs eight bytes equal to their own offset followed by a u16
+    // in the 0x55 tag set -- the reason that prefix is worth keeping.
+    IFE_CHECK(recovered.size() == 11 + expected.annotations.size());
 
     // And the graph walk really is defeated, so the comparison is meaningful.
     bool threw = false;

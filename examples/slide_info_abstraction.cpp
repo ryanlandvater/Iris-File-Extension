@@ -101,6 +101,7 @@
  const char* PARSE_ECODING(IrisCodec::Encoding encoding);
  const char* PARSE_FORMAT(Iris::Format format);
  const char* PARSE_IMAGE_ENCODING(IrisCodec::ImageEncoding image_encoding);
+ const char* PARSE_ANNOTATION_TYPE(Iris::AnnotationTypes annotation_type);
  
  
  int main(int argc, const char* argv[]) {
@@ -193,9 +194,34 @@
                          << "\t\t\t" << info.width << "px x " << info.height << "px\n"
                          << "\t\t\tFormat:" << PARSE_IMAGE_ENCODING(info.encoding) << "\n";
                  }
- 
+
          }
- 
+
+         // On-slide annotations. Distinct from the associated images above:
+         // those are ancillary pictures of the slide (label, thumbnail), these
+         // are objects positioned in slide space, whose byte streams happen to
+         // be image formats. Iterated through metadata.annotations, which is a
+         // std::set of identifiers, so the order is the identifier order rather
+         // than whatever the annotation map happens to hash to.
+         if (slide.metadata.annotations.size() == 0) {
+             std::cout << "\t No encoded on-slide annotations present\n";
+         }
+         else {
+             std::cout << "\t On-slide annotations:\n";
+             for (auto&& identifier : slide.metadata.annotations)
+                 if (slide.annotations.contains(identifier)) {
+                     auto&& note = slide.annotations[identifier];
+                     std::cout << "\t\t[" << identifier << "]: "
+                         << PARSE_ANNOTATION_TYPE(note.type) << "\n"
+                         << "\t\t\t" << note.byteSize << " bytes, "
+                         << note.width << "px x " << note.height << "px\n"
+                         << "\t\t\tat (" << note.xLocation << ", " << note.yLocation
+                         << ") sized " << note.xSize << " x " << note.ySize << "\n";
+                     if (note.parent != note.NULL_ID)
+                         std::cout << "\t\t\tchild of [" << note.parent << "]\n";
+                 }
+         }
+
      }
      catch (std::runtime_error& error) {
          std::cerr << "Failed to read slide file information: "
@@ -237,5 +263,15 @@
      case IrisCodec::IMAGE_ENCODING_JPEG:return "IMAGE_ENCODING_JPEG";
      case IrisCodec::IMAGE_ENCODING_AVIF:return "IMAGE_ENCODING_AVIF";
      } return "IMAGE_ENCODING_UNDEFINED";
+ }
+ inline const char* PARSE_ANNOTATION_TYPE(Iris::AnnotationTypes annotation_type)
+ {
+     switch (annotation_type) {
+     case Iris::ANNOTATION_UNDEFINED:return "ANNOTATION_UNDEFINED";
+     case Iris::ANNOTATION_PNG:return "ANNOTATION_PNG";
+     case Iris::ANNOTATION_JPEG:return "ANNOTATION_JPEG";
+     case Iris::ANNOTATION_SVG:return "ANNOTATION_SVG";
+     case Iris::ANNOTATION_TEXT:return "ANNOTATION_TEXT";
+     } return "ANNOTATION_UNDEFINED";
  }
  

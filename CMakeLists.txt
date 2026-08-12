@@ -376,8 +376,11 @@ if(IFE_BUILD_TESTS)
         ${PROJECT_SOURCE_DIR}/tests/ife_v1_slide_writer.cpp
         ${PROJECT_SOURCE_DIR}/tests/ife_v1_fixture.cpp
     )
+    # priv/ as well: the fixture's annotations go through v1's annotation
+    # writers, which take an Iris::Buffer declared in IrisBuffer.hpp there.
     target_include_directories(
         ife_v1_slide_writer PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+                                    ${irisheaders_SOURCE_DIR}/priv
     )
     target_compile_features(ife_v1_slide_writer PRIVATE cxx_std_20)
     target_link_libraries(

@@ -9,8 +9,11 @@
 #include "ife_v1_fixture.hpp"
 
 #include "IrisTypes.hpp"
+#include "IrisBuffer.hpp"   // Iris::Buffer, which v1's annotation writers take
 #include "IrisCodecTypes.hpp"
 #include "IrisCodecExtension.hpp"
+
+#include <memory>
 
 namespace v1_fixture {
 
@@ -64,6 +67,19 @@ std::vector<unsigned char> build_slide(Expected& expected) {
     const auto icc_at        = place(S::SIZE_ICC_COLOR_PROFILE(expected.icc_profile));
     const auto imgbytes_at   = place(S::SIZE_IMAGES_BYTES(image_bytes));
 
+    // Annotations: one per format. v1 sizes an ANNOTATION_BYTES block from the
+    // Buffer its Annotation carries, so the payloads exist before the layout
+    // runs, and each block is placed before the array that points at it.
+    std::vector<Iris::Annotation> annotation_objects;
+    annotation_objects.reserve(expected.annotations.size());
+    for (const auto& spec : expected.annotations) {
+        Iris::Annotation a{};
+        a.type = static_cast<Iris::AnnotationTypes>(spec.format);
+        a.data = std::make_shared<Iris::__INTERNAL__Buffer>(
+            Iris::REFERENCE_STRONG, spec.payload.data(), spec.payload.size());
+        annotation_objects.push_back(std::move(a));
+    }
+
     S::AssociatedImageCreateInfo images{};
     images.images.push_back(S::AssociatedImageCreateInfo::Entry{
         .offset = imgbytes_at,
@@ -74,6 +90,27 @@ std::vector<unsigned char> build_slide(Expected& expected) {
                    .sourceFormat = Iris::FORMAT_R8G8B8A8,
                    .orientation  = ORIENTATION_90}});
     const auto images_at = place(S::SIZE_IMAGES_ARRAY(images));
+
+    std::vector<IrisCodec::Offset> annbytes_at;
+    annbytes_at.reserve(annotation_objects.size());
+    for (const auto& a : annotation_objects)
+        annbytes_at.push_back(place(S::SIZE_ANNOTATION_BYTES(a)));
+
+    S::AnnotationArrayCreateInfo annotations{};
+    for (std::size_t i = 0; i < expected.annotations.size(); ++i) {
+        const auto& spec = expected.annotations[i];
+        annotations.annotations.insert({.identifier  = spec.identifier,
+                                        .bytesOffset = annbytes_at[i],
+                                        .type        = static_cast<Iris::AnnotationTypes>(spec.format),
+                                        .xLocation   = spec.xLocation,
+                                        .yLocation   = spec.yLocation,
+                                        .xSize       = spec.xSize,
+                                        .ySize       = spec.ySize,
+                                        .width       = spec.width,
+                                        .height      = spec.height,
+                                        .parent      = spec.parent});
+    }
+    const auto annotations_at = place(S::SIZE_ANNOTATION_ARRAY(annotations));
 
     // Tile pixel data: unframed, simply a region the entries address.
     constexpr std::uint32_t TILE_BYTES = 16;
@@ -120,13 +157,18 @@ std::vector<unsigned char> build_slide(Expected& expected) {
     images.offset = images_at;
     S::STORE_IMAGES_ARRAY(p, images);
 
+    for (std::size_t i = 0; i < annotation_objects.size(); ++i)
+        S::STORE_ANNOTATION_BYTES(p, annbytes_at[i], annotation_objects[i]);
+    annotations.offset = annotations_at;
+    S::STORE_ANNOTATION_ARRAY(p, annotations);
+
     S::STORE_METADATA(p, S::MetadataCreateInfo{
         .metadataOffset  = meta_at,
         .codecVersion    = {1, 2, 3},
         .attributes      = attributes_at,
         .images          = images_at,
         .ICC_profile     = icc_at,
-        .annotations     = S::NULL_OFFSET,
+        .annotations     = annotations_at,
         .micronsPerPixel = expected.microns,
         .magnification   = expected.magnification});
 
