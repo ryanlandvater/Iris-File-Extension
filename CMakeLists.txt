@@ -558,6 +558,35 @@ if(IFE_BUILD_TESTS)
     )
     add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests)
 
+    # A whole slide larger than 4 GiB, so the tile offsets a reader follows
+    # need their fifth byte.  Sparse: over 4 GiB long, tens of kilobytes on
+    # disk.
+    #
+    # Not on Windows, and not on a 32-bit host.  ftruncate's equivalent on NTFS
+    # writes zeros unless the file is first marked with FSCTL_SET_SPARSE, which
+    # would turn a 32 KB test into a 4 GB one; and a 32-bit address space cannot
+    # map the file at all.  The u40 primitives themselves are covered
+    # everywhere by ife_bytes_tests and ife_blocks_tests -- what only this test
+    # reaches is a complete, validated file whose offsets exceed 32 bits.
+    if (NOT WIN32 AND CMAKE_SIZEOF_VOID_P GREATER_EQUAL 8)
+        add_executable(
+            ife_large_file_tests
+            ${PROJECT_SOURCE_DIR}/tests/ife_large_file_tests.cpp
+        )
+        target_include_directories(
+            ife_large_file_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        )
+        target_compile_features(ife_large_file_tests PRIVATE cxx_std_20)
+        target_link_libraries(
+            ife_large_file_tests PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
+        )
+        # The scratch directory is an argument, not a compile definition: a
+        # definition becomes a C string literal and a path does not survive one.
+        add_test(NAME ife_large_file_tests
+                 COMMAND ife_large_file_tests $<TARGET_FILE_DIR:ife_large_file_tests>)
+        set_target_properties(ife_large_file_tests PROPERTIES FOLDER "Tests")
+    endif()
+
     # Xcode/VS navigator hygiene: the test targets (and the slide-writer
     # fixture tool) go under one "Tests" folder instead of a top-level entry
     # each. The libraries and the example stay top-level.
