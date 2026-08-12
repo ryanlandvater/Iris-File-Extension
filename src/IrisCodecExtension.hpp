@@ -1120,6 +1120,16 @@ struct IFE_EXPORT AnnotationArrayCreateInfo {
         uint32_t    width           = 0;
         uint32_t    height          = 0;
         uint32_t    parent          = Annotation::NULL_ID;
+        // Ordered by identifier because the set below needs an ordering and
+        // the identifier is the key the format already treats as unique: per
+        // Section 2.4.9 each annotation shall be referenced by a unique 24-bit
+        // identifier.  Ordering on it makes that requirement structural -- a
+        // duplicate collapses at insert rather than reaching the encoder --
+        // and gives entries a deterministic on-disk order, so encoding the
+        // same annotations twice produces the same bytes.
+        bool operator <  (const AnnotationInfo& o) const noexcept {
+            return identifier < o.identifier;
+        }
     }; using AnnotationInfos        = std::set<AnnotationInfo>;
     
     Offset          offset          = NULL_OFFSET;

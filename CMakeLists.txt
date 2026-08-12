@@ -543,8 +543,11 @@ if(IFE_BUILD_TESTS)
         ife_v1_oracle_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_v1_oracle_tests.cpp
     )
+    # priv/ as well: v1's annotation writers take an Iris::Buffer, whose class
+    # is declared in IrisBuffer.hpp there. No other test needs it.
     target_include_directories(
         ife_v1_oracle_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+                                    ${irisheaders_SOURCE_DIR}/priv
     )
     target_compile_features(ife_v1_oracle_tests PRIVATE cxx_std_20)
     target_link_libraries(

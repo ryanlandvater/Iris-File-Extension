@@ -849,7 +849,7 @@ Result FILE_HEADER::validate_header(const BYTE* __base) const
         (IRIS_VALIDATION_FAILURE,"RECOVER_HEADER ("+
          std::to_string(RECOVER_HEADER)+
          ") tag failed validation. The tag value is ("+
-         std::to_string(LOAD_U16 (__base + RECOVERY))+")");
+         std::to_string(LOAD_U16 (__base + __offset + RECOVERY))+")");
     
     size_t size = LOAD_U64(__base + __offset + FILE_SIZE);
     if (size != __size) return Result
@@ -1260,8 +1260,14 @@ Result METADATA::validate_full(const BYTE *const __base) const noexcept
     }
     
     if (annotations(__base)) {
+        // ANNOTATIONS_OFFSET, not IMAGES_OFFSET.  Associated images and
+        // annotations are unrelated blocks -- different recovery tags, header
+        // sizes and entry layouts -- so reading one through the other's
+        // pointer lands on NULL_OFFSET when a slide has no label image, and on
+        // a tag mismatch when it does.  The guard above already reads the
+        // right field; only this line did not.
         auto __ANNOTATIONS = ANNOTATIONS
-        (LOAD_U64(__ptr + IMAGES_OFFSET), __size, __version);
+        (LOAD_U64(__ptr + ANNOTATIONS_OFFSET), __size, __version);
         result = __ANNOTATIONS.validate_full(__base);
         if (result & IRIS_FAILURE) return result;
     }
@@ -2814,14 +2820,17 @@ Result ANNOTATIONS::validate_full (const BYTE *const __base) const noexcept
     
     if (groups(__base)) {
         Size expected_bytes;
+        // __base + __offset + FIELD.  Without __offset these read absolute
+        // file offsets 16 and 24 -- inside FILE_HEADER -- rather than this
+        // block's own pointers.  groups() just above gets it right.
         auto __GROUP_SIZES = GROUP_SIZES
-        (LOAD_U64(__base + GROUP_SIZES_OFFSET), __size, __version);
+        (LOAD_U64(__base + __offset + GROUP_SIZES_OFFSET), __size, __version);
         result = __GROUP_SIZES.validate_full(__base, expected_bytes);
         if (result & IRIS_FAILURE) return result;
-        
-        
+
+
         auto __GROUP_BYTES = GROUP_BYTES
-        (LOAD_U64(__base + GROUP_BYTES_OFFSET), __size, __version);
+        (LOAD_U64(__base + __offset + GROUP_BYTES_OFFSET), __size, __version);
         result = __GROUP_BYTES.validate_full(__base, expected_bytes);
         if (result & IRIS_FAILURE) return result;
     }
@@ -2843,7 +2852,11 @@ Result ANNOTATIONS::validate_full (const BYTE *const __base) const noexcept
     
     const BYTE* __array   = __base + start;
     for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
-        auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+        // ANNOTATION_ENTRY, not IMAGE_ENTRY: an image entry puts BYTES_OFFSET
+        // at 0, an annotation entry at 3, behind the 24-bit IDENTIFIER.  Read
+        // through the image constant the pointer comes back as
+        // (bytesOffset << 24) | identifier.
+        auto bytes_offset   = LOAD_U64(__array+ANNOTATION_ENTRY::BYTES_OFFSET);
         if (bytes_offset == NULL_OFFSET) return Result
             (IRIS_FAILURE, "Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset. Per the IFE Specification, the bytes offset shall be a valid offset location that point to the corresponding attribute object's attributes bytes array (Section 2.4.5).");
         if (bytes_offset > __size) return Result
@@ -2854,18 +2867,21 @@ Result ANNOTATIONS::validate_full (const BYTE *const __base) const noexcept
         auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
         __BYTES.validate_offset(__base);
         
-        auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
+        // __array, not __ptr.  __ptr is the block header; the loop advances
+        // __array by STEP per entry, so reading through __ptr returns the same
+        // bytes -- taken from the header, not from any entry -- every pass.
+        auto identifier = LOAD_U24(__array + ANNOTATION_ENTRY::IDENTIFIER);
         if (__a.contains(identifier)) { printf
             ("WARNING: duplicate annotation identifier (%X) returned. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.",
              identifier);
         }
-        
+
         if (VALIDATE_ANNOTATION_TYPE
-            ((AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT),
+            ((AnnotationTypes)LOAD_U8(__array + ANNOTATION_ENTRY::FORMAT),
              __version) == false) return Result
-            (IRIS_FAILURE,"Undefined tile pixel format ("+
-             std::to_string(LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT)) +
-             ") decoded from tile table.");
+            (IRIS_FAILURE,"Undefined annotation format ("+
+             std::to_string(LOAD_U8(__array + ANNOTATION_ENTRY::FORMAT)) +
+             ") decoded from the annotations array.");
         
         if (__version > IRIS_EXTENSION_1_0); else continue;
         
@@ -2904,34 +2920,49 @@ Abstraction::Annotations ANNOTATIONS::read_annotations(const BYTE *const __base,
     
     for (int AI = 0; AI < ENTRIES; ++AI, __array+=STEP) {
         
-        auto bytes_offset   = LOAD_U64(__array+IMAGE_ENTRY::BYTES_OFFSET);
+        // Every read below is against __array, the entry this pass is on, and
+        // through ANNOTATION_ENTRY.  Both were wrong: BYTES_OFFSET came from
+        // IMAGE_ENTRY (0 rather than 3, so the pointer read back as
+        // (bytesOffset << 24) | identifier), and the remaining nine fields came
+        // from __ptr -- the block header -- which does not advance, so every
+        // annotation in the array decoded to the same header bytes.
+        auto bytes_offset   = LOAD_U64(__array+ANNOTATION_ENTRY::BYTES_OFFSET);
         if (bytes_offset == NULL_OFFSET) throw std::runtime_error
             ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry contains invalid offset");
         if (bytes_offset > __size) throw std::runtime_error
             ("Failed ANNOTATION_ARRAY::read_annotations -- annotation entry out of file bounds read");
-        
+
         auto __BYTES  = ANNOTATION_BYTES(bytes_offset, __size, __version);
         __BYTES.validate_offset(__base);
-        
-        auto identifier = LOAD_U24(__ptr + ANNOTATION_ENTRY::IDENTIFIER);
+
+        auto identifier = LOAD_U24(__array + ANNOTATION_ENTRY::IDENTIFIER);
         if (annotations.contains(identifier)) { printf
             ("WARNING: duplicate annotation identifier (%X) returned; skipping duplicate. Per the IFE Specification Section 2.4.9, each annotation within the annotations array shall be referenced by a unique 24-bit identifier.", identifier);
         }
-        
-        Abstraction::Annotation annotation;
-        __BYTES.read_bytes(__base, annotation);
-        annotation.type      = (AnnotationTypes)LOAD_U8(__ptr + ANNOTATION_ENTRY::FORMAT);
+
+        // Placed into the map first and written through a reference, the way
+        // read_images does it just above.  Building a local and filling it in
+        // was the bug: nothing ever inserted it, and the version gate below
+        // `continue`s for every 1.0 file, so each annotation was decoded and
+        // dropped -- read_annotations returned an empty map for any file that
+        // had them.  Writing through the stored object also means a field
+        // appended after the gate lands in the map rather than in a temporary.
+        Abstraction::Annotation decoded;
+        __BYTES.read_bytes(__base, decoded);
+        annotations[identifier] = decoded;
+        auto& annotation     = annotations[identifier];
+        annotation.type      = (AnnotationTypes)LOAD_U8(__array + ANNOTATION_ENTRY::FORMAT);
         if (VALIDATE_ANNOTATION_TYPE(annotation.type, __version) == false)
-            throw std::runtime_error ("Undefined tile pixel format ("+
+            throw std::runtime_error ("Undefined annotation format ("+
                                       std::to_string(annotation.type) +
-                                      ") decoded from tile table.");
-        annotation.xLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_LOCATION);
-        annotation.yLocation = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_LOCATION);
-        annotation.xSize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::X_SIZE);
-        annotation.ySize     = LOAD_F32(__ptr + ANNOTATION_ENTRY::Y_SIZE);
-        annotation.width     = LOAD_U32(__ptr + ANNOTATION_ENTRY::WIDTH);
-        annotation.height    = LOAD_U32(__ptr + ANNOTATION_ENTRY::HEIGHT);
-        annotation.parent    = LOAD_U24(__ptr + ANNOTATION_ENTRY::PARENT);
+                                      ") decoded from the annotations array.");
+        annotation.xLocation = LOAD_F32(__array + ANNOTATION_ENTRY::X_LOCATION);
+        annotation.yLocation = LOAD_F32(__array + ANNOTATION_ENTRY::Y_LOCATION);
+        annotation.xSize     = LOAD_F32(__array + ANNOTATION_ENTRY::X_SIZE);
+        annotation.ySize     = LOAD_F32(__array + ANNOTATION_ENTRY::Y_SIZE);
+        annotation.width     = LOAD_U32(__array + ANNOTATION_ENTRY::WIDTH);
+        annotation.height    = LOAD_U32(__array + ANNOTATION_ENTRY::HEIGHT);
+        annotation.parent    = LOAD_U24(__array + ANNOTATION_ENTRY::PARENT);
         
         
         if (__version > IRIS_EXTENSION_1_0); else continue;
@@ -3040,6 +3071,14 @@ void STORE_ANNOTATION_ARRAY(BYTE *const __base, const AnnotationArrayCreateInfo 
     STORE_U64(__ptr + ANNOTATIONS::VALIDATION,     info.offset);
     STORE_U16(__ptr + ANNOTATIONS::RECOVERY,       RECOVER_ANNOTATIONS);
     STORE_U16(__ptr + ANNOTATIONS::ENTRY_SIZE,     ANNOTATION_ENTRY::SIZE);
+    // The header is 32 bytes and the four fields above fill 16 of them.  These
+    // two were left holding whatever the encode buffer already had, which for
+    // a zeroed buffer is 0 -- and groups() accepts 0 as a pointer (it tests
+    // only != NULL_OFFSET and < file size), so an annotations block with no
+    // groups reported that it had them.  There is no group writer to feed
+    // them from, so the honest value is NULL_OFFSET.
+    STORE_U64(__ptr + ANNOTATIONS::GROUP_SIZES_OFFSET, NULL_OFFSET);
+    STORE_U64(__ptr + ANNOTATIONS::GROUP_BYTES_OFFSET, NULL_OFFSET);
     __ptr += ANNOTATIONS::HEADER_SIZE;
     
     int entries = 0;

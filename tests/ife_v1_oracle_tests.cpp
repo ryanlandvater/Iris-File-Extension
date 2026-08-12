@@ -27,11 +27,13 @@
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
 
+#include "IrisBuffer.hpp"           // Iris::Buffer, which v1's annotation writers take
 #include "IrisCodecExtension.hpp"   // the oracle: v1 writers
 #include "IFE_Blocks.hpp"           // under test: generated readers
 
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -68,6 +70,22 @@ constexpr std::uint32_t TILE1_SIZE = 145;
 
 const std::string ICC_PROFILE = "ICC-PROFILE-BYTES-not-really-a-profile";
 const std::string IMAGE_TITLE = "label";
+
+// Two annotations, and they must differ in every asserted field. One would
+// prove nothing: until this file was written, v1's reader took each entry's
+// identifier, format, location, size and parent from the block header rather
+// than from the entry -- so a single-entry array read back correctly by
+// accident. Two entries with distinct values is what makes that visible.
+// Identifiers ascend because AnnotationInfos orders on them, so entry(i)
+// follows identifier order.
+constexpr std::uint32_t ANN_A_ID     = 0x0013579u;
+constexpr std::uint32_t ANN_B_ID     = 0x00ABCDEu;
+constexpr std::uint32_t ANN_A_WIDTH  = 128;
+constexpr std::uint32_t ANN_A_HEIGHT = 64;
+constexpr std::uint32_t ANN_B_WIDTH  = 32;
+constexpr std::uint32_t ANN_B_HEIGHT = 16;
+const std::string ANN_A_PAYLOAD = "<svg viewBox='0 0 8 8'><circle r='4'/></svg>";
+const std::string ANN_B_PAYLOAD = "a free-text annotation";
 
 void test_v1_bytes_read_through_generated_layer() {
     using namespace IrisCodec;
@@ -113,6 +131,43 @@ void test_v1_bytes_read_through_generated_layer() {
                    .sourceFormat = Iris::FORMAT_R8G8B8A8,
                    .orientation  = IrisCodec::ORIENTATION_90}});
     const IrisCodec::Offset images_at = place(S::SIZE_IMAGES_ARRAY(images));
+
+    // Annotations. v1 sizes an ANNOTATION_BYTES block from the Buffer the
+    // Annotation carries, so the payloads are built before the layout runs.
+    Iris::Annotation ann_a{}, ann_b{};
+    ann_a.type = Iris::ANNOTATION_SVG;
+    ann_a.data = std::make_shared<Iris::__INTERNAL__Buffer>(
+        Iris::REFERENCE_STRONG, ANN_A_PAYLOAD.data(), ANN_A_PAYLOAD.size());
+    ann_b.type = Iris::ANNOTATION_TEXT;
+    ann_b.data = std::make_shared<Iris::__INTERNAL__Buffer>(
+        Iris::REFERENCE_STRONG, ANN_B_PAYLOAD.data(), ANN_B_PAYLOAD.size());
+
+    const IrisCodec::Offset annbytes_a_at = place(S::SIZE_ANNOTATION_BYTES(ann_a));
+    const IrisCodec::Offset annbytes_b_at = place(S::SIZE_ANNOTATION_BYTES(ann_b));
+
+    S::AnnotationArrayCreateInfo annotations{};
+    annotations.annotations.insert({.identifier  = ANN_A_ID,
+                                    .bytesOffset = annbytes_a_at,
+                                    .type        = Iris::ANNOTATION_SVG,
+                                    .xLocation   = 0.25f,
+                                    .yLocation   = 0.50f,
+                                    .xSize       = 0.125f,
+                                    .ySize       = 0.0625f,
+                                    .width       = ANN_A_WIDTH,
+                                    .height      = ANN_A_HEIGHT,
+                                    .parent      = Abstraction::Annotation::NULL_ID});
+    annotations.annotations.insert({.identifier  = ANN_B_ID,
+                                    .bytesOffset = annbytes_b_at,
+                                    .type        = Iris::ANNOTATION_TEXT,
+                                    .xLocation   = 0.75f,
+                                    .yLocation   = 0.875f,
+                                    .xSize       = 0.5f,
+                                    .ySize       = 0.375f,
+                                    .width       = ANN_B_WIDTH,
+                                    .height      = ANN_B_HEIGHT,
+                                    .parent      = ANN_A_ID});
+    const IrisCodec::Offset annotations_at = place(S::SIZE_ANNOTATION_ARRAY(annotations));
+
     const IrisCodec::Offset meta_at   = place(S::METADATA::HEADER_SIZE);
 
     // The tile pixel data itself: unframed, per decision 10, so it is simply a
@@ -153,13 +208,18 @@ void test_v1_bytes_read_through_generated_layer() {
     images.offset = images_at;
     S::STORE_IMAGES_ARRAY(p, images);
 
+    S::STORE_ANNOTATION_BYTES(p, annbytes_a_at, ann_a);
+    S::STORE_ANNOTATION_BYTES(p, annbytes_b_at, ann_b);
+    annotations.offset = annotations_at;
+    S::STORE_ANNOTATION_ARRAY(p, annotations);
+
     S::STORE_METADATA(p, S::MetadataCreateInfo{
         .metadataOffset  = meta_at,
         .codecVersion    = {1, 2, 3},
         .attributes      = S::NULL_OFFSET,
         .images          = images_at,
         .ICC_profile     = icc_at,
-        .annotations     = S::NULL_OFFSET,
+        .annotations     = annotations_at,
         .micronsPerPixel = MICRONS,
         .magnification   = MAGNIFICATION});
 
@@ -244,7 +304,6 @@ void test_v1_bytes_read_through_generated_layer() {
     IFE_CHECK(md.microns_pixel() == MICRONS);
     IFE_CHECK(md.magnification() == MAGNIFICATION);
     IFE_CHECK(!static_cast<bool>(md.attributes_offset()));
-    IFE_CHECK(!static_cast<bool>(md.annotations_offset()));
 
     // A blob, sized by a u32 length v1 wrote.
     const auto icc = md.icc_color_offset().bytes();
@@ -268,6 +327,53 @@ void test_v1_bytes_read_through_generated_layer() {
     const auto ib = im.entry(0).bytes_offset();
     IFE_CHECK(ib.title_size() == IMAGE_TITLE.size());
     IFE_CHECK(ib.image_size() == stream.size());
+
+    // ---- annotations ----------------------------------------------------- //
+    // The two entries are asserted field by field, and it matters that they
+    // disagree everywhere: reading an entry through the block header instead of
+    // the entry pointer yields the same values twice, which only a second
+    // differing entry exposes. ANNOTATION_ENTRY also puts BYTES_OFFSET at 3,
+    // behind a 24-bit identifier, where an IMAGE_ENTRY puts it at 0 -- so a
+    // pointer read through the image constant comes back shifted by 24 bits.
+    const auto an = md.annotations_offset();
+    IFE_CHECK(static_cast<bool>(an));
+    IFE_CHECK(an.count() == 2);
+
+    const auto a0 = an.entry(0);
+    IFE_CHECK(a0.identifier()   == ANN_A_ID);
+    IFE_CHECK(a0.format()       == k::AnnotationTypes::ANNOTATION_SVG);
+    IFE_CHECK(a0.x_location()   == 0.25f);
+    IFE_CHECK(a0.y_location()   == 0.50f);
+    IFE_CHECK(a0.x_size()       == 0.125f);
+    IFE_CHECK(a0.y_size()       == 0.0625f);
+    IFE_CHECK(a0.pixel_width()  == ANN_A_WIDTH);
+    IFE_CHECK(a0.pixel_height() == ANN_A_HEIGHT);
+    IFE_CHECK(a0.parent_id()    == k::NULL_ID);
+
+    const auto a1 = an.entry(1);
+    IFE_CHECK(a1.identifier()   == ANN_B_ID);
+    IFE_CHECK(a1.format()       == k::AnnotationTypes::ANNOTATION_TEXT);
+    IFE_CHECK(a1.x_location()   == 0.75f);
+    IFE_CHECK(a1.y_location()   == 0.875f);
+    IFE_CHECK(a1.x_size()       == 0.5f);
+    IFE_CHECK(a1.y_size()       == 0.375f);
+    IFE_CHECK(a1.pixel_width()  == ANN_B_WIDTH);
+    IFE_CHECK(a1.pixel_height() == ANN_B_HEIGHT);
+    IFE_CHECK(a1.parent_id()    == ANN_A_ID);
+
+    // Each entry's pointer resolves to its own payload, not the other's.
+    const auto ab0 = a0.bytes_offset().bytes();
+    IFE_CHECK(ab0.size == ANN_A_PAYLOAD.size());
+    IFE_CHECK(std::memcmp(ab0.data, ANN_A_PAYLOAD.data(), ANN_A_PAYLOAD.size()) == 0);
+
+    const auto ab1 = a1.bytes_offset().bytes();
+    IFE_CHECK(ab1.size == ANN_B_PAYLOAD.size());
+    IFE_CHECK(std::memcmp(ab1.data, ANN_B_PAYLOAD.data(), ANN_B_PAYLOAD.size()) == 0);
+
+    // No groups: v1 has no group writer, so STORE_ANNOTATION_ARRAY records
+    // NULL_OFFSET for both rather than leaving the buffer's contents in place.
+    IFE_CHECK(!static_cast<bool>(an.group_sizes_offset()));
+    IFE_CHECK(!static_cast<bool>(an.group_bytes_offset()));
 }
 
 // The packed widths at their full width, from v1's own STORE_TILE_OFFSETS.
