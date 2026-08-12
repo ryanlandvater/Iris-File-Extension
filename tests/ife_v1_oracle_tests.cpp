@@ -230,26 +230,45 @@ void test_v1_bytes_read_through_generated_layer() {
         .metadataOffset  = meta_at});
 
     // ---- the generated layer reads what v1 wrote -------------------------- //
-    const b::FILE_HEADER root{p, header_at, file_size, b::VERSION_WRITTEN};
+    // Bootstrap: the root's own version is unknowable until it has been read,
+    // so it is constructed with every gate open for exactly one block, then
+    // rebuilt at the version the file declares. This is what
+    // IFE_Runtime::versioned_root does, and what a decoder must do -- reading
+    // v1's bytes through a handle that claims this build's version is claiming
+    // a version the file does not have.
+    const b::FILE_HEADER bootstrap{p, header_at, file_size, UINT32_MAX};
+    const std::uint32_t  declared =
+        (static_cast<std::uint32_t>(bootstrap.extension_major()) << 16) |
+        bootstrap.extension_minor();
+    IFE_CHECK(declared == 0x00010000u);          // v1 writes 1.0
+    IFE_CHECK(declared < b::VERSION_WRITTEN);    // and this build is newer
+
+    // Everything below reads through `root`, at the declared version: the
+    // traversal and the field reads alike. `newest` exists only for the two
+    // assertions that are deliberately about a 1.1-compiled reader looking at
+    // 1.0 bytes.
+    const b::FILE_HEADER root{p, header_at, file_size, declared};
+    const b::FILE_HEADER newest{p, header_at, file_size, b::VERSION_WRITTEN};
 
     IFE_CHECK(static_cast<bool>(root));
 
-    // Deep validation follows the offset graph, so it must run at the version
-    // the file declares rather than the one this build was compiled against.
-    // At a newer version the walk would follow offset fields appended after
-    // 1.0, which a 1.0 block simply does not contain -- the same asymmetry
-    // recorded at the TILE_SIZE assertion below: an array field is gated by
-    // the stored stride as well as the version, a header field only by the
-    // version. Field reads below stay on the VERSION_WRITTEN handle, which is
-    // what puts the newest accessors over the oldest bytes.
-    const b::FILE_HEADER declared_root{
-        p, header_at, file_size,
-        (static_cast<std::uint32_t>(root.extension_major()) << 16) | root.extension_minor()};
-    const auto deep = declared_root.validate_deep();
+    // Deep validation follows the offset graph, so it must run at the declared
+    // version. At a newer one the walk follows offset fields appended after
+    // 1.0 that a 1.0 block does not contain -- METADATA's 1.1 CLINICAL offset
+    // is still zero in a v1-written file, and the walk would follow it to byte
+    // 0 and validate the file header as a clinical metadata block.
+    const auto deep = root.validate_deep();
     IFE_CHECK(static_cast<bool>(deep));
     if (!deep)
         std::fprintf(stderr, "  deep validation of a v1-written file failed in %s.%s\n",
                      deep.block, deep.field);
+
+    // New reader, old file: every 1.0 field reads identically through the
+    // newest accessors, because append-only guarantees the 1.0 prefix never
+    // moves. This is the property that lets a 1.1 build open a 1.0 slide.
+    IFE_CHECK(newest.file_size()       == root.file_size());
+    IFE_CHECK(newest.file_revision()   == root.file_revision());
+    IFE_CHECK(newest.tile_table_offset().x_extent() == root.tile_table_offset().x_extent());
 
     IFE_CHECK(root.file_size() == file_size);
     IFE_CHECK(root.file_revision() == REVISION);
@@ -287,15 +306,23 @@ void test_v1_bytes_read_through_generated_layer() {
     // An appended *entry* field has two gates: the declared version and the
     // stride the array stores. An appended *block header* field has only the
     // first -- a block header records no size, so nothing cross-checks the
-    // version. The declared version is therefore load-bearing in a way it is
-    // not for arrays, which is why this is read the way a decoder reads it:
-    // with the version the file itself declares, not the one this build was
-    // compiled against.
-    const std::uint32_t declared =
-        (static_cast<std::uint32_t>(root.extension_major()) << 16) | root.extension_minor();
-    IFE_CHECK(declared < b::VERSION_WRITTEN);
-    const b::FILE_HEADER as_declared{p, header_at, file_size, declared};
-    IFE_CHECK(as_declared.tile_table_offset().tile_size() == std::nullopt);
+    // version.
+    //
+    // Both halves are asserted, because the second is the hazard. Read at the
+    // declared version the field is correctly absent; read at this build's
+    // version it is not absent but *wrong*, and wrong in the worst available
+    // way. tile_size() gates on __version alone, and TILE_SIZE sits at offset
+    // 44 -- exactly where v1's 44-byte header ends. In this layout the next
+    // block begins there, so the accessor returns the low two bytes of
+    // LAYER_EXTENTS' VALIDATION word: not a sentinel, not zero, just a
+    // neighbouring block's data wearing the name of a tile size.
+    //
+    // Nothing reports an error. That is why the version comes from the file,
+    // and why nothing else in this test hangs off `newest`.
+    IFE_CHECK(root.tile_table_offset().tile_size() == std::nullopt);
+    IFE_CHECK(newest.tile_table_offset().tile_size() != std::nullopt);
+    IFE_CHECK(newest.tile_table_offset().tile_size().value() ==
+              static_cast<std::uint16_t>(extents_at));
 
     const auto md = root.metadata_offset();
     IFE_CHECK(md.codec_major() == 1);
