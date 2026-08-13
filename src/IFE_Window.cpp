@@ -81,9 +81,9 @@ const BYTE* Window::map(Offset __offset, Size __request) {
 #include <string>
 
 // Bridges to JavaScript's fetch, appearing synchronous to C++ via Asyncify.
-// The mechanism is v1's, verbatim in shape (see fetch_data_async in
-// src/IrisCodecExtension.cpp): issue a ranged request, write the status and
-// length back through pointers, return a malloc'd payload the caller frees.
+// The mechanism is v1's, verbatim in shape: issue a ranged request, write the
+// status and length back through pointers, return a malloc'd payload the
+// caller frees.
 EM_ASYNC_JS(int, ife_fetch_range_async,
             (const char* url_ptr, const char* range_ptr, int* size_ptr, int* status_ptr), {
     const url_js   = UTF8ToString(url_ptr);

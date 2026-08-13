@@ -8,7 +8,7 @@
  * and validators — reaches the wire exclusively through these functions, so
  * the rules below are enforced once rather than at every field access.
  *
- * Successor to the LOAD_ and STORE_ family in src/IrisCodecExtension.cpp:125-177.
+ * Successor to the LOAD_ and STORE_ family in the retired hand-written layer.
  * Coverage is the same; three defects in that family are deliberately not
  * carried forward, each noted at the function that replaces it.
  *
@@ -36,9 +36,9 @@
 #include <type_traits>
 
 // Included directly rather than assumed from the includer: this header is
-// self-contained by design.  src/IrisCodecExtension.hpp:77 says
+// self-contained by design.  The retired hand-written layer's umbrella did
 // `using namespace Iris;` without including the headers that define those
-// types, and relies on the .cpp having included them first — a fragility the
+// types, and relied on its .cpp having included them first — a fragility the
 // generated layer does not inherit.
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
@@ -51,7 +51,7 @@ using IrisCodec::Size;
 
 /// Float and double are stored as IEEE 754 bit patterns, so the host's
 /// representation must be the same one. v1 carried software conversion paths
-/// for non-IEC559 hosts (IrisCodecExtension.cpp:196-235); no such host has
+/// for non-IEC559 hosts; no such host has
 /// ever run this code, and carrying that machinery meant every float access
 /// paid an indirect call. If a non-IEEE target ever appears this assertion is
 /// the single place that has to change.
@@ -91,7 +91,7 @@ namespace detail {
 /// at every version" means; composing arithmetically makes that true on any
 /// host, so the host's own byte order never enters. v1 instead selected
 /// between two readers through `static std::function` objects
-/// (IrisCodecExtension.cpp:166-177) — an indirect call per field access.
+/// — an indirect call per field access.
 ///
 /// An earlier version of this header kept a compile-time branch: on a
 /// big-endian host it reversed the N wire bytes and memcpy'd them into the
@@ -195,12 +195,11 @@ inline void store(BYTE* __p, T v) noexcept {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 // MARK: - Packed widths (u24, u40)
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-// v1 read these by loading the next whole machine word and masking:
-// `load_unaligned<uint32_t>(ptr) & U24_MASK` (IrisCodecExtension.cpp:132) and
-// `load_unaligned<uint64_t>(ptr) & U40_MASK` (:128). Both over-read the field
-// by three bytes. For the final TILE_OFFSETS entry of a file — a u40 offset
-// followed by a u24 size, ending at the last byte — that is a read past the
-// end of the mapping. These read exactly 3 and exactly 5.
+// v1 read these by loading the next whole machine word and masking, which
+// over-read the field by three bytes: a u24 loaded as a u32, a u40 as a u64.
+// For the final TILE_OFFSETS entry of a file — a u40 offset followed by a u24
+// size, ending at the last byte — that is a read past the end of the mapping.
+// These read exactly 3 and exactly 5.
 //
 // v1's big-endian u24 reader also masked with U40_MASK rather than U24_MASK
 // (:133), returning two spurious bytes on any big-endian host. Not carried

@@ -14,8 +14,8 @@
  * `check_and_fetch_remote` that fetched its own header, re-pointed its own
  * `__offset` into the fetched buffer, re-fetched at full size, and then
  * rewrote the *caller's* `__base` through a `const_cast`
- * (`src/IrisCodecExtension.cpp` — `LAYER_EXTENTS::check_and_fetch_remote` and
- * `FILE_HEADER`'s near-copy of it). Every reader began by calling it. The
+ * (`LAYER_EXTENTS::check_and_fetch_remote` and `FILE_HEADER`'s near-copy of
+ * it, in the retired hand-written layer). Every reader began by calling it. The
  * hand-written pair carries 116 `__EMSCRIPTEN__` branches; sixteen generated
  * blocks would have carried more.
  *

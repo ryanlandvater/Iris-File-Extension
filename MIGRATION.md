@@ -1,17 +1,19 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
-> **Status (2026-08-12):** Phase 4's read side is built and green; Phase 5
-> is DONE; Phase 6 is next. The generated layer reads, validates, maps and
-> recovers files through `IFE_Runtime` (validation, file map, recovery,
-> abstraction), exercised by `ife_blocks_tests`, the version-gating pair,
-> `ife_runtime_tests`, `ife_validation_tests`, the oracle/parity tests and
-> the >4 GiB sparse-file test — 13/13 ctest on macOS. It still does **not**
-> write: block writers remain v1's (`IrisCodecExtension.cpp`), and
-> `generated_source/IFE_Blocks.hpp` emits no `STORE_*`. Open Phase 4 items:
-> generated writers, corruption tests (`ife_blocks_corruption_tests.cpp`),
-> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing.
-> Gates in force: `--validate`, `--check`, the `static_assert` parity wall, an
-> exported-symbol check, and the test binaries under ASan+UBSan, on both byte
+> **Status (2026-08-12):** Phase 6 is DONE. The hand-written layer
+> (`src/IrisCodecExtension.hpp/.cpp`) is deleted; the generated layer reads,
+> validates, maps, recovers **and writes** — `store()`/`size_of()` for all 18
+> block types, round-tripped in `ife_blocks_tests` — through `IFE_Runtime` and
+> the generated block layer. Exercised by `ife_blocks_tests`, the
+> version-gating pair, `ife_runtime_tests`, `ife_validation_tests`, the oracle
+> (reading the hosted, digest-pinned snapshot) and the >4 GiB sparse-file
+> test — 11/11 ctest on macOS in Release and ASan+UBSan, on both byte orders.
+> Function coverage is 100% in `IFE_Blocks.cpp` and `IFE_Validation.cpp`.
+> Open items: corruption tests (`ife_blocks_corruption_tests.cpp`),
+> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing, and
+> the hosted corpus's remaining five blocks.
+> Gates in force: `--validate`, `--check`, the exported-symbol check, the
+> corpus digest fetch, and the test binaries under ASan+UBSan, on both byte
 > orders.
 >
 > **Broad plan below.** Each phase below gets a granular checklist
@@ -278,13 +280,14 @@ CI drift gate green.
 
 ## Phase 4 — Generated runtime
 
-- [ ] **Serialization/deserialization core** built on the generated layer:
+- [x] **Serialization/deserialization core** built on the generated layer:
       block writers/readers, offset-chain traversal, version-gated reads
       driven by generated tables (no hand-written `// VERSION CONTROL`
-      sentinels anywhere). **Status (2026-08-12): readers, offset-chain
-      traversal and version-gated reads are done (generated handles +
-      IFE_Runtime); block writers remain v1's — the generated layer emits no
-      `STORE_*` (none in `IFE_Blocks.hpp`).**
+      sentinels anywhere). **Done (2026-08-12):** readers, writers
+      (`store()`/`size_of()` for all 18 blocks), offset-chain traversal and
+      version-gated reads, all generated; `test_no_arg_validate_deep_on_every_block`
+      executes every no-arg entry point, and the writer round-trip covers
+      every store.
 - [ ] **Validation:** offset validation, recovery-tag checks, deep
       `validate_file_structure` equivalent, with error messages sourced from
       the JSON's normative clauses. **Status (2026-08-12): generated
@@ -1968,16 +1971,17 @@ custom preprocessor in the pipeline.
       already done: `IFE::Window`'s Emscripten branch fetches byte ranges on
       demand, so a WASM consumer has a working transport before any binding
       exists.
-- [ ] **Legacy retirement:** v1 hand-written serialization code removed from
-      `main` (kept on a `v1.x` maintenance branch); README/docs rewritten
-      around the generated tables.
+- [x] **Legacy retirement — done (2026-08-12):** `src/IrisCodecExtension.*`
+      deleted from `main` (Phase 6 execution plan, tasks 6.1–6.7); README and
+      docs rewritten around the generated tables; the oracle reads the hosted
+      digest-pinned snapshot instead of the retired writers.
 - [ ] **Release** with the generated spec document as the published
       standard; ratification per Iris Developers process.
 
 **Exit:** downstream builds green on the generated layer; v1 code no longer on `main`;
 spec document published from the pipeline.
 
-### High-priority lift — shared Virtual Memory Arena — ✅ DONE
+### High-priority lift — shared Virtual Memory Arena — DONE
 
 **Done (2026-08-12).** `Iris::MemoryArena` is upstream on Iris-Headers main
 (`68d6812`) as `priv/IrisMemory.hpp` + `src/IrisMemory.cpp` (extracted from
@@ -2013,7 +2017,292 @@ about the corpus, not about the schema. `ife_wire_parity_tests` excludes this
 member with a pointer here; the exclusion is deliberate and should not be
 "fixed".
 
+#### Ryan's response
+You can tell free-text from I2S because free text should have a version number
+of zero while I2S will carry a version number. It's in the original spec.
+The idea is that non-versioned I2S is by definition just free text as it
+has no specification to adhere to. 
+
 ---
+
+### Phase 6 execution plan — retire `src/IrisCodecExtension.*` (2026-08-12)
+
+Written to the flash-execution standard, inline for the same reason Phase 4's
+is: it is the phase in front of us. **This is the task list.** Complements
+[`plans/phase-6-corpus.md`](plans/phase-6-corpus.md), which covers fixture
+*content*; this covers the *cutover*. Where they disagree, this document is
+newer.
+
+**Status: complete (2026-08-12).** All tasks 6.1–6.7 landed and verified:
+6.1 and 6.2 take both generated files to 100% function coverage (0/181 and
+0/15 unexecuted); 6.3/6.4 generated and pinned the two hosted fixtures
+(digests in `tests/corpus/manifest.json`, fetched at configure by
+`tools/fetch_corpus.py`); 6.5 rewired the oracle, runtime and >4 GiB tests
+onto the fetched snapshot and deleted the writers and examples; 6.6 flipped
+the library; 6.7 deleted the hand-written layer (the in-scope grep is empty).
+11/11 ctest green in Release and ASan+UBSan; `--check` and the portability
+lint clean. Two findings from the run: the generated `TILE_PIXEL_DATA` store
+wrote the stream offset where the 40-bit self-reference must equal its own
+position (off-by-5, fixed in `generator/emit/cpp.py`, regenerated) — the
+walk test was its first execution; and v1's `METADATA_FREE_TEXT` alias stores
+byte 1, which reads back as `METADATA_I2S` under the schema's distinct value
+(the oracle asserts the byte; the errata is recorded in the spec).
+
+**Reviewed 2026-08-12 against the measured data** (coverage re-derived from
+the merged profile; the 2,857 B fixture regenerated and digested): the
+36-function split is 26 harness + 10 fixture gaps, not 24/12; the parity-freeze
+task was cut (it dies with v1); the blocked section was corrected (Iris-Headers
+PR #1 has merged). **Policy (2026-08-12): no binary blobs in the repo** — the
+snapshot and tile-offsets files are hosted on `iris.exampleslides.org` and
+digest-pinned in the committed `tests/corpus/manifest.json`. Each change is
+marked inline.
+
+**Goal:** delete `src/IrisCodecExtension.hpp` and `src/IrisCodecExtension.cpp`
+without losing what they prove.
+
+**Near-term milestone (2026-08-12):** host the v1 coverage slide —
+`iris.exampleslides.org/v1_snapshot.test_slide`, 2,857 B, 13 of 18 blocks,
+digest `658ead7c…` (task 6.3) — then delete v1 and the tests that generate
+bytes with it. The hosted corpus grows from there as coverage and versions
+change.
+
+#### Read first
+
+1. `plans/phase-6-corpus.md` — the whole file.
+2. `tests/ife_v1_oracle_tests.cpp` — its preamble states why an oracle exists.
+3. `tests/ife_wire_parity_tests.cpp` — its preamble states why it is temporary.
+4. `src/IFE_Window.hpp` lines 1–30 — residency, and what it is not.
+
+#### The idea that unblocks this
+
+**The oracle's value is in the bytes, not the code.** v1's writers were only
+ever a way to *produce* bytes a shipped encoder wrote. Once produced, those
+bytes are permanent evidence. Freeze them as committed fixtures and the oracle
+survives v1's deletion.
+
+The whole v1 fixture is **2,857 bytes** and exercises 13 of 18 block types.
+
+⚠ This does **not** replace the corpus. A snapshot cannot generate bytes for a
+case nobody froze. It decouples *deleting v1* from *encoding a corpus*, which
+is the only reason it exists.
+
+#### Measured dependency map (2026-08-12 — do not re-derive)
+
+Exactly six real `#include`s of `IrisCodecExtension.hpp`; everything else is a
+comment mention.
+
+| Where | Kind |
+|---|---|
+| `src/IrisCodecExtension.cpp` | itself |
+| `src/IrisFileExtension.hpp` | **public umbrella** — what Iris-Codec includes |
+| `tests/ife_wire_parity_tests.cpp` | offsets + enum values vs v1 |
+| `tests/ife_v1_oracle_tests.cpp` | v1 writes → generated reads |
+| `tests/ife_v1_fixture.cpp` | writes the shared fixture |
+| `tests/ife_large_file_tests.cpp` | writes the >4 GiB slide |
+
+Targets linking `IrisFileExtensionLib` for v1's `STORE_*`:
+`ife_v1_slide_writer`, `ife_example_v1`, `ife_v1_oracle_tests`,
+`ife_large_file_tests`.
+
+#### Measured coverage baseline (2026-08-12 — do not re-derive)
+
+| File | Regions | Functions | Lines | Branches |
+|---|---|---|---|---|
+| `generated_source/IFE_Blocks.cpp` | 71.9% | 85.1% (27/181 unexecuted) | 75.3% | 52.7% |
+| `generated_source/IFE_Validation.cpp` | 29.1% | 40.0% (9/15) | 33.3% | 21.8% |
+| `src/IFE_Runtime.cpp` | 74.5% | 100% | 79.0% | 67.5% |
+| `src/IFE_Bytes.hpp` | 88.3% | 85.7% | 97.7% | 71.9% |
+
+**Post-implementation (2026-08-12, same command):** `IFE_Blocks.cpp` 0/181 and
+`IFE_Validation.cpp` 0/15 functions unexecuted — 100% — because 6.1 and 6.2
+cover what the baseline analysis called unreachable: the generated writers
+make TILE_PIXEL_DATA and CLINICAL_METADATA constructible, so even the "10
+fixture gaps" execute.
+
+Reproduce with:
+
+```bash
+cmake -S . -B build-cov -G Ninja -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping" -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate" && cmake --build build-cov -j && rm -rf /tmp/prof && mkdir -p /tmp/prof && LLVM_PROFILE_FILE="/tmp/prof/%p.profraw" ctest --test-dir build-cov && xcrun llvm-profdata merge -sparse /tmp/prof/*.profraw -o /tmp/prof/all.profdata && xcrun llvm-cov report $(ls build-cov/tests/ife_* | while read b; do [ -x "$b" ] && printf -- "-object %s " "$b"; done) -instr-profile=/tmp/prof/all.profdata
+```
+
+⚠ In zsh an unquoted `$VAR` does **not** word-split. The `$(...)` above must be
+inlined exactly as written; assigning it to a variable first breaks `llvm-cov`.
+
+**36 unexecuted functions split into two kinds that need different fixes**
+(counts corrected 2026-08-12 review — re-derived from the merged profile; the
+earlier 24/12 split double-counted `FILE_HEADER`'s no-arg overload and
+miscounted the conformance layer. Totals are unchanged: 27 + 9 = 36):
+
+* **26 are harness gaps — no fixture file can ever cover them.** 17 are the
+  no-arg `validate_deep()` overloads that never execute. All 18 blocks have
+  one; `FILE_HEADER`'s is called by `IFE_Runtime::validate_file_structure`
+  (`versioned_root` → `header.validate_deep()`), the other 17 are not, because
+  traversal uses `validate_deep(VisitPath&)`. The remaining 9 are the
+  conformance layer: `check_FILE_HEADER`, `check_ATTRIBUTES`, `check_IMAGES`,
+  `check_ANNOTATIONS`, `check_CLINICAL_METADATA`, and the `is_member`
+  predicates for `ImageEncodings`, `AnnotationTypes`, `MetadataFormats`,
+  `ClinicalEncodings` (5 checks + 4 predicates; `check_TILE_TABLE`,
+  `check_LAYER_EXTENTS`, and the `TileEncodings`/`PixelFormats` predicates are
+  already executed by `ife_validation_tests`).
+* **10 are fixture-content gaps** — the same five blocks
+  `plans/phase-6-corpus.md` lists: `CLINICAL_METADATA` (its `VisitPath&`
+  `validate_deep`, `validate`, `entries_begin`, `encoding`, `bytes`), framed
+  `TILE_PIXEL_DATA` (`VisitPath&` `validate_deep`, plus `store` and `size_of`
+  for both blocks), `CIPHER`, `ANNOTATION_GROUP_SIZES`,
+  `ANNOTATION_GROUP_BYTES`. The last three contribute only their no-arg
+  `validate_deep` — their other functions are exercised in-memory by
+  `ife_blocks_tests`/`ife_validation_tests` without a fixture.
+
+#### Tasks, in order
+
+**6.1 — Attach the conformance layer in tests.** *No fixture needed.*
+Edit `tests/ife_validation_tests.cpp`. The hooks are **already installed** —
+`attached()` copies `b::conformance_layer()`, and hook-attached `store()`
+tests cover `LAYER_EXTENTS` (range, ordering, conformant pass), `TILE_TABLE`
+(enum membership), `CIPHER` (null-hook proof), plus a custom tracing hook.
+Hooks attach to `store(..., &hooks)`, **not** to `validate_deep` — that takes
+only `VisitPath&` — so re-running a fixture "through `validate_deep` with them
+attached" is impossible and not what the layer is for. What remains:
+hook-attached `store()` cases for the five blocks whose checks never run —
+`FILE_HEADER`, `ATTRIBUTES`, `IMAGES`, `ANNOTATIONS`, `CLINICAL_METADATA` —
+each with a conformant input and one deliberately invalid value so both
+branches execute. `FILE_HEADER` has no enum predicate: its two branches are
+`TILE_TABLE_OFFSET` and `METADATA_OFFSET` equal to `NULL_OFFSET`.
+**Done when:** `IFE_Validation.cpp` function coverage ≥ 90% by the command
+above (covering these 9 takes it to 100%), and `ctest` is green.
+
+**6.2 — Call the 17 unexecuted no-arg `validate_deep()` entry points.** *No
+fixture needed.* Add one test to `tests/ife_blocks_tests.cpp` that walks the
+existing in-test fixture and calls `validate_deep()` (no argument) on every
+block handle it can reach. Assert each returns success. (`FILE_HEADER`'s no-arg
+form is already executed by `IFE_Runtime::validate_file_structure` — all 18
+overloads exist and all are public API.)
+**Done when:** `IFE_Blocks.cpp` function coverage ≥ 94% — the 17 overloads
+take it to 171/181 = 94.5%, and ≥ 95% is unreachable without the 10
+fixture-gap functions, so do not chase it — and `ctest` is green.
+⚠ Do not delete the no-arg overloads instead. They are public API.
+
+**6.3 — Snapshot the v1 fixture; host it — no binary blobs are committed.**
+Run it with the output path — the writer takes a required argument and exits 2
+without one: `build/tests/ife_v1_slide_writer tests/fixtures/v1_snapshot.test_slide`.
+`tests/fixtures/` is gitignored scratch and stays that way: upload the file to
+`iris.exampleslides.org` (Cloudflare R2, registered 2026-08-12) and record it
+in `tests/corpus/manifest.json` (committed, text — URL, 2,857 B, SHA-256, IFE
+version, blocks covered), the corpus Delivery mechanism from
+`plans/phase-6-corpus.md`. The snapshot is the corpus's first hosted fixture,
+so the oracle and the corpus share one fetch path. Implement the fetch now:
+CMake downloads `manifest.json`'s files into the gitignored `.deps/corpus/`
+and verifies each digest before any test runs — unconditional, like the
+existing IrisHeaders `FetchContent` (the `ife_corpus_tests` target and the
+`-DIFE_CORPUS=OFF` opt-out come later with the rest of the corpus).
+**Done when:** the file is uploaded, `manifest.json` is committed with the
+matching digest, a fresh configure fetches and verifies it, and `ctest` is
+green. Known-good reference from the 2026-08-12 review run:
+`658ead7c395c62c9eec8d3251a720b4e00553b9bf218aed9d4134791edd76fa0` — any
+other digest means the encoder changed, which is exactly what this task exists
+to notice.
+⚠ Generate it **before** any task below changes v1. The upload and fetch must
+be live before 6.5 rewires the oracle onto the fetched file.
+
+**6.4 — Snapshot the full-width tile-offsets array.** `ife_v1_oracle_tests.cpp`
+`test_v1_packed_widths_at_full_width` writes a bare `TILE_OFFSETS` array with
+every byte of `u40`/`u24` significant. Persist that buffer once, upload as
+`iris.exampleslides.org/v1_tile_offsets_full_width.bin`, and record it in
+`tests/corpus/manifest.json` alongside the 6.3 snapshot — same fetch, same
+digest rule.
+**Done when:** uploaded and `manifest.json` committed with the matching
+digest; a new test reads the fetched file and reproduces the existing
+assertions on `OFFSET_FULL`, `SIZE_FULL`, `OFFSET_MID`, `SIZE_MID`.
+
+**Removed on review (2026-08-12): "Freeze the parity wall" was task 6.5.**
+It dies with v1 instead. The wall's own preamble declares it "deliberately
+temporary… dies with `src/IrisCodecExtension.*`", and a frozen copy of the 147
+assertions would have no reference to verify against — the v1 side is deleted
+in the same phase, so any transcription error becomes a permanent, silent,
+enshrined error. The byte guarantee survives without it: 6.3 and 6.4 pin the
+fixture and the full-width offsets by digest in the committed manifest, the
+oracle proves the generated readers over v1 bytes, and a schema edit that
+moves a shipped field breaks reading the digest-verified file. The enum values
+absent from the fixture (AVIF/PNG encodings, `ORIENTATION` variants, remaining
+`RECOVERY` codes) are corpus work — see `plans/phase-6-corpus.md`. If a
+compile-time wall is wanted later, generate its literals mechanically from v1
+headers before deletion; never hand-type them.
+
+**6.5 — Rewire the v1-dependent tests onto the fetched snapshot.**
+`ife_v1_oracle_tests`, `ife_v1_fixture`, and `ife_large_file_tests` must read
+`.deps/corpus/v1_snapshot.test_slide` — fetched and digest-verified by 6.3's
+machinery — instead of calling `STORE_*` (the rewire lives in
+`ife_v1_fixture.cpp`'s `build_slide`; `ife_v1_fixture.hpp` includes nothing of
+v1, so the boundary is one file). For `ife_large_file_tests`, write the
+structural blocks by copying the snapshot's bytes into the sparse arena at the
+same offsets and rewriting only `FILE_SIZE` and the two tile-offset entries.
+The oracle's liveness now depends on the hosting being up; CI's `.deps/corpus/`
+cache keyed by manifest digest keeps the normal path off the network.
+**Done when:** no test includes `IrisCodecExtension.hpp`; `ctest` green in both
+Release and ASan+UBSan.
+⚠ `ife_example_parity` and `ife_example_v1` die here — they exist to compare v1
+against the runtime. Delete both targets and `tests/example_parity.cmake`, and
+sweep the `ife_example_v1` references from CMakeLists' FOLDER/export/install
+lists — 6.7's grep covers only `IrisCodecExtension`. `ife_v1_slide_writer` has
+no purpose once 6.3's digest is recorded — delete it too rather than rewiring
+it to copy bytes.
+
+**6.6 — Flip the library.** In `CMakeLists.txt`, remove
+`${IFE_SOURCE_DIR}/IrisCodecExtension.cpp` from `IFE_SourcesPriv` and move
+`IFE_RuntimeSources` into it. In `src/IrisFileExtension.hpp`, change
+`#include "IrisCodecExtension.hpp"` to `#include "IFE_Runtime.hpp"`.
+**Done when:** `ctest` green; `tests/exported_symbols.cmake` still passes.
+⚠ Iris-Codec pins IFE at `origin/main` and includes `IrisFileExtension.hpp`.
+This lands on *their* next build, not a schedule we choose.
+
+**6.7 — Delete.** `git rm src/IrisCodecExtension.hpp src/IrisCodecExtension.cpp`
+and remove every remaining reference (comments included).
+**Done when:** `grep -rn IrisCodecExtension src tests examples CMakeLists.txt`
+returns nothing; full gate run green.
+
+#### Gate run — use this exact form, every time
+
+```bash
+cmake . -B build && cmake --build build --config Release -j && ctest --test-dir build -C Release --output-on-failure && python3 -m generator --check && python3 tools/portability_lint.py
+```
+
+#### Traps that have already cost this project time
+
+* **`ctest` reports PASS from stale binaries after a failed build.** Chain build
+  and test with `&&` as above. This produced a false green twice in one session,
+  most recently on 2026-08-12.
+* **After changing `spec/*.json` or an emitter, run `cmake .`, not just
+  `cmake --build`.** The 200.0 gating fixture is generated at configure time.
+* **Never construct a block handle over v1-written bytes with
+  `b::VERSION_WRITTEN`.** It claims 1.1 for a file v1 stamps 1.0. Read
+  major/minor from the file and construct with those, as
+  `IFE_Runtime::versioned_root` does. Getting this wrong makes
+  `TILE_SIZE` return the neighbouring block's `VALIDATION` word rather than
+  reporting absent, with no error.
+* **Run `python3 tools/portability_lint.py` before pushing.** MSVC is the first
+  place Windows defects appear and no Windows container runs on macOS.
+
+#### Blocked on work outside this repository
+
+* **Iris-Headers PR #1** (`Iris::MemoryArena`) — **merged** as `68d6812`
+  ("Merge pull request #1 from ryanlandvater/feat/iris-memory-arena") on
+  IrisDigitalPathology/Iris-Headers main — the repo `CMakeLists.txt` fetches;
+  the `.deps` fetch already carries it and the build is green (13/13 ctest).
+  The earlier "on neither remote / must merge" note was stale. Two residuals
+  remain: (a) ryanlandvater's *fork* main is still stale — `789a99c` is not an
+  ancestor of `origin/main` — so anything checking out the fork fails; (b) the
+  arena's Windows branch is written but has never been compiled (per the PR).
+  `-DFETCHCONTENT_SOURCE_DIR_IRISHEADERS=<path>` covers co-development and CI
+  with nothing needed from the consumer and is verified to work.
+* **The five fixture-content blocks** need an encoder that can write them.
+  `CIPHER` and the annotation groups need encoder *features* that do not exist.
+  Host the resulting `.test_slide` files on `iris.exampleslides.org`
+  (Cloudflare R2, registered 2026-08-12) and pin them by SHA-256 in
+  `tests/corpus/manifest.json`; see `plans/phase-6-corpus.md` §Delivery.
+* ⚠ **Do not block 6.1–6.7 on the five-block corpus.** The snapshot is
+  generated, uploaded and fetched by 6.3 — before anything touches v1 — so the
+  cutover depends only on the two hosted snapshot files and the fetch
+  machinery, not on the corpus's remaining fixture work.
 
 ## Refinement workflow
 

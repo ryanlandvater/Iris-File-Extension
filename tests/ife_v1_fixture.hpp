@@ -1,16 +1,14 @@
 /**
  * @file ife_v1_fixture.hpp
- * @brief A slide file built by the SHIPPED encoder, for tests that read it back.
+ * @brief The bytes the SHIPPED encoder wrote, for tests that read them back.
  *
- * Deliberately free of both layers' types. IFE_Runtime.hpp and
- * IrisCodecExtension.hpp are mutually exclusive by design — both define
- * IrisCodec::Abstraction, which is what lets a consumer switch between them by
- * changing one include line — so a test that wants v1 to *write* and the new
- * runtime to *read* cannot have them in one translation unit.
- *
- * The seam is this header: `ife_v1_fixture.cpp` includes the hand-written
- * layer and produces bytes; the test includes the generated runtime and
- * consumes them. Nothing but `std::vector<unsigned char>` crosses between.
+ * Deliberately free of both layers' types — the generated runtime and the
+ * retired hand-written layer both define IrisCodec::Abstraction, so a header
+ * consumed from either side must not name either. The seam survives because
+ * what crosses it is bytes, not types: v1 wrote the snapshot once; it is
+ * hosted, pinned by digest in tests/corpus/manifest.json, and fetched into
+ * .deps/corpus/ at configure time (MIGRATION 6.3/6.5). Nothing but
+ * `std::vector<unsigned char>` crosses between.
  */
 
 #ifndef ife_v1_fixture_hpp
@@ -63,14 +61,11 @@ struct Expected {
     std::string   attribute_key;
     std::string   attribute_value;
     std::vector<AnnotationSpec> annotations;
-    std::uint64_t tile_table_at  = 0;
-    std::uint64_t metadata_at    = 0;
 };
 
 /// The values the fixture encodes. Pure data, so a test that cannot link the
-/// hand-written layer still knows what to expect; the derived members
-/// (file_size and the block offsets) are filled in by build_slide, which needs
-/// v1's own size arithmetic to compute them.
+/// hand-written layer still knows what to expect; `file_size` is filled in by
+/// load_snapshot from the length of the fetched file.
 inline Expected expectations() {
     Expected e;
     e.revision        = 0x00C0FFEEu;
@@ -114,8 +109,10 @@ inline Expected expectations() {
     return e;
 }
 
-/// Build a complete, valid slide file using v1's STORE_* functions only.
-std::vector<unsigned char> build_slide(Expected& __expected);
+/// Load the snapshot file (`.deps/corpus/v1_snapshot.test_slide`) and the
+/// values v1 encoded into it. Empty on any I/O failure — callers must treat
+/// that as fatal, exactly as a missing corpus file is.
+std::vector<unsigned char> load_snapshot(const std::string& __path, Expected& __expected);
 
 }  // namespace v1_fixture
 

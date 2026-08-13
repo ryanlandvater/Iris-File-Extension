@@ -3,37 +3,30 @@
  * @brief Bytes written by the SHIPPED encoder, read back through the generated layer.
  *
  * This closes the last gap in the read path, and it is the only check of its
- * kind. Every other gate compares
- * the generated layer against a *description* of the format:
+ * kind. Every other gate compares the generated layer against a *description*
+ * of the format:
  *
- *   - ife_wire_parity_tests   compares generated constants to v1's constants
- *   - ife_blocks_tests        reads a buffer the test itself laid out
- *   - --check                 compares generated output to a fresh render
+ *   - ife_blocks_tests       reads a buffer the test itself laid out
+ *   - --check                compares generated output to a fresh render
  *
- * All three would pass if the generated layer read a field at the right offset
+ * All would pass if the generated layer read a field at the right offset
  * with the wrong width — a u40 loaded as a u64, an enum cast from the wrong
  * type, an f16 returned as raw bits. Two descriptions agreeing is not
  * correctness (lessonsFromIFE B1). The only thing that settles it is bytes
- * produced by the encoder that has been writing real slides, read back through
- * the new reader, and compared against the values that went in.
+ * produced by the encoder that has been writing real slides, read back
+ * through the new reader, and compared against the values that went in.
  *
- * So: nothing here writes a byte. v1's STORE_* functions do, from
- * IrisFileExtensionLib, and the generated handles read. Blocks are written
- * leaves-first because v1's writers validate the blocks they reference.
- *
- * This file dies with src/IrisCodecExtension.* — but not before.
- * It is the reason the hand-written layer has to outlive the writers.
+ * The bytes come from the snapshot: a whole slide the shipped encoder wrote,
+ * hosted on iris.exampleslides.org, pinned by SHA-256 in
+ * tests/corpus/manifest.json and fetched into .deps/corpus/ at configure
+ * time (MIGRATION 6.3). Nothing here writes a byte. The retired hand-written
+ * layer that produced the snapshot is gone; the snapshot is what outlived it.
  */
-#include "IrisTypes.hpp"
-#include "IrisCodecTypes.hpp"
-
-#include "IrisBuffer.hpp"           // Iris::Buffer, which v1's annotation writers take
-#include "IrisCodecExtension.hpp"   // the oracle: v1 writers
-#include "IFE_Blocks.hpp"           // under test: generated readers
+#include "IFE_Blocks.hpp"
+#include "ife_v1_fixture.hpp"
 
 #include <cstdio>
 #include <cstring>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,195 +41,52 @@ int g_failures = 0;
     } \
 } while (0)
 
-namespace S = IrisCodec::Serialization;
+using ::IFE::BYTE;
 namespace b = ::IFE::blocks;
 namespace k = ::IFE::constants;
+namespace vt = ::IFE::vtables;
 
-// The values that go in. Every assertion at the bottom compares a generated
-// read against one of these -- never against v1's reader, which would just be
+/// Where the snapshot's LAYER_EXTENTS sits: v1 laid the file out head to
+/// tail, header then tile table, so this is the sum of their 1.0 sizes —
+/// the same arithmetic v1's place() did at encode time.
+constexpr std::uint64_t EXTENTS_AT =
+    vt::FILE_HEADER::header_size_v1_0 + vt::TILE_TABLE::header_size_v1_0;
+
+std::vector<BYTE> read_whole_file(const std::string& __path) {
+    std::FILE* in = std::fopen(__path.c_str(), "rb");
+    if (!in) {
+        std::fprintf(stderr, "ife_v1_oracle_tests: could not open %s\n", __path.c_str());
+        return {};
+    }
+    std::vector<BYTE> bytes;
+    std::fseek(in, 0, SEEK_END);
+    const long n = std::ftell(in);
+    std::fseek(in, 0, SEEK_SET);
+    if (n > 0) bytes.resize(static_cast<std::size_t>(n));
+    const auto read = std::fread(bytes.data(), 1, bytes.size(), in);
+    std::fclose(in);
+    if (read != bytes.size()) {
+        std::fprintf(stderr, "ife_v1_oracle_tests: short read from %s\n", __path.c_str());
+        return {};
+    }
+    return bytes;
+}
+
+// The complete snapshot, read through the generated layer. Every assertion
+// compares a generated read against a value v1 was asked to encode (the
+// fixture's expectations) -- never against v1's reader, which would just be
 // two readers agreeing.
-constexpr std::uint32_t REVISION      = 0x0BADF00Du;
-constexpr std::uint32_t X_EXTENT      = 4096;
-constexpr std::uint32_t Y_EXTENT      = 2048;
-constexpr float         MICRONS       = 0.2467f;
-constexpr float         MAGNIFICATION = 40.0f;
+void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
+                                                const v1_fixture::Expected& expected) {
+    BYTE* p = const_cast<BYTE*>(f.data());
 
-// Tile payload sizes for the complete-file test. v1 validates that every tile
-// entry's offset+size lies inside the file, so these must address real bytes.
-// Exercising the top bytes of a u40 would need a >4 GB file; that is what
-// test_v1_packed_widths_at_full_width below is for.
-constexpr std::uint32_t TILE0_SIZE = 300;
-constexpr std::uint32_t TILE1_SIZE = 145;
-
-const std::string ICC_PROFILE = "ICC-PROFILE-BYTES-not-really-a-profile";
-const std::string IMAGE_TITLE = "label";
-
-// Two annotations, and they must differ in every asserted field. One would
-// prove nothing: until this file was written, v1's reader took each entry's
-// identifier, format, location, size and parent from the block header rather
-// than from the entry -- so a single-entry array read back correctly by
-// accident. Two entries with distinct values is what makes that visible.
-// Identifiers ascend because AnnotationInfos orders on them, so entry(i)
-// follows identifier order.
-constexpr std::uint32_t ANN_A_ID     = 0x0013579u;
-constexpr std::uint32_t ANN_B_ID     = 0x00ABCDEu;
-constexpr std::uint32_t ANN_A_WIDTH  = 128;
-constexpr std::uint32_t ANN_A_HEIGHT = 64;
-constexpr std::uint32_t ANN_B_WIDTH  = 32;
-constexpr std::uint32_t ANN_B_HEIGHT = 16;
-const std::string ANN_A_PAYLOAD = "<svg viewBox='0 0 8 8'><circle r='4'/></svg>";
-const std::string ANN_B_PAYLOAD = "a free-text annotation";
-
-void test_v1_bytes_read_through_generated_layer() {
-    using namespace IrisCodec;
-
-    // ---- what v1 will be asked to encode -------------------------------- //
-    Iris::LayerExtents extents = {
-        {.xTiles = 16, .yTiles = 8,  .scale = 1.0f, .downsample = 4.0f},
-        {.xTiles = 32, .yTiles = 16, .scale = 2.0f, .downsample = 2.0f},
-        {.xTiles = 64, .yTiles = 32, .scale = 4.0f, .downsample = 1.0f},
-    };
-    // Filled in once the tile-data region has an address.
-    Abstraction::TileTable::Layers layers = {
-        {{.offset = 0, .size = TILE0_SIZE}, {.offset = 0, .size = TILE1_SIZE}},
-    };
-
-    std::vector<Iris::BYTE> stream(64, 0xAB);
-    S::ImageBytesCreateInfo image_bytes{};
-    image_bytes.title     = IMAGE_TITLE;
-    image_bytes.dataBytes = stream.size();
-    // `data` is `BYTE* const`, so it must be set at construction.
-    const S::ImageBytesCreateInfo image_bytes_ci{
-        .offset = 0, .title = IMAGE_TITLE, .data = stream.data(), .dataBytes = stream.size()};
-
-    // ---- lay the file out using v1's own size arithmetic ----------------- //
-    // Deliberately v1's SIZE_*: the oracle decides how big its own blocks are.
-    IrisCodec::Offset at = 0;
-    auto place = [&at](IrisCodec::Size bytes) { const auto here = at; at += bytes; return here; };
-
-    const IrisCodec::Offset header_at   = place(S::FILE_HEADER::HEADER_SIZE);
-    const IrisCodec::Offset table_at    = place(S::TILE_TABLE::HEADER_SIZE);
-    const IrisCodec::Offset extents_at  = place(S::SIZE_EXTENTS(extents));
-    const IrisCodec::Offset tiles_at    = place(S::SIZE_TILE_OFFSETS(layers));
-    const IrisCodec::Offset icc_at      = place(S::SIZE_ICC_COLOR_PROFILE(ICC_PROFILE));
-    const IrisCodec::Offset imgbytes_at = place(S::SIZE_IMAGES_BYTES(image_bytes_ci));
-
-    S::AssociatedImageCreateInfo images{};
-    images.images.push_back(S::AssociatedImageCreateInfo::Entry{
-        .offset = imgbytes_at,
-        .info   = {.imageLabel   = IMAGE_TITLE,
-                   .width        = 512,
-                   .height       = 256,
-                   .encoding     = IrisCodec::IMAGE_ENCODING_JPEG,
-                   .sourceFormat = Iris::FORMAT_R8G8B8A8,
-                   .orientation  = IrisCodec::ORIENTATION_90}});
-    const IrisCodec::Offset images_at = place(S::SIZE_IMAGES_ARRAY(images));
-
-    // Annotations. v1 sizes an ANNOTATION_BYTES block from the Buffer the
-    // Annotation carries, so the payloads are built before the layout runs.
-    Iris::Annotation ann_a{}, ann_b{};
-    ann_a.type = Iris::ANNOTATION_SVG;
-    ann_a.data = std::make_shared<Iris::__INTERNAL__Buffer>(
-        Iris::REFERENCE_STRONG, ANN_A_PAYLOAD.data(), ANN_A_PAYLOAD.size());
-    ann_b.type = Iris::ANNOTATION_TEXT;
-    ann_b.data = std::make_shared<Iris::__INTERNAL__Buffer>(
-        Iris::REFERENCE_STRONG, ANN_B_PAYLOAD.data(), ANN_B_PAYLOAD.size());
-
-    const IrisCodec::Offset annbytes_a_at = place(S::SIZE_ANNOTATION_BYTES(ann_a));
-    const IrisCodec::Offset annbytes_b_at = place(S::SIZE_ANNOTATION_BYTES(ann_b));
-
-    S::AnnotationArrayCreateInfo annotations{};
-    annotations.annotations.insert({.identifier  = ANN_A_ID,
-                                    .bytesOffset = annbytes_a_at,
-                                    .type        = Iris::ANNOTATION_SVG,
-                                    .xLocation   = 0.25f,
-                                    .yLocation   = 0.50f,
-                                    .xSize       = 0.125f,
-                                    .ySize       = 0.0625f,
-                                    .width       = ANN_A_WIDTH,
-                                    .height      = ANN_A_HEIGHT,
-                                    .parent      = Abstraction::Annotation::NULL_ID});
-    annotations.annotations.insert({.identifier  = ANN_B_ID,
-                                    .bytesOffset = annbytes_b_at,
-                                    .type        = Iris::ANNOTATION_TEXT,
-                                    .xLocation   = 0.75f,
-                                    .yLocation   = 0.875f,
-                                    .xSize       = 0.5f,
-                                    .ySize       = 0.375f,
-                                    .width       = ANN_B_WIDTH,
-                                    .height      = ANN_B_HEIGHT,
-                                    .parent      = ANN_A_ID});
-    const IrisCodec::Offset annotations_at = place(S::SIZE_ANNOTATION_ARRAY(annotations));
-
-    const IrisCodec::Offset meta_at   = place(S::METADATA::HEADER_SIZE);
-
-    // The tile pixel data itself: unframed, per decision 10, so it is simply a
-    // region the tile entries address. v1 validates that they do.
-    const IrisCodec::Offset tile0_at  = place(TILE0_SIZE);
-    const IrisCodec::Offset tile1_at  = place(TILE1_SIZE);
-    layers[0][0].offset = tile0_at;
-    layers[0][1].offset = tile1_at;
-
-    const IrisCodec::Size   file_size = at;
-
-    std::vector<Iris::BYTE> f(file_size, 0);
-    Iris::BYTE* p = f.data();
-
-    // ---- v1 writes, leaves first ----------------------------------------- //
-    // v1's writers validate the blocks they point at, so a parent may only be
-    // written once its children are on disk and valid.
-    S::STORE_EXTENTS(p, extents_at, extents);
-    S::STORE_TILE_OFFSETS(p, tiles_at, layers);
-    S::STORE_TILE_TABLE(p, S::TileTableCreateInfo{
-        .tileTableOffset    = table_at,
-        .encoding           = IrisCodec::TILE_ENCODING_JPEG,
-        .format             = Iris::FORMAT_R8G8B8A8,
-        .cipherOffset       = S::NULL_OFFSET,
-        .tilesOffset        = tiles_at,
-        .layerExtentsOffset = extents_at,
-        .layers             = static_cast<std::uint32_t>(extents.size()),
-        .widthPixels        = X_EXTENT,
-        .heightPixels       = Y_EXTENT});
-
-    S::STORE_ICC_COLOR_PROFILE(p, icc_at, ICC_PROFILE);
-
-    const S::ImageBytesCreateInfo stored_bytes{
-        .offset = imgbytes_at, .title = IMAGE_TITLE,
-        .data = stream.data(), .dataBytes = stream.size()};
-    S::STORE_IMAGES_BYTES(p, stored_bytes);
-
-    images.offset = images_at;
-    S::STORE_IMAGES_ARRAY(p, images);
-
-    S::STORE_ANNOTATION_BYTES(p, annbytes_a_at, ann_a);
-    S::STORE_ANNOTATION_BYTES(p, annbytes_b_at, ann_b);
-    annotations.offset = annotations_at;
-    S::STORE_ANNOTATION_ARRAY(p, annotations);
-
-    S::STORE_METADATA(p, S::MetadataCreateInfo{
-        .metadataOffset  = meta_at,
-        .codecVersion    = {1, 2, 3},
-        .attributes      = S::NULL_OFFSET,
-        .images          = images_at,
-        .ICC_profile     = icc_at,
-        .annotations     = annotations_at,
-        .micronsPerPixel = MICRONS,
-        .magnification   = MAGNIFICATION});
-
-    S::STORE_FILE_HEADER(p, S::HeaderCreateInfo{
-        .fileSize        = file_size,
-        .revision        = REVISION,
-        .tileTableOffset = table_at,
-        .metadataOffset  = meta_at});
-
-    // ---- the generated layer reads what v1 wrote -------------------------- //
     // Bootstrap: the root's own version is unknowable until it has been read,
     // so it is constructed with every gate open for exactly one block, then
     // rebuilt at the version the file declares. This is what
     // IFE_Runtime::versioned_root does, and what a decoder must do -- reading
     // v1's bytes through a handle that claims this build's version is claiming
     // a version the file does not have.
-    const b::FILE_HEADER bootstrap{p, header_at, file_size, UINT32_MAX};
+    const b::FILE_HEADER bootstrap{p, 0, f.size(), UINT32_MAX};
     const std::uint32_t  declared =
         (static_cast<std::uint32_t>(bootstrap.extension_major()) << 16) |
         bootstrap.extension_minor();
@@ -247,8 +97,8 @@ void test_v1_bytes_read_through_generated_layer() {
     // traversal and the field reads alike. `newest` exists only for the two
     // assertions that are deliberately about a 1.1-compiled reader looking at
     // 1.0 bytes.
-    const b::FILE_HEADER root{p, header_at, file_size, declared};
-    const b::FILE_HEADER newest{p, header_at, file_size, b::VERSION_WRITTEN};
+    const b::FILE_HEADER root{p, 0, f.size(), declared};
+    const b::FILE_HEADER newest{p, 0, f.size(), b::VERSION_WRITTEN};
 
     IFE_CHECK(static_cast<bool>(root));
 
@@ -270,36 +120,45 @@ void test_v1_bytes_read_through_generated_layer() {
     IFE_CHECK(newest.file_revision()   == root.file_revision());
     IFE_CHECK(newest.tile_table_offset().x_extent() == root.tile_table_offset().x_extent());
 
-    IFE_CHECK(root.file_size() == file_size);
-    IFE_CHECK(root.file_revision() == REVISION);
+    IFE_CHECK(root.file_size() == expected.file_size);
+    IFE_CHECK(root.file_revision() == expected.revision);
     IFE_CHECK(root.extension_major() == 1);
     IFE_CHECK(root.extension_minor() == 0);
 
     const auto tt = root.tile_table_offset();
+    IFE_CHECK(static_cast<bool>(tt));
     IFE_CHECK(tt.encoding() == k::TileEncodings::TILE_ENCODING_JPEG);
     IFE_CHECK(tt.format() == k::PixelFormats::FORMAT_R8G8B8A8);
-    IFE_CHECK(tt.x_extent() == X_EXTENT);
-    IFE_CHECK(tt.y_extent() == Y_EXTENT);
+    IFE_CHECK(tt.x_extent() == expected.x_extent);
+    IFE_CHECK(tt.y_extent() == expected.y_extent);
     IFE_CHECK(!static_cast<bool>(tt.cipher_offset()));   // nullable, absent
 
     // f32 written by v1, read by the generated layer.
     const auto le = tt.layer_extents_offset();
-    IFE_CHECK(le.count() == extents.size());
-    for (std::uint32_t i = 0; i < extents.size(); ++i) {
-        IFE_CHECK(le.entry(i).x_tiles() == extents[i].xTiles);
-        IFE_CHECK(le.entry(i).y_tiles() == extents[i].yTiles);
-        IFE_CHECK(le.entry(i).scale()   == extents[i].scale);
+    IFE_CHECK(le.count() == expected.layers);
+    constexpr std::uint32_t X_TILES[3] = {2, 4, 8};
+    constexpr std::uint32_t Y_TILES[3] = {2, 4, 8};
+    constexpr float         SCALES[3]  = {1.0f, 2.0f, 4.0f};
+    for (std::uint32_t i = 0; i < expected.layers; ++i) {
+        IFE_CHECK(le.entry(i).x_tiles() == X_TILES[i]);
+        IFE_CHECK(le.entry(i).y_tiles() == Y_TILES[i]);
+        IFE_CHECK(le.entry(i).scale()   == SCALES[i]);
     }
 
     // The packed widths. v1 stored these through STORE_U40 / STORE_U24; if the
     // generated reader loaded 8 or 4 bytes and masked, or read the wrong
-    // width entirely, this is where it shows.
+    // width entirely, this is where it shows. The snapshot's 84 tile entries
+    // are 16 bytes each, laid head to tail so the last one ends exactly at
+    // EOF.
     const auto to = tt.tile_offsets_offset();
-    IFE_CHECK(to.count() == 2);
-    IFE_CHECK(to.entry(0).offset()     == tile0_at);
-    IFE_CHECK(to.entry(0).size_field() == TILE0_SIZE);
-    IFE_CHECK(to.entry(1).offset()     == tile1_at);
-    IFE_CHECK(to.entry(1).size_field() == TILE1_SIZE);
+    IFE_CHECK(to.count() == expected.tiles);
+    IFE_CHECK(to.stride() == vt::TILE_OFFSETS::entry_size_v1_0);
+    IFE_CHECK(to.entry(0).size_field() == 16);
+    for (std::uint32_t i = 0; i + 1 < expected.tiles; ++i) {
+        IFE_CHECK(to.entry(i).size_field() == 16);
+        IFE_CHECK(to.entry(i + 1).offset() == to.entry(i).offset() + 16);
+    }
+    IFE_CHECK(to.entry(expected.tiles - 1).offset() + 16 == expected.file_size);
 
     // TILE_SIZE, and the asymmetry that governs every appended header field.
     //
@@ -312,142 +171,141 @@ void test_v1_bytes_read_through_generated_layer() {
     // declared version the field is correctly absent; read at this build's
     // version it is not absent but *wrong*, and wrong in the worst available
     // way. tile_size() gates on __version alone, and TILE_SIZE sits at offset
-    // 44 -- exactly where v1's 44-byte header ends. In this layout the next
-    // block begins there, so the accessor returns the low two bytes of
-    // LAYER_EXTENTS' VALIDATION word: not a sentinel, not zero, just a
-    // neighbouring block's data wearing the name of a tile size.
+    // 44 -- exactly where v1's 44-byte header ends. The next block begins
+    // there, so the accessor returns the low two bytes of LAYER_EXTENTS'
+    // VALIDATION word: not a sentinel, not zero, just a neighbouring block's
+    // data wearing the name of a tile size.
     //
     // Nothing reports an error. That is why the version comes from the file,
     // and why nothing else in this test hangs off `newest`.
     IFE_CHECK(root.tile_table_offset().tile_size() == std::nullopt);
     IFE_CHECK(newest.tile_table_offset().tile_size() != std::nullopt);
     IFE_CHECK(newest.tile_table_offset().tile_size().value() ==
-              static_cast<std::uint16_t>(extents_at));
+              static_cast<std::uint16_t>(EXTENTS_AT));
 
     const auto md = root.metadata_offset();
     IFE_CHECK(md.codec_major() == 1);
     IFE_CHECK(md.codec_minor() == 2);
     IFE_CHECK(md.codec_build() == 3);
-    IFE_CHECK(md.microns_pixel() == MICRONS);
-    IFE_CHECK(md.magnification() == MAGNIFICATION);
-    IFE_CHECK(!static_cast<bool>(md.attributes_offset()));
+    IFE_CHECK(md.microns_pixel() == expected.microns);
+    IFE_CHECK(md.magnification() == expected.magnification);
+
+    // Attributes: present in the snapshot (unlike the metadata of the
+    // published example files), key-value pair sliced by the sizes array.
+    const auto attrs = md.attributes_offset();
+    IFE_CHECK(static_cast<bool>(attrs));
+    // v1 defined METADATA_FREE_TEXT as an alias of METADATA_I2S, so the byte
+    // it stored reads back as I2S under the schema's distinct value (errata
+    // recorded in ife_fields.json; conformance claims are now unambiguous).
+    IFE_CHECK(attrs.format() == k::MetadataFormats::METADATA_I2S);
+    const auto attr_sizes = attrs.sizes_offset();
+    IFE_CHECK(attr_sizes.count() == 1);
+    IFE_CHECK(attr_sizes.entry(0).key_size()   == expected.attribute_key.size());
+    IFE_CHECK(attr_sizes.entry(0).value_size() == expected.attribute_value.size());
+    const auto attr_bytes = attrs.bytes_offset().bytes();
+    IFE_CHECK(attr_bytes.size == expected.attribute_key.size() + expected.attribute_value.size());
+    IFE_CHECK(std::memcmp(attr_bytes.data, expected.attribute_key.data(),
+                          expected.attribute_key.size()) == 0);
+    IFE_CHECK(std::memcmp(attr_bytes.data + expected.attribute_key.size(),
+                          expected.attribute_value.data(), expected.attribute_value.size()) == 0);
 
     // A blob, sized by a u32 length v1 wrote.
     const auto icc = md.icc_color_offset().bytes();
-    IFE_CHECK(icc.size == ICC_PROFILE.size());
-    IFE_CHECK(std::memcmp(icc.data, ICC_PROFILE.data(), ICC_PROFILE.size()) == 0);
+    IFE_CHECK(icc.size == expected.icc_profile.size());
+    IFE_CHECK(std::memcmp(icc.data, expected.icc_profile.data(), expected.icc_profile.size()) == 0);
 
     const auto im = md.images_offset();
     IFE_CHECK(im.count() == 1);
-    IFE_CHECK(im.entry(0).width()  == 512);
-    IFE_CHECK(im.entry(0).height() == 256);
+    IFE_CHECK(im.entry(0).width()  == expected.image_width);
+    IFE_CHECK(im.entry(0).height() == expected.image_height);
     IFE_CHECK(im.entry(0).encoding() == k::ImageEncodings::IMAGE_ENCODING_JPEG);
     IFE_CHECK(im.entry(0).format()   == k::PixelFormats::FORMAT_R8G8B8A8);
 
     // The sharpest single assertion in this file. v1 stored ORIENTATION_90 as
-    // the raw binary16 pattern 0x55A0 (IrisCodecExtension.cpp STORE_U16); the
+    // the raw binary16 pattern 0x55A0 (v1's STORE_U16); the
     // generated accessor decodes it. If load_f16 were wrong, or if the field
     // were read as a u16, this is 21920 rather than 90 -- and no other gate in
     // the project would notice.
     IFE_CHECK(im.entry(0).orientation() == 90.0f);
 
     const auto ib = im.entry(0).bytes_offset();
-    IFE_CHECK(ib.title_size() == IMAGE_TITLE.size());
-    IFE_CHECK(ib.image_size() == stream.size());
+    IFE_CHECK(ib.title_size() == expected.image_label.size());
+    IFE_CHECK(ib.image_size() == 96);   // the fixture's 0xAB stream
+    // The payload is not exposed as one span -- the schema does not describe
+    // the title/stream split, only the two lengths above -- and deep
+    // validation above already walked it in bounds.
 
     // ---- annotations ----------------------------------------------------- //
-    // The two entries are asserted field by field, and it matters that they
-    // disagree everywhere: reading an entry through the block header instead of
-    // the entry pointer yields the same values twice, which only a second
-    // differing entry exposes. ANNOTATION_ENTRY also puts BYTES_OFFSET at 3,
-    // behind a 24-bit identifier, where an IMAGE_ENTRY puts it at 0 -- so a
-    // pointer read through the image constant comes back shifted by 24 bits.
+    // The four entries are asserted field by field, and it matters that they
+    // disagree everywhere: reading an entry through the block header instead
+    // of the entry pointer yields the same values twice, which only differing
+    // siblings expose. ANNOTATION_ENTRY also puts BYTES_OFFSET at 3, behind a
+    // 24-bit identifier, where an IMAGE_ENTRY puts it at 0 -- so a pointer
+    // read through the image constant comes back shifted by 24 bits. One
+    // annotation per annotation_types value; identifiers ascend (a std::set
+    // on the v1 side), so entry(i) follows the fixture's expectations order.
     const auto an = md.annotations_offset();
     IFE_CHECK(static_cast<bool>(an));
-    IFE_CHECK(an.count() == 2);
+    IFE_CHECK(an.count() == expected.annotations.size());
+    constexpr std::uint32_t PARENT_NONE = v1_fixture::NULL_ANNOTATION_ID;
+    for (std::size_t i = 0; i < expected.annotations.size(); ++i) {
+        const auto& spec = expected.annotations[i];
+        const auto e = an.entry(i);
+        IFE_CHECK(e.identifier()   == spec.identifier);
+        IFE_CHECK(e.format()       == static_cast<k::AnnotationTypes>(spec.format));
+        IFE_CHECK(e.x_location()   == spec.xLocation);
+        IFE_CHECK(e.y_location()   == spec.yLocation);
+        IFE_CHECK(e.x_size()       == spec.xSize);
+        IFE_CHECK(e.y_size()       == spec.ySize);
+        IFE_CHECK(e.pixel_width()  == spec.width);
+        IFE_CHECK(e.pixel_height() == spec.height);
+        IFE_CHECK(e.parent_id()    == spec.parent);
 
-    const auto a0 = an.entry(0);
-    IFE_CHECK(a0.identifier()   == ANN_A_ID);
-    IFE_CHECK(a0.format()       == k::AnnotationTypes::ANNOTATION_SVG);
-    IFE_CHECK(a0.x_location()   == 0.25f);
-    IFE_CHECK(a0.y_location()   == 0.50f);
-    IFE_CHECK(a0.x_size()       == 0.125f);
-    IFE_CHECK(a0.y_size()       == 0.0625f);
-    IFE_CHECK(a0.pixel_width()  == ANN_A_WIDTH);
-    IFE_CHECK(a0.pixel_height() == ANN_A_HEIGHT);
-    IFE_CHECK(a0.parent_id()    == k::NULL_ID);
+        // Each entry's pointer resolves to its own payload, not a sibling's.
+        const auto ab = e.bytes_offset().bytes();
+        IFE_CHECK(ab.size == spec.payload.size());
+        IFE_CHECK(std::memcmp(ab.data, spec.payload.data(), spec.payload.size()) == 0);
+    }
 
-    const auto a1 = an.entry(1);
-    IFE_CHECK(a1.identifier()   == ANN_B_ID);
-    IFE_CHECK(a1.format()       == k::AnnotationTypes::ANNOTATION_TEXT);
-    IFE_CHECK(a1.x_location()   == 0.75f);
-    IFE_CHECK(a1.y_location()   == 0.875f);
-    IFE_CHECK(a1.x_size()       == 0.5f);
-    IFE_CHECK(a1.y_size()       == 0.375f);
-    IFE_CHECK(a1.pixel_width()  == ANN_B_WIDTH);
-    IFE_CHECK(a1.pixel_height() == ANN_B_HEIGHT);
-    IFE_CHECK(a1.parent_id()    == ANN_A_ID);
-
-    // Each entry's pointer resolves to its own payload, not the other's.
-    const auto ab0 = a0.bytes_offset().bytes();
-    IFE_CHECK(ab0.size == ANN_A_PAYLOAD.size());
-    IFE_CHECK(std::memcmp(ab0.data, ANN_A_PAYLOAD.data(), ANN_A_PAYLOAD.size()) == 0);
-
-    const auto ab1 = a1.bytes_offset().bytes();
-    IFE_CHECK(ab1.size == ANN_B_PAYLOAD.size());
-    IFE_CHECK(std::memcmp(ab1.data, ANN_B_PAYLOAD.data(), ANN_B_PAYLOAD.size()) == 0);
-
-    // No groups: v1 has no group writer, so STORE_ANNOTATION_ARRAY records
-    // NULL_OFFSET for both rather than leaving the buffer's contents in place.
+    // No groups: v1 has no group writer, so the honest value is NULL_OFFSET,
+    // and a reader must report absence rather than follow zero.
     IFE_CHECK(!static_cast<bool>(an.group_sizes_offset()));
+    IFE_CHECK(an.group_sizes_offset().__offset == k::NULL_OFFSET);
     IFE_CHECK(!static_cast<bool>(an.group_bytes_offset()));
+    IFE_CHECK(an.group_bytes_offset().__offset == k::NULL_OFFSET);
 }
 
-// The packed widths at their full width, from v1's own STORE_TILE_OFFSETS.
+// A bare TILE_OFFSETS array whose u40/u24 fields have every byte significant.
+// The full-width test could not build this through v1's writers inside this
+// file any more (the writers are gone), so the bytes are the second hosted
+// fixture: v1_tile_offsets_full_width.bin, pinned by digest like the snapshot.
 //
-// The complete-file test above cannot reach them: v1 requires every tile entry
-// to address bytes inside the file, so a 5-byte offset would need a file over
-// 4 GB. Here the array is written on its own and read through the generated
-// handle directly, which is legal -- STORE_TILE_OFFSETS writes; it is
-// STORE_FILE_HEADER that performs the whole-file validation.
-//
-// This is the single most valuable assertion in the file. A u40 read as a u64,
-// or a u24 read as a u32, is invisible to the wire-parity wall (offsets match
-// either way), invisible to the synthetic block tests (which write through the
-// same primitives they read), and invisible to --check. Only bytes from the
-// shipped encoder settle it.
-void test_v1_packed_widths_at_full_width() {
-    using namespace IrisCodec;
-
-    // Clear of NULL_TILE (0xFF'FFFF'FFFF) and NULL_ID (0xFF'FFFF) so these are
-    // ordinary values rather than sentinels, but with every byte significant.
+// Clear of NULL_TILE (0xFF'FFFF'FFFF) and NULL_ID (0xFF'FFFF) so these are
+// ordinary values rather than sentinels. The packed fields must not bleed
+// into their neighbour: the u24 SIZE sits immediately after the u40 OFFSET,
+// so a 4-byte store or load of either corrupts the other. Reading both back
+// intact is what proves the widths.
+void test_v1_packed_widths_at_full_width(const std::string& __corpus_dir) {
     constexpr std::uint64_t OFFSET_FULL = 0x000000FFFFFFFFFEull;  // 5 bytes, all set
     // (SIZE_MAX / OFFSET_MAX would collide with the <cstdint> macros.)
     constexpr std::uint32_t SIZE_FULL   = 0x00FFFFFEu;            // 3 bytes, all set
     constexpr std::uint64_t OFFSET_MID = 0x000000FEDCBA9876ull;
     constexpr std::uint32_t SIZE_MID   = 0x00ABCDEFu;
 
-    const Abstraction::TileTable::Layers layers = {
-        {{.offset = OFFSET_FULL, .size = SIZE_FULL},
-         {.offset = OFFSET_MID, .size = SIZE_MID}},
-    };
-
-    std::vector<Iris::BYTE> f(S::SIZE_TILE_OFFSETS(layers), 0);
-    S::STORE_TILE_OFFSETS(f.data(), 0, layers);
+    const auto f = read_whole_file(__corpus_dir + "/v1_tile_offsets_full_width.bin");
+    IFE_CHECK(f.size() == 32);   // ARRAY header + 2 * 8-byte entries
+    if (f.size() != 32) return;
 
     const b::TILE_OFFSETS to{f.data(), 0, f.size(), b::VERSION_WRITTEN};
     IFE_CHECK(static_cast<bool>(to.validate()));
     IFE_CHECK(to.count() == 2);
-    IFE_CHECK(to.stride() == S::TILE_OFFSET::SIZE);
+    IFE_CHECK(to.stride() == vt::TILE_OFFSETS::entry_size_v1_0);
 
     IFE_CHECK(to.entry(0).offset()     == OFFSET_FULL);
     IFE_CHECK(to.entry(0).size_field() == SIZE_FULL);
     IFE_CHECK(to.entry(1).offset()     == OFFSET_MID);
     IFE_CHECK(to.entry(1).size_field() == SIZE_MID);
 
-    // A packed field must not bleed into its neighbour: the u24 SIZE sits
-    // immediately after the u40 OFFSET, so a 4-byte store or load of either
-    // corrupts the other. Reading both back intact is what proves the widths.
     IFE_CHECK((to.entry(0).offset() & ~0x000000FFFFFFFFFFull) == 0);
     IFE_CHECK((to.entry(0).size_field() & ~0x00FFFFFFu) == 0);
 }
@@ -458,47 +316,57 @@ void test_v1_packed_widths_at_full_width() {
 // both the file and the field are invented. This proves it against the real
 // specification and bytes from the shipped 1.0 encoder -- the case that
 // actually occurs when a 1.1 build opens a slide written before Z_PLANES
-// existed.
+// existed. The snapshot's LAYER_EXTENTS is 1.0-written, and the whole file
+// has been deep-validated above at the declared version.
 //
 // The version alone cannot decide it. VERSION_WRITTEN is 1.1 here, so the
 // version gate is open and only the stride stored in v1's array -- 12 bytes,
-// two short of Z_PLANES -- keeps the decoder from reading whatever follows the
-// entry. That is precisely the guarantee <<ife-array-header>> makes to every
-// future version, so it is worth an assertion of its own.
-void test_v1_layer_extents_gate_the_1_1_plane_count() {
-    using namespace IrisCodec;
+// two short of Z_PLANES -- keeps the decoder from reading whatever follows
+// the entry. That is precisely the guarantee <<ife-array-header>> makes to
+// every future version, so it is worth an assertion of its own.
+void test_v1_layer_extents_gate_the_1_1_plane_count(const std::vector<BYTE>& f) {
+    BYTE* p = const_cast<BYTE*>(f.data());
 
-    const Iris::LayerExtents extents = {
-        {.xTiles = 2, .yTiles = 1, .scale = 1.f},
-        {.xTiles = 4, .yTiles = 2, .scale = 2.f},
-    };
-
-    std::vector<Iris::BYTE> f(S::SIZE_EXTENTS(extents), 0);
-    S::STORE_EXTENTS(f.data(), 0, extents);
-
-    const b::LAYER_EXTENTS le{f.data(), 0, f.size(), b::VERSION_WRITTEN};
+    const b::LAYER_EXTENTS le{p, EXTENTS_AT, f.size(), b::VERSION_WRITTEN};
     IFE_CHECK(static_cast<bool>(le.validate()));
 
     // The 1.0 stride is what gates it; if the entry ever stops being 12 bytes
     // at 1.0 this test is measuring something else and should be revisited.
-    IFE_CHECK(le.stride() == ::IFE::vtables::LAYER_EXTENTS::entry_size_v1_0);
+    IFE_CHECK(le.stride() == vt::LAYER_EXTENTS::entry_size_v1_0);
     IFE_CHECK(b::VERSION_WRITTEN >= 0x00010001u);
 
     IFE_CHECK(le.entry(0).z_planes() == std::nullopt);
     IFE_CHECK(le.entry(1).z_planes() == std::nullopt);
+    IFE_CHECK(le.entry(2).z_planes() == std::nullopt);
 
     // The 1.0 fields stay readable across the gate -- gating the tail must not
-    // disturb the prefix.
+    // disturb the prefix. The snapshot's extents are 2x2, 4x4, 8x8.
     IFE_CHECK(le.entry(0).x_tiles() == 2);
-    IFE_CHECK(le.entry(1).y_tiles() == 2);
+    IFE_CHECK(le.entry(1).y_tiles() == 4);
+    IFE_CHECK(le.entry(2).x_tiles() == 8);
 }
 
 }  // namespace
 
-int main() {
-    test_v1_bytes_read_through_generated_layer();
-    test_v1_packed_widths_at_full_width();
-    test_v1_layer_extents_gate_the_1_1_plane_count();
+int main(int argc, const char* argv[]) {
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: %s <corpus-dir>\n", argv[0]);
+        return 2;
+    }
+    const std::string corpus_dir = argv[1];
+
+    v1_fixture::Expected expected;
+    const auto bytes = v1_fixture::load_snapshot(corpus_dir + "/v1_snapshot.test_slide", expected);
+    if (bytes.empty()) {
+        std::fprintf(stderr, "ife_v1_oracle_tests: no snapshot in %s "
+                             "(the corpus fetch runs at configure; see "
+                             "tests/corpus/manifest.json)\n", corpus_dir.c_str());
+        return 1;
+    }
+
+    test_v1_bytes_read_through_generated_layer(bytes, expected);
+    test_v1_packed_widths_at_full_width(corpus_dir);
+    test_v1_layer_extents_gate_the_1_1_plane_count(bytes);
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

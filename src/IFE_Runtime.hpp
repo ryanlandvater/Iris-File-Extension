@@ -11,24 +11,14 @@
  *
  * This is a **port, not a redesign**. The entry-point names, signatures and
  * doc-comments are v1's, and the `IrisCodec::Abstraction` structs are
- * structurally identical to the ones in src/IrisCodecExtension.hpp, because
- * they are the contract Iris-Codec consumes: changing them would turn the
- * legacy-layer cutover from a re-point into a rewrite.
- *
- * **This header and IrisCodecExtension.hpp are mutually exclusive.** Both
- * define IrisCodec::Abstraction, deliberately — that is what lets a consumer
- * switch by changing one include line — so including both is an error rather
- * than a redefinition diagnostic thirty lines deep in a template.
+ * structurally identical to the ones the retired hand-written layer defined,
+ * because they are the contract Iris-Codec consumes: changing them would turn
+ * the legacy-layer cutover from a re-point into a rewrite.
  */
 
 #ifndef IFE_Runtime_hpp
 #define IFE_Runtime_hpp
 
-#ifdef IrisCodecExtension_hpp
-#error "IFE_Runtime.hpp and IrisCodecExtension.hpp both define IrisCodec::Abstraction. \
-Include one or the other: IrisCodecExtension.hpp is the hand-written layer, retired; \
-IFE_Runtime.hpp is the generated-layer successor."
-#endif
 
 #include <map>
 #include <set>

@@ -1,6 +1,19 @@
 # Phase 6 — Conformance corpus
 
-Refinement pass for Phase 6 item 2. The corpus exists to replace what
+> **The cutover checklist is in `MIGRATION.md` §"Phase 6 execution plan —
+> retire `src/IrisCodecExtension.*`" (2026-08-12), and is newer than this
+> document.** This file covers what the fixtures must *contain*; that one
+> covers how v1 is removed. Read both, and where they disagree, follow
+> MIGRATION.md — in particular, deleting v1 is **not** blocked on this corpus:
+> a snapshot of v1's own output — hosted on `iris.exampleslides.org`,
+> digest-pinned in the committed manifest (MIGRATION 6.3), never committed as
+> a blob — preserves the oracle without it.
+> Reviewed 2026-08-12: the five-block gap list below was re-verified — it maps
+> to exactly 10 unexecuted generated functions, and the oracle's 13/18 block
+> count was confirmed empirically (2,857 B fixture; SHA-256 recorded in
+> MIGRATION 6.3).
+
+Refinement pass for Phase 6. The corpus exists to replace what
 `ife_v1_oracle_tests` proves: that the generated layer reads bytes **a shipped
 encoder wrote**, rather than agreeing with another description of the format.
 Nothing else in the suite can settle that, and until the corpus covers what the
@@ -122,11 +135,13 @@ the class no self-consistent test reaches.
 
 ## Delivery
 
-**Host the files; commit only a manifest.** `irisdigitalpathology.org` is
-registered but currently resolves nowhere, so `examples.` is new
-infrastructure. Any static host works — with fixtures this small, HTTP range
-support is **not** required, which is what makes the small-fixture decision pay
-off twice.
+**Host the files; commit only a manifest.** `iris.exampleslides.org`
+(Cloudflare R2, registered 2026-08-12) is the host. The two snapshot files
+from MIGRATION 6.3/6.4 (`v1_snapshot.test_slide`, `v1_tile_offsets_full_width.bin`)
+are the first fixtures on it, fetched through this same manifest, so the
+oracle and the corpus share one path. Any static host works — with fixtures
+this small, HTTP range support is **not** required, which is what makes the
+small-fixture decision pay off twice.
 
 `tests/corpus/manifest.json` (committed, text) records for each fixture: URL,
 byte size, SHA-256, IFE version, and the block types it covers. CMake fetches
@@ -134,11 +149,19 @@ into the gitignored `.deps/corpus/` and verifies the digest before any test
 runs. The digest is what makes a hosted corpus reproducible; without it the
 gate silently changes meaning when a file is re-uploaded.
 
+The corpus is a **living set**, not a one-shot: fixtures are added as coverage
+grows (the five deferred blocks) and as new IFE versions land, each recorded
+in the manifest with the version it proves — the digest is what makes those
+re-uploads safe.
+
 **The corpus test must fail loudly when the corpus is unreachable, not skip.**
 A gate that disables itself on a network error is the `ctest`-from-stale-binaries
 failure mode wearing a different hat. Provide `-DIFE_CORPUS=OFF` as the
-explicit opt-out, and cache by manifest digest in CI so the normal path does not
-touch the host at all.
+explicit opt-out, and cache by manifest digest in CI so the normal path does
+not touch the host at all. The 6.3/6.4 snapshot fetch is **not** behind that
+opt-out: it is unconditional, like the IrisHeaders `FetchContent`, because the
+oracle (MIGRATION 6.5) depends on it — `-DIFE_CORPUS=OFF` disables only the
+corpus test target.
 
 ## Harness
 
@@ -166,8 +189,16 @@ encoder and read back through the generated layer.
 Covered: `FILE_HEADER`, `TILE_TABLE`, `LAYER_EXTENTS`, `TILE_OFFSETS`,
 `METADATA`, `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES`, `IMAGES`,
 `IMAGE_BYTES`, `ICC_PROFILE`, `ANNOTATIONS`, `ANNOTATION_BYTES`.
+(Re-verified 2026-08-12: 13 distinct `STORE_*` calls in `ife_v1_fixture.cpp`,
+2,857 bytes, digest recorded in MIGRATION 6.3.)
 
-The remaining five, each with a reason rather than a gap:
+The remaining five, each with a reason rather than a gap — together they are
+exactly 10 unexecuted generated functions: `CLINICAL_METADATA`'s
+`validate_deep(VisitPath&)`, `validate`, `entries_begin`, `encoding`, `bytes`;
+framed `TILE_PIXEL_DATA`'s `validate_deep(VisitPath&)`; `store` and `size_of`
+for both; `CIPHER` and the two annotation-group blocks contribute only their
+no-arg `validate_deep` (their other functions run in-memory without a
+fixture). See MIGRATION §Phase 6 execution plan.
 
 | Block | Why not |
 |---|---|
@@ -187,7 +218,9 @@ opened with, and it is still worth making.
 
 ## Exit
 
-Every block type reached by at least one fixture; `ife_v1_oracle_tests` and
-`src/IrisCodecExtension.*` removable without loss of real-byte coverage. Until
-then item 3 stays blocked, and that is the correct state — not a delay to work
-around.
+Every block type reached by at least one fixture — full real-byte coverage.
+Deleting v1 is **not** blocked on this: the digest-pinned snapshot (MIGRATION
+6.3) preserves the oracle, and the cutover plan (MIGRATION §Phase 6 execution
+plan) is written to complete without the corpus. This document is the path to
+covering the five blocks no snapshot contains, which is the only way the
+coverage the oracle proved does not quietly narrow.

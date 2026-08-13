@@ -16,9 +16,11 @@
  * The hole between the structural blocks and the tile data is never stored, so
  * this costs about what any other fixture costs.
  *
- * v1 writes and the generated handles read, exactly as the oracle test does --
- * two descriptions of the format agreeing proves nothing, and this is a case
- * where they could agree and both be wrong.
+ * The structural bytes are the v1 snapshot's, copied verbatim and patched in
+ * two places (FILE_SIZE, the first two tile-offset entries) -- the generated
+ * handles read what the shipped encoder wrote, exactly as the oracle test
+ * does; two descriptions of the format agreeing proves nothing, and this is a
+ * case where they could agree and both be wrong.
  *
  * 64-bit hosts only (a 32-bit address space cannot map 4 GiB). Sparse on both
  * platforms: the mapping goes through Iris::MemoryArena (priv/IrisMemory.hpp),
@@ -35,6 +37,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -42,7 +45,6 @@
 #include "IrisCodecTypes.hpp"
 #include "IrisMemory.hpp"           // priv/: the cross-platform sparse arena
 
-#include "IrisCodecExtension.hpp"   // the oracle: v1 writers
 #include "IFE_Blocks.hpp"           // under test: generated readers
 
 namespace {
@@ -56,9 +58,9 @@ int g_failures = 0;
     } \
 } while (0)
 
-namespace S = IrisCodec::Serialization;
 namespace b = ::IFE::blocks;
 namespace k = ::IFE::constants;
+namespace vt = ::IFE::vtables;
 
 /// Report a failed Status in full. Without this a validation failure here says
 /// only "false", and the block and offset are the whole diagnosis.
@@ -87,8 +89,11 @@ constexpr std::uint32_t TILE0_SIZE = 4096;
 constexpr std::uint32_t TILE1_SIZE = 8192;
 
 constexpr std::uint32_t REVISION = 0x00C0FFEEu;
-constexpr std::uint32_t X_EXTENT = 512;
-constexpr std::uint32_t Y_EXTENT = 256;
+
+// The structural bytes are the snapshot's, copied at their own offsets (see
+// ife_v1_oracle_tests.cpp); only FILE_SIZE and the first two tile-offset
+// entries are rewritten, so the >4 GiB offsets a reader follows are the one
+// thing no committed file ever carried.
 
 /// Portable file lifecycle + allocation measurement. The arena owns the
 /// mapping; truncating, unlinking and sizing the backing file are consumer
@@ -182,9 +187,7 @@ private:
     Iris::MemoryArena _arena;
 };
 
-void test_v1_slide_above_4GiB(const std::string& __dir) {
-    using namespace IrisCodec;
-
+void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __corpus_dir) {
     const std::uint64_t file_size = TILE_BASE + TILE0_SIZE + TILE1_SIZE;
     IFE_CHECK(file_size > 0xFFFFFFFFull);
 
@@ -197,66 +200,61 @@ void test_v1_slide_above_4GiB(const std::string& __dir) {
         return;
     }
 
-    // ---- what v1 will encode --------------------------------------------- //
-    Iris::LayerExtents extents = {
-        {.xTiles = 2, .yTiles = 1, .scale = 1.0f, .downsample = 1.0f},
-    };
-    Abstraction::TileTable::Layers layers = {
-        {{.offset = TILE_BASE, .size = TILE0_SIZE},
-         {.offset = TILE_BASE + TILE0_SIZE, .size = TILE1_SIZE}},
-    };
-
-    // The structural blocks all live in the first few hundred bytes; only the
-    // tile data is out past 4 GiB. Laying them out with v1's own SIZE_*, as
-    // every other oracle fixture does.
-    IrisCodec::Offset at = 0;
-    auto place = [&at](IrisCodec::Size bytes) { const auto here = at; at += bytes; return here; };
-
-    const IrisCodec::Offset header_at  = place(S::FILE_HEADER::HEADER_SIZE);
-    const IrisCodec::Offset table_at   = place(S::TILE_TABLE::HEADER_SIZE);
-    const IrisCodec::Offset extents_at = place(S::SIZE_EXTENTS(extents));
-    const IrisCodec::Offset tiles_at   = place(S::SIZE_TILE_OFFSETS(layers));
-    const IrisCodec::Offset meta_at    = place(S::METADATA::HEADER_SIZE);
-    IFE_CHECK(at < TILE_BASE);   // the structure must not reach into the hole
+    // The structural bytes are the snapshot's, copied at their own offsets --
+    // v1's layout is the file's layout, and the manifest digest pins it. Only
+    // FILE_SIZE and the first two tile-offset entries are rewritten: the
+    // whole point of this test is that everything else stays exactly as the
+    // shipped encoder wrote it.
+    std::vector<Iris::BYTE> snapshot;
+    {
+        std::FILE* in = std::fopen((__corpus_dir + "/v1_snapshot.test_slide").c_str(), "rb");
+        if (!in) {
+            std::fprintf(stderr, "FAIL: no snapshot in %s\n", __corpus_dir.c_str());
+            ++g_failures;
+            return;
+        }
+        std::fseek(in, 0, SEEK_END);
+        const long n = std::ftell(in);
+        std::fseek(in, 0, SEEK_SET);
+        if (n > 0) snapshot.resize(static_cast<std::size_t>(n));
+        const auto read = std::fread(snapshot.data(), 1, snapshot.size(), in);
+        std::fclose(in);
+        if (read != snapshot.size()) {
+            std::fprintf(stderr, "FAIL: short read of the snapshot\n");
+            ++g_failures;
+            return;
+        }
+    }
 
     Iris::BYTE* p = file.base();
+    std::memcpy(p, snapshot.data(), snapshot.size());
 
-    S::STORE_EXTENTS(p, extents_at, extents);
-    S::STORE_TILE_OFFSETS(p, tiles_at, layers);
-    S::STORE_TILE_TABLE(p, S::TileTableCreateInfo{
-        .tileTableOffset    = table_at,
-        .encoding           = IrisCodec::TILE_ENCODING_JPEG,
-        .format             = Iris::FORMAT_R8G8B8A8,
-        .cipherOffset       = S::NULL_OFFSET,
-        .tilesOffset        = tiles_at,
-        .layerExtentsOffset = extents_at,
-        .layers             = static_cast<std::uint32_t>(extents.size()),
-        .widthPixels        = X_EXTENT,
-        .heightPixels       = Y_EXTENT});
+    // Patch FILE_SIZE: whole-file validation compares it against the size the
+    // OS reports, which is now TILE_BASE plus the two relocated tiles.
+    ::IFE::store<std::uint64_t>(p + vt::FILE_HEADER::offset::FILE_SIZE, file_size);
 
-    S::STORE_METADATA(p, S::MetadataCreateInfo{
-        .metadataOffset  = meta_at,
-        .codecVersion    = {1, 0, 0},
-        .attributes      = S::NULL_OFFSET,
-        .images          = S::NULL_OFFSET,
-        .ICC_profile     = S::NULL_OFFSET,
-        .annotations     = S::NULL_OFFSET,
-        .micronsPerPixel = 0.25f,
-        .magnification   = 40.0f});
+    // Patch the first two tile-offset entries to address the relocated tile
+    // region. Their position follows from the 1.0 sizes alone: header, tile
+    // table, then the three-entry extents array -- the same arithmetic v1's
+    // place() did, without v1.
+    constexpr ::IFE::Offset TILES_AT =
+        vt::FILE_HEADER::header_size_v1_0 + vt::TILE_TABLE::header_size_v1_0
+        + vt::LAYER_EXTENTS::header_size_v1_0
+        + 3 * vt::LAYER_EXTENTS::entry_size_v1_0;
+    Iris::BYTE* entry0 = p + TILES_AT + vt::TILE_OFFSETS::header_size
+                      + 0 * vt::TILE_OFFSETS::entry_size_v1_0;
+    Iris::BYTE* entry1 = p + TILES_AT + vt::TILE_OFFSETS::header_size
+                      + 1 * vt::TILE_OFFSETS::entry_size_v1_0;
+    ::IFE::store_u40(entry0 + vt::TILE_OFFSETS::entry::offset::OFFSET, TILE_BASE);
+    ::IFE::store_u24(entry0 + vt::TILE_OFFSETS::entry::offset::SIZE, TILE0_SIZE);
+    ::IFE::store_u40(entry1 + vt::TILE_OFFSETS::entry::offset::OFFSET, TILE_BASE + TILE0_SIZE);
+    ::IFE::store_u24(entry1 + vt::TILE_OFFSETS::entry::offset::SIZE, TILE1_SIZE);
 
     // A byte at each end of the tile region, so the pages carrying the tile
     // data are really allocated and the offsets address something written
-    // rather than hole. v1 validates that they are in bounds either way.
-    p[TILE_BASE]                                     = 0xAB;
-    p[TILE_BASE + TILE0_SIZE + TILE1_SIZE - 1]       = 0xCD;
-
-    // Performs whole-file validation, so this call is itself a check that v1
-    // accepts a file this size.
-    S::STORE_FILE_HEADER(p, S::HeaderCreateInfo{
-        .fileSize        = file_size,
-        .revision        = REVISION,
-        .tileTableOffset = table_at,
-        .metadataOffset  = meta_at});
+    // rather than hole.
+    p[TILE_BASE]                               = 0xAB;
+    p[TILE_BASE + TILE0_SIZE + TILE1_SIZE - 1] = 0xCD;
 
     // ---- the generated layer reads what v1 wrote -------------------------- //
     // The version comes from the file, not from VERSION_WRITTEN. This build
@@ -265,6 +263,7 @@ void test_v1_slide_above_4GiB(const std::string& __dir) {
     // zero and validate_deep follows it to byte 0. Reading major/minor first
     // and constructing with them is what IFE_Runtime's versioned_root does,
     // and is the whole bidirectional-compatibility idiom in three lines.
+    constexpr ::IFE::Offset header_at = 0;   // the snapshot's FILE_HEADER is at SOF
     const b::FILE_HEADER bootstrap{p, header_at, file_size, UINT32_MAX};
     const std::uint32_t  version =
         (static_cast<std::uint32_t>(bootstrap.extension_major()) << 16) |
@@ -279,13 +278,13 @@ void test_v1_slide_above_4GiB(const std::string& __dir) {
 
     const auto tt = root.tile_table_offset();
     IFE_CHECK(tt.encoding() == k::TileEncodings::TILE_ENCODING_JPEG);
-    IFE_CHECK(tt.x_extent() == X_EXTENT);
+    IFE_CHECK(tt.x_extent() == 2048);   // the snapshot's width, as v1 wrote it
 
     // The assertions this file exists for. Each offset needs five bytes; a
     // reader that loaded four and zero-extended returns a value under 2^32,
     // and a reader that loaded eight picks up the neighbouring u24 SIZE.
     const auto to = tt.tile_offsets_offset();
-    IFE_CHECK(to.count() == 2);
+    IFE_CHECK(to.count() == 84);   // the snapshot's tile count, all still valid
 
     IFE_CHECK(to.entry(0).offset() == TILE_BASE);
     IFE_CHECK(to.entry(0).offset() > 0xFFFFFFFFull);
@@ -314,14 +313,14 @@ void test_v1_slide_above_4GiB(const std::string& __dir) {
 }  // namespace
 
 int main(int argc, const char* argv[]) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <writable-directory>\n", argv[0]);
+    if (argc < 3) {
+        std::fprintf(stderr, "usage: %s <writable-directory> <corpus-dir>\n", argv[0]);
         return 2;
     }
-    // The directory arrives as an argument rather than a compile definition:
-    // as a definition it becomes a C string literal, which a Windows path does
-    // not survive. Same reason ife_runtime_tests takes its writer path this way.
-    test_v1_slide_above_4GiB(std::string(argv[1]));
+    // Both directories arrive as arguments rather than compile definitions:
+    // as definitions they become C string literals, which a Windows path does
+    // not survive.
+    test_v1_slide_above_4GiB(std::string(argv[1]), std::string(argv[2]));
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

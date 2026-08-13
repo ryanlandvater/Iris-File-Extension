@@ -508,7 +508,7 @@ def _version_boundaries(fields: tuple[FieldLayout, ...]) -> dict[int, str]:
 def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
     """The block's own structural checks, in the order v1 performs them.
 
-    Reproduces DATA_BLOCK::validate_offset (IrisCodecExtension.cpp:778-803) and
+    Reproduces DATA_BLOCK::validate_offset in the retired hand-written layer, and
     the array bounds check from LAYER_EXTENTS::validate_full (:1641-1686).
     Deliberately absent is anything semantic: FILE_SIZE agreeing with the size
     the OS reports is a fact about the file, not the layout, and belongs to the
@@ -662,8 +662,8 @@ def _validate_deep_member(name: str, block: Any) -> Member:
 _STATUS_PREAMBLE = """
 // ---- validation vocabulary ----
 // Generated validators never allocate, never throw and never format a string.
-// They report a code plus the operands v1 interpolated into its messages
-// (IrisCodecExtension.cpp:784-800) and leave the wording to the runtime, which
+// They report a code plus the operands the retired hand-written layer
+// interpolated into its messages, and leave the wording to the runtime, which
 // has the JSON descriptions and is not on the hot path.
 
 enum class Check : std::uint8_t {
@@ -769,8 +769,8 @@ def _emit_primitive_bases(out: list[str], layout: LayoutResult, types: dict[str,
                 "    std::uint32_t      __version = 0;   ///< major<<16 | minor, from FILE_HEADER",
                 "",
                 "    /// Whether a block of `__header_size` bytes fits here. Stricter than",
-                "    /// v1's operator bool (IrisCodecExtension.cpp:774-777), which checks",
-                "    /// only that the offset is in range: requiring the whole header to fit",
+                "    /// the retired hand-written layer's operator bool, which checked only",
+                "    /// that the offset is in range: requiring the whole header to fit",
                 "    /// makes a truncated file fail at construction rather than mid-read.",
             ]
             if primitive.backward:
@@ -1049,7 +1049,21 @@ def _emit_writer_defs(
             if field.kind == "constant":
                 value = f"::IFE::constants::{field.constant}"
             elif field.name == "VALIDATION":
-                value = "__offset"
+                # VALIDATION stores its own position. At the block start
+                # (offset 0) that is the handle's offset; as a backward
+                # trailer it sits at a fixed displacement behind the anchor
+                # (TILE_FRAME's -5), and storing the anchor would
+                # self-reference the stream the frame precedes, not the
+                # frame — the exact off-by-5 the runtime recovery scan
+                # depends on catching (load_u40(position) == position).
+                validation_at = {f.name: f for f in primitive.fields}["VALIDATION"].offset
+                if validation_at == 0:
+                    value = "__offset"
+                else:
+                    value = (
+                        f"__offset + ::IFE::vtables::"
+                        f"{_owning_namespace(name, block, field, layout)}::offset::VALIDATION"
+                    )
             elif field.name == "RECOVERY":
                 # _write_expression supplies the cast to the underlying type.
                 value = f"{name}::recovery"

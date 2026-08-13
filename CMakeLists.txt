@@ -9,23 +9,26 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 function(IFE_get_version)
-    set(IFE_core_header "${CMAKE_CURRENT_SOURCE_DIR}/src/IrisCodecExtension.hpp")
-    if (NOT EXISTS ${IFE_core_header})
-        message(FATAL_ERROR "Couldn't find IrisCodecExtension.hpp!")
+    # The schema document is the single source of truth. The generated
+    # constants derive from it (IFE_SCHEMA_VERSION_* / VERSION_WRITTEN), and
+    # the retired hand-written header no longer exists to parse.
+    set(IFE_spec_identity "${CMAKE_CURRENT_SOURCE_DIR}/spec/ife_header.json")
+    if (NOT EXISTS ${IFE_spec_identity})
+        message(FATAL_ERROR "Couldn't find spec/ife_header.json!")
     endif()
 
-    file(READ ${IFE_core_header} header)
+    file(READ ${IFE_spec_identity} identity)
 
-    if (header MATCHES "uint16_t[ ]*IRIS_EXTENSION_MAJOR[ ]*=[ ]*([0-9])")
+    if (identity MATCHES "\"major\"[ ]*:[ ]*([0-9]+)")
         set(MAJOR_VERSION "${CMAKE_MATCH_1}")
-    else () 
-        message(FATAL_ERROR "Couldn't get the IFE major Version")
+    else ()
+        message(FATAL_ERROR "Couldn't get the IFE major version from spec/ife_header.json")
     endif()
 
-    if (header MATCHES "uint16_t[ ]*IRIS_EXTENSION_MINOR[ ]*=[ ]*([0-9])")
+    if (identity MATCHES "\"minor\"[ ]*:[ ]*([0-9]+)")
         set(MINOR_VERSION "${CMAKE_MATCH_1}")
-    else () 
-        message(FATAL_ERROR "Couldn't get the IFE minor version")
+    else ()
+        message(FATAL_ERROR "Couldn't get the IFE minor version from spec/ife_header.json")
     endif()
 
     set(VERSION_STRING "${MAJOR_VERSION}.${MINOR_VERSION}" PARENT_SCOPE)
@@ -85,23 +88,13 @@ endif()
 set (
     IFE_SourcesExport 
     ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
-    ${IFE_SOURCE_DIR}/IrisCodecExtension.hpp
+    ${IFE_SOURCE_DIR}/IFE_Runtime.hpp
     ${IFE_SOURCE_DIR}/IFE_Bytes.hpp
     ${IFE_SOURCE_DIR}/IFE_Window.hpp
 )
-# IFE_Runtime.{hpp,cpp} is deliberately NOT in the library above.  It defines the
-# same four IrisCodec entry points as the hand-written layer -- that is the whole
-# point, so a consumer switches by changing one include -- and two definitions
-# cannot coexist in one binary.  Retiring the hand-written layer removes
-# IrisCodecExtension.* and moves these two lines up.  Until then the runtime
-# builds into its test targets only.
-set(IFE_RuntimeSources
-    ${IFE_SOURCE_DIR}/IFE_Runtime.hpp
-    ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-)
 set (
     IFE_SourcesPriv
-    ${IFE_SOURCE_DIR}/IrisCodecExtension.cpp
+    ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
     ${IFE_SOURCE_DIR}/IFE_Window.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
     # Iris::MemoryArena's OS calls.  Split out of priv/IrisMemory.hpp so that
@@ -300,21 +293,6 @@ if(IFE_BUILD_TESTS)
     # the configuration subdirectory: tests/Debug.
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tests")
 
-    # Wire-format parity: compile-time proof that the generated layout equals
-    # shipped IFE 1.0.  Pure static_assert - building it IS the test, so it is
-    # registered only so `ctest` reports it.  Retired with the hand-written
-    # layer, when it is retired.
-    add_executable(
-        ife_wire_parity_tests
-        ${PROJECT_SOURCE_DIR}/tests/ife_wire_parity_tests.cpp
-    )
-    target_include_directories(
-        ife_wire_parity_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
-    )
-    target_compile_features(ife_wire_parity_tests PRIVATE cxx_std_20)
-    target_link_libraries(ife_wire_parity_tests PRIVATE ${IFE_Dependencies})
-    add_test(NAME ife_wire_parity_tests COMMAND ife_wire_parity_tests)
-
     # Scalar load/store primitives: the only place byte order and the packed
     # widths appear.  Header-only, so the test is the only consumer.
     add_executable(
@@ -367,30 +345,30 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_window_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_window_tests COMMAND ife_window_tests)
 
-    # The public API, end to end: v1 encodes in ife_v1_fixture.cpp, the
-    # generated stack reads through the four entry points Iris-Codec calls.
-    # Two translation units because IFE_Runtime.hpp and IrisCodecExtension.hpp
-    # are mutually exclusive -- which is the property that makes the cutover
-    # a one-line include change.
-    # A slide written by the SHIPPED encoder, as a standalone tool.  It links
-    # the hand-written layer; the runtime test does not, and cannot -- so the
-    # file passes between them on disk, exactly as it would for a real consumer.
-    add_executable(
-        ife_v1_slide_writer
-        ${PROJECT_SOURCE_DIR}/tests/ife_v1_slide_writer.cpp
-        ${PROJECT_SOURCE_DIR}/tests/ife_v1_fixture.cpp
+    # The corpus: hosted fixtures pinned by digest in tests/corpus/manifest.json
+    # (iris.exampleslides.org; never committed -- see plans/phase-6-corpus.md).
+    # Fetched at configure into the gitignored .deps/corpus/ so every test that
+    # reads v1-written bytes has them before any binary runs. Unconditional
+    # within test builds: the oracle and the >4 GiB test depend on the
+    # snapshot, so -DIFE_CORPUS=OFF (a later opt-out for the corpus *test
+    # target*) does not disable this fetch. Cached by digest, so an
+    # already-fetched tree never touches the network.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/fetch_corpus.py
+                --manifest ${CMAKE_CURRENT_SOURCE_DIR}/tests/corpus/manifest.json
+                --dest ${CMAKE_CURRENT_SOURCE_DIR}/.deps/corpus
+        RESULT_VARIABLE IFE_CORPUS_RESULT
     )
-    # priv/ as well: the fixture's annotations go through v1's annotation
-    # writers, which take an Iris::Buffer declared in IrisBuffer.hpp there.
-    target_include_directories(
-        ife_v1_slide_writer PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
-                                    ${irisheaders_SOURCE_DIR}/priv
-    )
-    target_compile_features(ife_v1_slide_writer PRIVATE cxx_std_20)
-    target_link_libraries(
-        ife_v1_slide_writer PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
-    )
+    if(NOT IFE_CORPUS_RESULT EQUAL 0)
+        message(FATAL_ERROR "IFE corpus fetch failed — see output above")
+    endif()
+    set(IFE_CORPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.deps/corpus)
 
+    # The public API, end to end: the fetched snapshot in, the four entry
+    # points Iris-Codec calls out. The snapshot lives in .deps/corpus/ (the
+    # fetch above), so this test needs no second translation unit.
     add_executable(
         ife_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_runtime_tests.cpp
@@ -406,9 +384,12 @@ if(IFE_BUILD_TESTS)
     # definition it becomes a C string literal, and a Windows path does not
     # survive one: the compiler reads the backslashes as escape sequences.
     # CTest passes an argument through verbatim.
-    add_dependencies(ife_runtime_tests ife_v1_slide_writer)
+    # The corpus dir is a test ARGUMENT, not a compile definition. As a
+    # definition it becomes a C string literal, and a Windows path does not
+    # survive one: the compiler reads the backslashes as escape sequences.
+    # CTest passes an argument through verbatim.
     target_link_libraries(ife_runtime_tests PRIVATE ${IFE_Dependencies})
-    add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests $<TARGET_FILE:ife_v1_slide_writer>)
+    add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests ${IFE_CORPUS_DIR})
 
     # Version gating, executed. The real spec is 1.0-only, so the
     # since-mechanism — optional accessors gated by the file version and the
@@ -478,17 +459,6 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_version_gating_backward_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_version_gating_backward_tests COMMAND ife_version_gating_backward_tests)
 
-    # The runtime acceptance criterion, made executable: the same example source
-    # compiled against each layer, run on the same slide, and diffed.  If the
-    # two outputs differ, the port changed observable behaviour.
-    add_executable(
-        ife_example_v1 ${PROJECT_SOURCE_DIR}/examples/slide_info_abstraction.cpp
-    )
-    target_compile_definitions(ife_example_v1 PRIVATE BUILD_EXAMPLES_TEST)
-    target_include_directories(ife_example_v1 PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
-    target_compile_features(ife_example_v1 PRIVATE cxx_std_20)
-    target_link_libraries(ife_example_v1 PRIVATE IrisFileExtensionLib ${IFE_Dependencies})
-
     add_executable(
         ife_example_runtime
         ${PROJECT_SOURCE_DIR}/examples/slide_info_abstraction.cpp
@@ -500,16 +470,6 @@ if(IFE_BUILD_TESTS)
     target_include_directories(ife_example_runtime PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
     target_compile_features(ife_example_runtime PRIVATE cxx_std_20)
     target_link_libraries(ife_example_runtime PRIVATE ${IFE_Dependencies})
-
-    add_test(
-        NAME ife_example_parity
-        COMMAND ${CMAKE_COMMAND}
-            -DWRITER=$<TARGET_FILE:ife_v1_slide_writer>
-            -DEXAMPLE_V1=$<TARGET_FILE:ife_example_v1>
-            -DEXAMPLE_RUNTIME=$<TARGET_FILE:ife_example_runtime>
-            -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-            -P ${PROJECT_SOURCE_DIR}/tests/example_parity.cmake
-    )
 
     # The conformance layer, attached and detached.  Both paths asserted,
     # because a layer that is never consulted is the failure mode a dispatch
@@ -549,18 +509,16 @@ if(IFE_BUILD_TESTS)
     add_executable(
         ife_v1_oracle_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_v1_oracle_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/ife_v1_fixture.cpp
     )
-    # priv/ as well: v1's annotation writers take an Iris::Buffer, whose class
-    # is declared in IrisBuffer.hpp there. No other test needs it.
     target_include_directories(
         ife_v1_oracle_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
-                                    ${irisheaders_SOURCE_DIR}/priv
     )
     target_compile_features(ife_v1_oracle_tests PRIVATE cxx_std_20)
     target_link_libraries(
         ife_v1_oracle_tests PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
     )
-    add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests)
+    add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests ${IFE_CORPUS_DIR})
 
     # A whole slide larger than 4 GiB, so the tile offsets a reader follows
     # need their fifth byte.  Sparse: over 4 GiB long, tens of kilobytes on
@@ -591,17 +549,18 @@ if(IFE_BUILD_TESTS)
         # The scratch directory is an argument, not a compile definition: a
         # definition becomes a C string literal and a path does not survive one.
         add_test(NAME ife_large_file_tests
-                 COMMAND ife_large_file_tests $<TARGET_FILE_DIR:ife_large_file_tests>)
+                 COMMAND ife_large_file_tests $<TARGET_FILE_DIR:ife_large_file_tests>
+                                              ${IFE_CORPUS_DIR})
         set_target_properties(ife_large_file_tests PROPERTIES FOLDER "Tests")
     endif()
 
     # Xcode/VS navigator hygiene: the test targets (and the slide-writer
     # fixture tool) go under one "Tests" folder instead of a top-level entry
     # each. The libraries and the example stay top-level.
-    foreach(t ife_wire_parity_tests ife_bytes_tests ife_blocks_tests
-              ife_blocks_header_only_tests ife_window_tests ife_v1_slide_writer
+    foreach(t ife_bytes_tests ife_blocks_tests
+              ife_blocks_header_only_tests ife_window_tests
               ife_runtime_tests ife_version_gating_tests
-              ife_version_gating_backward_tests ife_example_v1 ife_example_runtime
+              ife_version_gating_backward_tests ife_example_runtime
               ife_validation_tests ife_v1_oracle_tests)
         set_target_properties(${t} PROPERTIES FOLDER "Tests")
     endforeach()
@@ -627,10 +586,10 @@ endif()
 # its own shared-object exports are unchanged.
 foreach(target IN ITEMS
         ife_bytes_tests ife_blocks_tests ife_blocks_header_only_tests
-        ife_window_tests ife_runtime_tests ife_wire_parity_tests
+        ife_window_tests ife_runtime_tests
         ife_version_gating_tests ife_version_gating_backward_tests
-        ife_validation_tests ife_v1_oracle_tests ife_v1_slide_writer
-        ife_example_v1 ife_example_runtime)
+        ife_validation_tests ife_v1_oracle_tests
+        ife_example_runtime)
     if(TARGET ${target})
         target_compile_definitions(${target} PRIVATE IFE_EXPORT= IRIS_EXPORT=)
     endif()

@@ -312,7 +312,7 @@ void test_visit_path() {
 // ---- fixtures that pin the three hand-written-layer bug classes ---------- //
 //
 // The extended file exercises, against the generated layer, the defects that
-// shipped in src/IrisCodecExtension.cpp and were corrected alongside these
+// shipped in the retired hand-written layer and were corrected alongside these
 // tests:
 //   1. a blob length stored through a narrower width than its field (the ICC
 //      store wrote the u32 byte count through STORE_U16, so profiles >= 64 KiB
@@ -922,6 +922,107 @@ void test_appended_offset_field_is_version_gated() {
     IFE_CHECK(as_1_1.metadata_offset().clinical_offset().__offset == 0x40);
 }
 
+// The no-arg validate_deep() entry point, called on every block type.
+//
+// Traversal calls the VisitPath form, so the 17 non-root no-arg overloads
+// never execute anywhere else; they are public API (MIGRATION 6.2 warns not
+// to delete them) and must all succeed on a valid file. make_extended_file()
+// supplies twelve of the eighteen blocks; the six it lacks -- CIPHER,
+// ATTRIBUTES and its two arrays, TILE_PIXEL_DATA, CLINICAL_METADATA -- are
+// appended below with the generated writers. That is also the first
+// execution of store()/size_of() for TILE_PIXEL_DATA and CLINICAL_METADATA,
+// and of the 1.1 accessors CLINICAL_METADATA carries.
+void test_no_arg_validate_deep_on_every_block() {
+    auto f = make_extended_file();
+    BYTE* p = f.data();
+
+    constexpr std::uint16_t KEY_LEN   = 7;    // "SCANNER"
+    constexpr std::uint32_t VALUE_LEN = 6;    // "TestCo"
+    BYTE attr_bytes[KEY_LEN + VALUE_LEN];
+    std::memcpy(attr_bytes, "SCANNER", KEY_LEN);
+    std::memcpy(attr_bytes + KEY_LEN, "TestCo", VALUE_LEN);
+    const b::AttributeSizeEntry sizes[1] = {{.KEY_SIZE = KEY_LEN, .VALUE_SIZE = VALUE_LEN}};
+
+    b::CipherCreateInfo cipher{};
+    b::AttributeSizesCreateInfo attr_sizes{.entries = sizes, .count = 1};
+    b::AttributeBytesCreateInfo attr_blob{.bytes = attr_bytes, .count = sizeof(attr_bytes)};
+    b::AttributesCreateInfo attrs{};
+    b::TilePixelDataCreateInfo frame{.TILE_INDEX = 7, .Z_PLANES = 0};
+    BYTE clinical_bytes[3] = {0x01, 0x02, 0x03};
+    b::ClinicalMetadataCreateInfo clinical{
+        .ENCODING = k::ClinicalEncodings::CLINICAL_FASTFHIR,
+        .bytes = clinical_bytes, .count = sizeof(clinical_bytes)};
+
+    // ---- place the six appended blocks head to tail ---------------------- //
+    Offset at = EXTENDED_END_OFFSET;
+    auto place = [&at](::IFE::Size bytes) { const Offset here = at; at += bytes; return here; };
+    const Offset cipher_at     = place(b::size_of(cipher));
+    const Offset attr_sizes_at = place(b::size_of(attr_sizes));
+    const Offset attr_blob_at  = place(b::size_of(attr_blob));
+    const Offset attrs_at      = place(b::size_of(attrs));
+    // The frame's fields lie BACKWARD from the stream it precedes: the slot
+    // store() writes is the 11 bytes before the anchor, so the anchor sits
+    // one slot past the frame's start (test_tile_frame_reads_backward...).
+    const Offset frame_at      = place(b::size_of(frame));
+    const Offset stream_at     = frame_at + b::size_of(frame);
+    const Offset clinical_at   = place(b::size_of(clinical));
+    f.resize(static_cast<std::size_t>(at));
+    p = f.data();   // resize may reallocate
+
+    attrs = {.FORMAT = k::MetadataFormats::METADATA_FREE_TEXT, .VERSION = 1,
+             .SIZES_OFFSET = attr_sizes_at, .BYTES_OFFSET = attr_blob_at};
+
+    IFE_CHECK(static_cast<bool>(b::store(p, cipher_at, cipher)));
+    IFE_CHECK(static_cast<bool>(b::store(p, attr_sizes_at, attr_sizes)));
+    IFE_CHECK(static_cast<bool>(b::store(p, attr_blob_at, attr_blob)));
+    IFE_CHECK(static_cast<bool>(b::store(p, attrs_at, attrs)));
+    IFE_CHECK(static_cast<bool>(b::store(p, stream_at, frame)));
+    IFE_CHECK(static_cast<bool>(b::store(p, clinical_at, clinical)));
+
+    // ---- every block's no-arg validate_deep() must succeed --------------- //
+    const b::FILE_HEADER header{p, FILE_HEADER_AT, f.size(), VERSION_1_0};
+    const b::TILE_TABLE tt = header.tile_table_offset();
+    const b::LAYER_EXTENTS le = tt.layer_extents_offset();
+    const b::TILE_OFFSETS to = tt.tile_offsets_offset();
+    const b::METADATA md = header.metadata_offset();
+    const b::IMAGES im = md.images_offset();
+    const b::ICC_PROFILE icc = md.icc_color_offset();
+    const b::ANNOTATIONS an = md.annotations_offset();
+    // The 1.1 blocks are read the way a 1.1 build reads them.
+    const b::CIPHER cipher_h{p, cipher_at, f.size(), VERSION_1_0};
+    const b::ATTRIBUTES attrs_h{p, attrs_at, f.size(), VERSION_1_0};
+    const b::ATTRIBUTE_SIZES attr_sizes_h{p, attr_sizes_at, f.size(), VERSION_1_0};
+    const b::ATTRIBUTE_BYTES attr_blob_h{p, attr_blob_at, f.size(), VERSION_1_0};
+    const b::TILE_PIXEL_DATA frame_h{p, stream_at, f.size(), b::VERSION_WRITTEN};
+    const b::CLINICAL_METADATA clinical_h{p, clinical_at, f.size(), b::VERSION_WRITTEN};
+
+    IFE_CHECK(static_cast<bool>(header.validate_deep()));
+    IFE_CHECK(static_cast<bool>(tt.validate_deep()));
+    IFE_CHECK(static_cast<bool>(le.validate_deep()));
+    IFE_CHECK(static_cast<bool>(to.validate_deep()));
+    IFE_CHECK(static_cast<bool>(md.validate_deep()));
+    IFE_CHECK(static_cast<bool>(im.validate_deep()));
+    IFE_CHECK(static_cast<bool>(im.entry(0).bytes_offset().validate_deep()));
+    IFE_CHECK(static_cast<bool>(icc.validate_deep()));
+    IFE_CHECK(static_cast<bool>(an.validate_deep()));
+    IFE_CHECK(static_cast<bool>(an.entry(0).bytes_offset().validate_deep()));
+    IFE_CHECK(static_cast<bool>(an.group_sizes_offset().validate_deep()));
+    IFE_CHECK(static_cast<bool>(an.group_bytes_offset().validate_deep()));
+    IFE_CHECK(static_cast<bool>(cipher_h.validate_deep()));
+    IFE_CHECK(static_cast<bool>(attrs_h.validate_deep()));
+    IFE_CHECK(static_cast<bool>(attr_sizes_h.validate_deep()));
+    IFE_CHECK(static_cast<bool>(attr_blob_h.validate_deep()));
+    IFE_CHECK(static_cast<bool>(frame_h.validate_deep()));
+    IFE_CHECK(static_cast<bool>(clinical_h.validate_deep()));
+
+    // ---- the 1.1 accessors, over bytes store() just wrote ----------------- //
+    IFE_CHECK(frame_h.tile_index().value() == 7);
+    IFE_CHECK(frame_h.z_planes().value() == 0);
+    IFE_CHECK(clinical_h.encoding().value() == k::ClinicalEncodings::CLINICAL_FASTFHIR);
+    IFE_CHECK(clinical_h.bytes().size == sizeof(clinical_bytes));
+    IFE_CHECK(clinical_h.entries_begin() == clinical_at + b::CLINICAL_METADATA::header_size);
+    IFE_CHECK(static_cast<bool>(clinical_h.validate()));
+}
 
 }  // namespace
 
@@ -938,6 +1039,7 @@ int main() {
     test_image_bytes_is_sum_not_product();
     test_annotation_groups_read_from_entries();
     test_generated_writers_round_trip();
+    test_no_arg_validate_deep_on_every_block();
     test_writers_stay_within_size_of();
     test_validation_hook_is_dispatched();
 

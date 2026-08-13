@@ -3,7 +3,7 @@
  * @brief The semantic layer, ported onto the generated block handles.
  * @copyright Iris Developers, 2025-2026
  *
- * What disappeared relative to src/IrisCodecExtension.cpp, and why the port is
+ * What disappeared relative to the retired hand-written layer, and why the port is
  * worth the churn: every byte offset, every `LOAD_U*`, every hand-threaded
  * `if (__version > IRIS_EXTENSION_1_0); else goto ...`, and every
  * `#ifdef __EMSCRIPTEN__`. A reader body here is a sequence of accessor calls.
@@ -83,7 +83,7 @@ Result to_result(const b::Status& __status) noexcept try {
 
 /// The root handle. Its own version is unknowable until it has been read, so
 /// it is constructed with UINT32_MAX — every gate open for exactly one block —
-/// exactly as v1 does (IrisCodecExtension.cpp, FILE_HEADER's constructor).
+/// exactly as v1's FILE_HEADER constructor did.
 b::FILE_HEADER root_at(const BYTE* __base, size_t __size) noexcept {
     return b::FILE_HEADER{__base, 0, __size, UINT32_MAX};
 }

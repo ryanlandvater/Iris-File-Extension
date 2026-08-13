@@ -3,7 +3,7 @@
  * @brief Symbol visibility for the Iris File Extension API.
  * @copyright Iris Developers, 2025-2026
  *
- * Extracted from src/IrisCodecExtension.hpp so the hand-written layer and its
+ * Extracted from the retired hand-written layer so the generated layer and its
  * generated successor share one definition rather than two that can drift.
  * The semantics are unchanged: CMake sets IFE_EXPORT_API=true when building
  * the library, and consumers get the import side.

@@ -211,6 +211,142 @@ void test_layers_chain() {
     IFE_CHECK(g_reports == 1);
 }
 
+// FILE_HEADER's clauses are the two mandatory pointers, not an enum: a header
+// that points nowhere is structurally writable but is not a valid file. Both
+// branches (each pointer absent on its own) must fire.
+void test_attached_enforces_file_header_clauses() {
+    auto f = buffer();
+    auto hooks = attached();
+    g_reports = 0;
+    g_diagnostic.clear();
+
+    b::FileHeaderCreateInfo header{};
+    header.TILE_TABLE_OFFSET = ::IFE::constants::NULL_OFFSET;
+    header.METADATA_OFFSET   = 128;
+    const auto status = b::store(f.data(), 0, header, &hooks);
+    IFE_CHECK(!status);
+    IFE_CHECK(status.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status.field, "TILE_TABLE_OFFSET") == 0);
+    IFE_CHECK(g_reports == 1);
+    IFE_CHECK(g_diagnostic.find("clause ife-file-header") != std::string::npos);
+
+    g_reports = 0;
+    g_diagnostic.clear();
+    header.TILE_TABLE_OFFSET = 64;
+    header.METADATA_OFFSET   = ::IFE::constants::NULL_OFFSET;
+    const auto status2 = b::store(f.data(), 0, header, &hooks);
+    IFE_CHECK(!status2);
+    IFE_CHECK(status2.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status2.field, "METADATA_OFFSET") == 0);
+
+    // Both present: the layer has nothing to say.
+    g_reports = 0;
+    header.METADATA_OFFSET = 128;
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, header, &hooks)));
+    IFE_CHECK(g_reports == 0);
+}
+
+void test_attached_enforces_attribute_format_membership() {
+    auto f = buffer();
+    auto hooks = attached();
+    g_reports = 0;
+    g_diagnostic.clear();
+
+    // A value in the field's width but not in its declared domain.
+    const b::AttributesCreateInfo bad{.FORMAT = static_cast<k::MetadataFormats>(200)};
+    const auto status = b::store(f.data(), 0, bad, &hooks);
+    IFE_CHECK(!status);
+    IFE_CHECK(status.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status.field, "FORMAT") == 0);
+    IFE_CHECK(g_diagnostic.find("clause ife-attributes") != std::string::npos);
+
+    g_reports = 0;
+    const b::AttributesCreateInfo good{.FORMAT = k::MetadataFormats::METADATA_FREE_TEXT};
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
+    IFE_CHECK(g_reports == 0);
+}
+
+void test_attached_enforces_image_encoding_membership() {
+    auto f = buffer();
+    auto hooks = attached();
+    g_reports = 0;
+    g_diagnostic.clear();
+
+    // Designated initializers must follow declaration order, so the
+    // BYTES_OFFSET/WIDTH/HEIGHT slots are named before ENCODING.
+    const b::ImageEntry entries[1] = {{
+        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
+        .ENCODING = static_cast<k::ImageEncodings>(200),
+        .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
+    }};
+    const b::ImagesCreateInfo bad{.entries = entries, .count = 1};
+    const auto status = b::store(f.data(), 0, bad, &hooks);
+    IFE_CHECK(!status);
+    IFE_CHECK(status.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status.field, "ENCODING") == 0);
+    IFE_CHECK(g_diagnostic.find("clause ife-images") != std::string::npos);
+
+    g_reports = 0;
+    const b::ImageEntry good_entries[1] = {{
+        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
+        .ENCODING = k::ImageEncodings::IMAGE_ENCODING_JPEG,
+        .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
+    }};
+    const b::ImagesCreateInfo good{.entries = good_entries, .count = 1};
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
+    IFE_CHECK(g_reports == 0);
+}
+
+void test_attached_enforces_annotation_type_membership() {
+    auto f = buffer();
+    auto hooks = attached();
+    g_reports = 0;
+    g_diagnostic.clear();
+
+    const b::AnnotationEntry entries[1] = {{
+        .IDENTIFIER = 1,
+        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
+        .FORMAT = static_cast<k::AnnotationTypes>(200),
+    }};
+    const b::AnnotationsCreateInfo bad{.entries = entries, .count = 1};
+    const auto status = b::store(f.data(), 0, bad, &hooks);
+    IFE_CHECK(!status);
+    IFE_CHECK(status.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status.field, "FORMAT") == 0);
+    IFE_CHECK(g_diagnostic.find("clause ife-annotations") != std::string::npos);
+
+    g_reports = 0;
+    const b::AnnotationEntry good_entries[1] = {{
+        .IDENTIFIER = 1,
+        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
+        .FORMAT = k::AnnotationTypes::ANNOTATION_TEXT,
+    }};
+    const b::AnnotationsCreateInfo good{.entries = good_entries, .count = 1};
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
+    IFE_CHECK(g_reports == 0);
+}
+
+void test_attached_enforces_clinical_encoding_membership() {
+    auto f = buffer();
+    auto hooks = attached();
+    g_reports = 0;
+    g_diagnostic.clear();
+
+    const b::ClinicalMetadataCreateInfo bad{
+        .ENCODING = static_cast<k::ClinicalEncodings>(200)};
+    const auto status = b::store(f.data(), 0, bad, &hooks);
+    IFE_CHECK(!status);
+    IFE_CHECK(status.code == b::Check::CONFORMANCE);
+    IFE_CHECK(std::strcmp(status.field, "ENCODING") == 0);
+    IFE_CHECK(g_diagnostic.find("clause ife-clinical-metadata") != std::string::npos);
+
+    g_reports = 0;
+    const b::ClinicalMetadataCreateInfo good{
+        .ENCODING = k::ClinicalEncodings::CLINICAL_FASTFHIR};
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
+    IFE_CHECK(g_reports == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -221,6 +357,11 @@ int main() {
     test_conformant_input_passes_with_the_layer_attached();
     test_a_block_without_clauses_is_untouched();
     test_layers_chain();
+    test_attached_enforces_file_header_clauses();
+    test_attached_enforces_attribute_format_membership();
+    test_attached_enforces_image_encoding_membership();
+    test_attached_enforces_annotation_type_membership();
+    test_attached_enforces_clinical_encoding_membership();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

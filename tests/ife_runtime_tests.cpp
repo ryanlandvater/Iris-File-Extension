@@ -2,14 +2,13 @@
  * @file ife_runtime_tests.cpp
  * @brief The public API, against a file the shipped encoder wrote.
  *
- * The end-to-end the migration exists to make true: v1 encodes, and the whole
- * new stack — generated handles over IFE_Bytes, the semantic layer on top —
- * reads it through the same four entry points Iris-Codec calls today.
+ * The end-to-end the migration exists to make true: the snapshot the shipped
+ * encoder wrote, and the whole new stack — generated handles over IFE_Bytes,
+ * the semantic layer on top — reads it through the same four entry points
+ * Iris-Codec calls today.
  *
- * This translation unit includes IFE_Runtime.hpp and never IrisCodecExtension.hpp;
- * the encoder lives in ife_v1_fixture.cpp. That split is not incidental — the
- * two headers are mutually exclusive so that a consumer can switch layers by
- * changing one include line — the cutover.
+ * This translation unit includes IFE_Runtime.hpp and the type-free fixture
+ * loader; the bytes come from the fetched corpus (MIGRATION 6.3).
  *
  * Self-contained; non-zero exit on failure.
  */
@@ -38,42 +37,31 @@ int g_failures = 0;
 
 using ::Iris::BYTE;
 
-/// Path to the shipped encoder, from argv[1].
+/// Path to the fetched corpus, from argv[1].
 ///
 /// An argument rather than a compile definition, because the definition had to
 /// survive a C string literal and a Windows path does not: the compiler reads
 /// the backslashes in `D:\a\Iris-File-Extension\...` as escape sequences, so
 /// \a became a bell and \b a backspace and the program never held the path at
 /// all. CTest passes it through untouched.
-std::string g_writer;
+std::string g_corpus_dir;
 
-/// Run the shipped encoder (a separate binary -- see ife_v1_slide_writer.cpp)
-/// and read back what it wrote. The bytes under test are produced by the
-/// implementation that has been writing real slides, not by this test.
+/// Read the snapshot the shipped encoder wrote. The bytes under test were
+/// produced by the implementation that has been writing real slides, not by
+/// this test; they are pinned by digest in tests/corpus/manifest.json and
+/// fetched into .deps/corpus/ at configure time (MIGRATION 6.3).
 std::vector<BYTE> v1_slide(v1_fixture::Expected& expected) {
     expected = v1_fixture::expectations();
 
     // .test_slide, not .iris: nothing should mistake a build-tree fixture
     // for a real slide, and no tool should try to open it as one.
-    const std::string path = g_writer + ".test_slide";
-    std::string cmd = "\"" + g_writer + "\" \"" + path + "\"";
-#ifdef _WIN32
-    // cmd.exe strips the first and last quote of a command that begins with
-    // one, which leaves the path split at its first space. Wrapping the whole
-    // command in one more pair is the documented way round it.
-    cmd = "\"" + cmd + "\"";
-#endif
-    if (std::system(cmd.c_str()) != 0) {
-        std::fprintf(stderr, "FAIL: the v1 slide writer did not run: %s\n", cmd.c_str());
-        ++g_failures;
-        return {};
-    }
-
+    const std::string path = g_corpus_dir + "/v1_snapshot.test_slide";
     std::FILE* in = std::fopen(path.c_str(), "rb");
-    if (!in) { std::fprintf(stderr, "FAIL: no slide at %s\n", path.c_str()); ++g_failures; return {}; }
+    if (!in) { std::fprintf(stderr, "FAIL: no snapshot at %s\n", path.c_str()); ++g_failures; return {}; }
     std::fseek(in, 0, SEEK_END);
-    // The file's own length, not a number this test computed: v1 decided how
-    // big its blocks are, and the size on disk is the only honest source.
+    // The file's own length, not a number this test computed: the shipped
+    // encoder decided how big its blocks are, and the size on disk is the
+    // only honest source.
     const auto size = static_cast<std::size_t>(std::ftell(in));
     std::fseek(in, 0, SEEK_SET);
     std::vector<BYTE> bytes(size);
@@ -354,19 +342,20 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <path to ife_v1_slide_writer>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <corpus-dir>\n", argv[0]);
         return 2;
     }
-    g_writer = argv[1];
+    g_corpus_dir = argv[1];
 
     // Needs no slide of its own.
     test_recovery_finds_tile_frames_and_rebuilds_entries();
 
-    // The rest read what the v1 writer produced. If it did not run there is
-    // nothing to read, and going on would turn a clear diagnostic into an
-    // uncaught exception from the first handle built over an empty buffer --
-    // which is how this failure presented on Windows before argv carried the
-    // path: a SEGFAULT report, with the real cause four lines further up.
+    // The rest read the fetched snapshot. If the corpus fetch did not run
+    // there is nothing to read, and going on would turn a clear diagnostic
+    // into an uncaught exception from the first handle built over an empty
+    // buffer -- which is how this failure presented on Windows before argv
+    // carried the path: a SEGFAULT report, with the real cause four lines
+    // further up.
     v1_fixture::Expected probe;
     if (v1_slide(probe).empty()) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

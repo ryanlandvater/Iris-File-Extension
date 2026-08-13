@@ -82,7 +82,7 @@ target_link_libraries (
 > [!WARNING]
 > When reading Iris slide files, you should **always validate** a slide before attempting to read data from it. 
 
-Validation will return an `Iris::Result` structure. In the event of failure `Iris::Result::message` will provide information about the failure. Validation requires the operating system's returned file size as part of the validation process and will fail if inaccurate. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](./src/IrisCodecExtension.hpp#L101) method.
+Validation will return an `Iris::Result` structure. In the event of failure `Iris::Result::message` will provide information about the failure. Validation requires the operating system's returned file size as part of the validation process and will fail if inaccurate. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](./src/IFE_Runtime.hpp) method.
 ```cpp
 size_t  size = GET_FILE_SIZE(file_handle);
 uint8_t* ptr = FILE_MAP(file_handle, size);
@@ -94,11 +94,11 @@ if (result != IRIS_SUCCESS) {
     ...handle the validation error
 }
 ```
-This method performs a chain of `validate_full(uint8_t*)` methods on the component parts of slides. If you prefer to validate individual data blocks, you may individually call the `validate_offset(uint8_t*)` and `validate_full(uint8_t*)` methods that are defined in all data blocks. Each data block declares both alongside its layout in [`IrisCodecExtension.hpp`](./src/IrisCodecExtension.hpp). 
+This method deep-validates the offset graph of the slide. If you prefer to validate individual data blocks, every generated block handle offers `validate()` and `validate_deep()`; their layout comes from the specification (spec/ife_fields.json) and is rendered into the generated layer (`generated_source/`, regenerated at build time).
 
 
 ### Using Slide Abstraction
-The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](https://github.com/IrisDigitalPathology/Iris-File-Extension/blob/2646ee4e986f90247e447000c035490d3114d98f/src/IrisCodecExtension.hpp#L206-L212), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
+The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](./src/IFE_Runtime.hpp), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
 > [!WARNING]
 > If you did not validate prior to abstraction, uncaught runtime exceptions will be thrown if the slide violates the standard. We leave how to deal with validation exceptions to your implementation, should they arise.  
 ```cpp
@@ -135,7 +135,7 @@ try {
 ```
 
 ### Manually *without* File Abstraction 
-Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the `Serialization::DATA_BLOCK` structure defined below. These data blocks reside within the `Serialization:: namespace` and are **always** fully capitalized. They are accessed by retrieval from parent data blocks using methods that begin with "get" followed by the name of any derived data blocks. Data block information is read using the "read" methods. These methods generate structures within the `Abstraction:: namespace`. The full set of data blocks, their `get`/`read` methods, and their byte layouts are declared in [`IrisCodecExtension.hpp`](./src/IrisCodecExtension.hpp). 
+Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the universal block header described in the [specification](spec/). They are accessed by retrieval from parent data blocks using the generated handles (each offset field returns the block it points to), and their byte layouts are generated from `spec/ife_fields.json` — there is no hand-written layout table. 
 ```cpp
 struct DATA_BLOCK {
     // Each datablock has an vtable
@@ -177,8 +177,7 @@ struct FileMapEntry {
 try {
     // Always validate the slide file first
     IrisCodec::validate_file_structure(ptr, size);
-    // Then generate the slide map. 
-    // See IrisCodecExtension.cpp for implementation of its construction
+    // Then generate the slide map (src/IFE_Runtime.cpp). 
     auto file_map = IrisCodec::generate_file_map((uint8_t*)ptr, size);
 
     Offset write_location = //...some location you will write at;
