@@ -30,10 +30,16 @@
  *
  * Usage: ife_large_file_tests <writable-directory>
  */
+// POSIX-only: every use of these headers sits in an #else branch below, and
+// MSVC has no sys/mman.h or sys/stat.h. Left over from the pre-MemoryArena
+// version (130bb97); the Windows enablement (f5ec4ae) guarded the uses but
+// not the includes.
+#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <cstdio>
 #include <cstdint>
