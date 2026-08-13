@@ -16,8 +16,9 @@
  * marking at all, so it is hidden in a shared build, on purpose:
  *
  *   - It is what a consumer actually calls. `examples/slide_info_abstraction.cpp`
- *     builds against the generated stack touching only the entry points and
- *     the abstraction structs; it never names a block handle.
+ *     builds against the generated stack touching only the entry points, the
+ *     abstraction structs, and `Iris::MemoryArena` for its read-only mapping;
+ *     it never names a block handle.
  *   - The block layer is pure field arithmetic. Inlining a `u24` load beats
  *     calling it through a shared-library boundary, and a cross-boundary call
  *     is all an exported accessor could offer.

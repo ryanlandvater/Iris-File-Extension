@@ -16,6 +16,9 @@
  * maintains offsets to the byte locations and offsets of these data blocks so they can
  * be used in a zero-copy manner.
  *
+ * The slide is mapped read-only through Iris::MemoryArena (priv/IrisMemory.hpp),
+ * so this example also serves as the reference for the arena-based read path.
+ *
  */
 
  #include <iostream>
@@ -32,6 +35,11 @@
  #else
  #include <Iris/IrisFileExtension.hpp>
  #endif
+
+ // priv/IrisMemory.hpp: the cross-platform read-only mapping used below. The
+ // arena replaces the per-OS CreateFileMapping/mmap code this example used to
+ // carry; it is linked through IrisFileExtensionLib (CMake) / :ife (Bazel).
+ #include "IrisMemory.hpp"
  constexpr char help_statement[] =
  "This is an example implementation of the Iris File Extension \
  official low-level headers using the file abstraction assistance. \
@@ -45,59 +53,6 @@
          << help_statement;
      return EXIT_FAILURE;
  }
- inline size_t GET_FILE_SIZE(FILE* const file_handle)
- {
-     auto result = fseek(file_handle, 0L, SEEK_END);
-     if (result == -1) throw std::runtime_error
-     ("Failed to fseek the end of the file");
- 
-     size_t size = ftell(file_handle);
-     fseek(file_handle, 0L, SEEK_SET);
-     return size;
- }
- #if _WIN32
- #include <io.h>
- inline void* FILE_MAP(FILE* const file_handle, size_t size, HANDLE& map)
- {
-     HANDLE handle = (HANDLE)_get_osfhandle(_fileno(file_handle));
-     if (handle == NULL) throw std::runtime_error
-     ("Failed to get WIN32 system file handle");
- 
-     map = CreateFileMapping(handle, NULL, PAGE_READONLY, 0, 0, NULL);
-     if (!map) throw std::runtime_error
-     ("Failed to map file into memory");
-     void* ptr = (BYTE*)MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0);
-     if (!ptr) throw std::runtime_error
-     ("Failed to create view of mapped file in memory");
-     return ptr;
- }
- inline void FILE_UNMAP(void* const ptr, size_t size, HANDLE& map)
- {
-     FlushViewOfFile(ptr, 0);
-     UnmapViewOfFile(ptr);
-     if (map == INVALID_HANDLE_VALUE) return;
-     CloseHandle(map);
- }
- #else
- #include <sys/mman.h>
- using HANDLE = void*;
- inline void* FILE_MAP(FILE* const file_handle, size_t size, HANDLE& map)
- {
-     int file_number = fileno(file_handle);
-     if (file_number == -1) throw std::runtime_error
-     ("Failed to get posix system file number");
- 
-     void* ptr = mmap(NULL, size, PROT_READ, MAP_SHARED, file_number, 0);
-     if (!ptr) throw std::runtime_error
-     ("Failed to map file into memory");
- 
-     return ptr;
- }
- inline void FILE_UNMAP(void* const ptr, size_t size, HANDLE& map)
- {
-     munmap(ptr, size);
- }
- #endif
  const char* PARSE_ECODING(IrisCodec::Encoding encoding);
  const char* PARSE_FORMAT(Iris::Format format);
  const char* PARSE_IMAGE_ENCODING(IrisCodec::ImageEncoding image_encoding);
@@ -113,27 +68,24 @@
      std::string source_path(argv[1]);
      if (!std::filesystem::exists(source_path.c_str()))
          return INVALID_FILE_PATH(source_path);
- #if _WIN32
-     FILE* file_handle;
-     if(fopen_s(&file_handle, source_path.c_str(), "rbR")!= 0)
-         return INVALID_FILE_PATH(source_path);
- #else
-     FILE* file_handle = fopen(source_path.c_str(), "rb");
- #endif
-     if (!file_handle)
-         return INVALID_FILE_PATH(source_path);
- 
-     size_t size = 0ULL;
-     void* ptr = NULL;
-     HANDLE map = NULL;
+     // Map the slide read-only through Iris::MemoryArena (priv/IrisMemory.hpp):
+     // one cross-platform mapping implementation, replacing the per-OS
+     // CreateFileMapping/mmap branches this example used to carry. The slide
+     // is never opened for writing, so a read-only file on disk or a slide
+     // still being written by a scanner maps just as well. The arena unmaps
+     // and closes its handles on scope exit.
+     Iris::MemoryArena arena;
+     std::uint8_t* ptr = nullptr;
+     std::size_t size = 0;
      try {
-         size = GET_FILE_SIZE(file_handle);
-         ptr = FILE_MAP(file_handle, size, map);
+         arena = Iris::MemoryArena::create_from_file_read_only(source_path);
+         ptr = arena.base();
+         size = arena.capacity();
  
          // ALWAYS VALIDATE the file structure before attempting to
          // read it. This will check the file against the IFE
          // Specfification to ensure adherence.
-         IrisCodec::validate_file_structure((uint8_t*)ptr, size);
+         IrisCodec::validate_file_structure(ptr, size);
          std::cout << "Iris Slide file \"" << source_path
              << "\" successfully passed file validation.\n";
  
@@ -141,15 +93,13 @@
      catch (std::runtime_error& error) {
          std::cerr << "Failed to create slide file abstraction: "
              << error.what() << "\n";
-         if (ptr || map)  FILE_UNMAP(ptr, size, map);
-         if (file_handle) fclose(file_handle);
          return EXIT_FAILURE;
      }
  
      try {
          using namespace IrisCodec::Abstraction;
  
-         auto slide = IrisCodec::abstract_file_structure((uint8_t*)ptr, size);
+         auto slide = IrisCodec::abstract_file_structure(ptr, size);
          std::cout << "Slide File information:\n"
              << "\t Encoded using IFE Spec v"
              << (slide.header.extVersion >> 16) << "."
@@ -226,13 +176,9 @@
      catch (std::runtime_error& error) {
          std::cerr << "Failed to read slide file information: "
              << error.what() << "\n";
-         if (ptr || map)  FILE_UNMAP(ptr, size, map);
-         if (file_handle) fclose(file_handle);
          return EXIT_FAILURE;
      }
  
-     if (ptr || map)  FILE_UNMAP(ptr, size, map);
-     if (file_handle) fclose(file_handle);
      return EXIT_SUCCESS;
  }
  

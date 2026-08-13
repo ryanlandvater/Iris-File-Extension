@@ -268,13 +268,18 @@ if(IFE_BUILD_EXAMPLES)
         slide_info_abstraction 
         ${EXAMPLES_DIR}/slide_info_abstraction.cpp
     )
+    # The example maps the slide through Iris::MemoryArena (priv/IrisMemory.hpp),
+    # which lives in the object library rather than the exported shared surface —
+    # so it links IrisFileExtensionLib (like the in-tree tests) and needs priv/
+    # on its include path.
     target_include_directories (
         slide_info_abstraction PRIVATE 
         ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include
+        ${irisheaders_SOURCE_DIR}/priv
     )  
     target_link_libraries(
-        slide_info_abstraction PUBLIC 
-        IrisFileExtension
+        slide_info_abstraction PRIVATE 
+        IrisFileExtensionLib ${IFE_Dependencies}
     )
 
     # The spec-conformance layer, attached and detached — a worked example
@@ -487,9 +492,17 @@ if(IFE_BUILD_TESTS)
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
+        # The example maps the slide through Iris::MemoryArena (same read-only
+        # path as slide_info_abstraction). IFE_USE_RUNTIME must apply to this
+        # target's own compile, so the arena source is compiled here rather
+        # than pulled from the library.
+        ${irisheaders_SOURCE_DIR}/src/IrisMemory.cpp
     )
     target_compile_definitions(ife_example_runtime PRIVATE IFE_USE_RUNTIME)
-    target_include_directories(ife_example_runtime PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_include_directories(
+        ife_example_runtime PRIVATE
+        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR} ${irisheaders_SOURCE_DIR}/priv
+    )
     target_compile_features(ife_example_runtime PRIVATE cxx_std_20)
     target_link_libraries(ife_example_runtime PRIVATE ${IFE_Dependencies})
 
