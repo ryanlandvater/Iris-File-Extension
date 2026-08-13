@@ -1,0 +1,25 @@
+# BUILD.bazel — the conformance corpus package.
+#
+# Hosted fixtures pinned by SHA-256 in manifest.json, fetched with the SAME
+# script CMake runs (//:tools/fetch_corpus.py). local = 1: the rule downloads
+# from iris.exampleslides.org, so it must not run inside the
+# network-restricting sandbox; Bazel's action cache still makes repeat
+# builds a no-op, and the script's own digest cache verifies every byte.
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "corpus",
+    srcs = [
+        "manifest.json",
+        "//:tools/fetch_corpus.py",
+    ],
+    outs = [
+        "v1_snapshot.test_slide",
+        "v1_tile_offsets_full_width.bin",
+    ],
+    cmd = "PY=$$(command -v python3 || command -v python); " +
+          "$$PY $(location //:tools/fetch_corpus.py) " +
+          "--manifest $(location :manifest.json) " +
+          "--dest $(RULEDIR)",
+    local = 1,
+)

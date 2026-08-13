@@ -1,0 +1,4 @@
+# Route Bazel convenience symlinks into a dedicated directory (same layout as
+# FastFHIR): bazel-build/bin, bazel-build/out, bazel-build/testlogs, and
+# bazel-build/ife. Gitignored via /bazel-*.
+common --symlink_prefix=bazel-build/

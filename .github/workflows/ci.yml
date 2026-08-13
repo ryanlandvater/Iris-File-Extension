@@ -1,6 +1,6 @@
 name: CI
 
-# The gates, in one place. Five jobs, each pinning a
+# The gates, in one place. Seven jobs, each pinning a
 # property nothing else can:
 #
 #   spec        the JSON is self-consistent, and generated_source/ is what the
@@ -10,6 +10,10 @@ name: CI
 #               wrote rather than another description of the format. Run on
 #               GCC, Clang, AppleClang and MSVC, because an include that one
 #               toolchain resolves transitively is a bug on the others.
+#   bazel       the Bazel build (BUILD.bazel) and its ten tests, on the
+#               default toolchain AND MSVC -- the only job that exercises the
+#               /std:c++20 select and the IRIS_EXPORT= dllimport
+#               neutralization the Bazel rules need on Windows
 #   sanitizers  the packed loads read exactly 3 and exactly 5 bytes. Without
 #               ASan those tests are ordinary passing round-trips and prove
 #               nothing
@@ -72,6 +76,33 @@ jobs:
           ${{ matrix.cxx && format('-DCMAKE_CXX_COMPILER={0}', matrix.cxx) || '' }}
       - run: cmake --build build --config Release -j
       - run: ctest --test-dir build -C Release --output-on-failure
+
+  bazel:
+    name: bazel build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # MODULE.bazel resolves Iris-Headers via local_path_override
+      # ../Iris-Headers (the sibling-checkout layout of local development);
+      # CI materializes exactly that layout.
+      - uses: actions/checkout@v4
+        with:
+          repository: IrisDigitalPathology/Iris-Headers
+          path: ../Iris-Headers
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+      # Explicit bash: PowerShell mangles the // in target patterns on
+      # Windows (documented setup-bazel Windows issue).
+      - name: Build and test
+        shell: bash
+        run: bazel test //... --test_output=errors
 
   sanitizers:
     name: address and undefined behaviour

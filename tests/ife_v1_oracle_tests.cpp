@@ -23,6 +23,7 @@
  * layer that produced the snapshot is gone; the snapshot is what outlived it.
  */
 #include "IFE_Blocks.hpp"
+#include "ife_corpus_path.hpp"
 #include "ife_v1_fixture.hpp"
 
 #include <cstdio>
@@ -353,7 +354,9 @@ int main(int argc, const char* argv[]) {
         std::fprintf(stderr, "usage: %s <corpus-dir>\n", argv[0]);
         return 2;
     }
-    const std::string corpus_dir = argv[1];
+    // Bazel cannot pass a directory; BUILD.bazel passes the runfiles path of
+    // one corpus file and its parent is the directory CTest passes directly.
+    const std::string corpus_dir = ife_corpus_dir(argv[1]);
 
     v1_fixture::Expected expected;
     const auto bytes = v1_fixture::load_snapshot(corpus_dir + "/v1_snapshot.test_slide", expected);

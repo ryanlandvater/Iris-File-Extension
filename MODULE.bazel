@@ -1,0 +1,17 @@
+module(
+    name = "ife",
+    # Mirrors spec/ife_header.json — the version CMake derives at configure
+    # time. Keep in sync when the spec bumps.
+    version = "1.1.0",
+)
+
+bazel_dep(name = "rules_cc",  version = "0.2.17")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# Iris-Headers is not in the Bazel Central Registry. Development resolves the
+# sibling checkout; CI/release swaps this for git_override.
+bazel_dep(name = "iris_headers", version = "0.1.0")
+local_path_override(
+    module_name = "iris_headers",
+    path = "../Iris-Headers",
+)

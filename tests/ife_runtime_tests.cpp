@@ -14,6 +14,7 @@
  */
 #include "IFE_Runtime.hpp"
 
+#include "ife_corpus_path.hpp"
 #include "ife_v1_fixture.hpp"
 
 #include <cstdlib>
@@ -345,7 +346,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: %s <corpus-dir>\n", argv[0]);
         return 2;
     }
-    g_corpus_dir = argv[1];
+    // Bazel cannot pass a directory; BUILD.bazel passes the runfiles path of
+    // one corpus file and its parent is the directory CTest passes directly.
+    g_corpus_dir = ife_corpus_dir(argv[1]);
 
     // Needs no slide of its own.
     test_recovery_finds_tile_frames_and_rebuilds_entries();

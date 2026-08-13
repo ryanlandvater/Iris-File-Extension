@@ -2,6 +2,10 @@
 # the next configuration is called all belong here.
 /build*
 
+# Bazel convenience symlinks (see .bazelrc --symlink_prefix). MODULE.bazel.lock
+# is committed on purpose: it pins the resolved module graph.
+/bazel-*
+
 # macOS Finder droppings, at any depth.
 .DS_Store
 

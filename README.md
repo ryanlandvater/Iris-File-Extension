@@ -17,7 +17,8 @@ Example Iris slide files are hosted to test decoding are hosted at [the Iris-Exa
 > [!NOTE]
 > The scope of this repository is only serializing or deserializing Iris slide files. Compression and decompression are **NOT** components of this repository. The WSI tile byte arrays will be referenced in their on-disk compressed forms and it is up to your implementation to compress or decompress tiles. If you would like a system that performs image compression and decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which incorporates this repository for Iris slide file serialization.
 
-This repository builds C++ access to Iris files — header-only, static, shared, or as a WebAssembly module. It exposes the *byte structure*; the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) builds on it and exposes *compression and the high-level slide API*. Each publishes bindings for its own layer. The repository uses the CMake build system.
+This repository builds C++ access to Iris files — header-only, static, shared, or as a WebAssembly module. It exposes the *byte structure*; the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) builds on it and exposes *compression and the high-level slide API*. Each publishes bindings for its own layer. The repository builds with CMake
+and has an equivalent Bazel build (`BUILD.bazel`); both are exercised in CI.
 
 <p xmlns:cc="http://creativecommons.org/ns#" >This repository is licensed under the MIT software license. The Iris File Extension is licensed under <a href="https://creativecommons.org/licenses/by-nd/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY-ND 4.0 <img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nd.svg?ref=chooser-v1" alt=""></a></p>
 
@@ -36,6 +37,17 @@ git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-File-Extension.
 cmake -B ./Iris-File-Extension/build ./Iris-File-Extension 
 cmake --build ./Iris-File-Extension/build --config Release
 cmake --install ./Iris-File-Extension/build
+```
+
+#### Bazel
+An equivalent Bazel build covers the library, the examples and the full test
+suite (`BUILD.bazel`). `generated_source/` is regenerated at build time from
+`spec/` (never committed), and Iris-Headers is resolved from the sibling
+checkout next to this repository (see `MODULE.bazel`).
+
+```shell
+git clone https://github.com/IrisDigitalPathology/Iris-Headers.git
+bazel test //... --test_output=errors
 ```
 
 #### Xcode

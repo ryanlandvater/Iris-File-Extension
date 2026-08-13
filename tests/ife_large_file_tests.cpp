@@ -37,6 +37,7 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -46,6 +47,7 @@
 #include "IrisMemory.hpp"           // priv/: the cross-platform sparse arena
 
 #include "IFE_Blocks.hpp"           // under test: generated readers
+#include "ife_corpus_path.hpp"       // corpus arg: directory (CTest) or file (Bazel)
 
 namespace {
 
@@ -320,7 +322,13 @@ int main(int argc, const char* argv[]) {
     // Both directories arrive as arguments rather than compile definitions:
     // as definitions they become C string literals, which a Windows path does
     // not survive.
-    test_v1_slide_above_4GiB(std::string(argv[1]), std::string(argv[2]));
+    // Bazel passes "-" for the writable directory (resolved to $TEST_TMPDIR
+    // here, since runfiles are not writable) and the runfiles path of a
+    // corpus file; CTest passes both directories through unchanged.
+    const char* const tmpdir = std::getenv("TEST_TMPDIR");
+    const std::string writable =
+        std::string(argv[1]) == "-" && tmpdir ? tmpdir : argv[1];
+    test_v1_slide_above_4GiB(writable, ife_corpus_dir(argv[2]));
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

@@ -2062,7 +2062,7 @@ marked inline.
 without losing what they prove.
 
 **Near-term milestone (2026-08-12):** host the v1 coverage slide —
-`iris.exampleslides.org/v1_snapshot.test_slide`, 2,857 B, 13 of 18 blocks,
+`iris.exampleslides.org/spec-validation/v1_snapshot.test_slide`, 2,857 B, 13 of 18 blocks,
 digest `658ead7c…` (task 6.3) — then delete v1 and the tests that generate
 bytes with it. The hosted corpus grows from there as coverage and versions
 change.
