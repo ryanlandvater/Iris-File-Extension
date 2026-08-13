@@ -190,6 +190,13 @@ struct IFE_EXPORT Annotation {
     uint32_t width     = 0;
     uint32_t height    = 0;
     uint32_t parent    = 0;
+
+    // MSVC's <unordered_map> instantiates pair::operator== as part of the
+    // Annotations map's class instantiation (GCC/Clang defer it until the
+    // map is actually compared), so the value type must be equality-
+    // comparable even when the map is never compared. Defaulted: every
+    // member is a scalar with the natural equality.
+    bool operator==(const Annotation&) const = default;
 };
 
 struct IFE_EXPORT AnnotationGroup {

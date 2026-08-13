@@ -88,11 +88,12 @@ jobs:
       - uses: actions/checkout@v4
       # MODULE.bazel resolves Iris-Headers via local_path_override
       # ../Iris-Headers (the sibling-checkout layout of local development);
-      # CI materializes exactly that layout.
-      - uses: actions/checkout@v4
-        with:
-          repository: IrisDigitalPathology/Iris-Headers
-          path: ../Iris-Headers
+      # CI materializes exactly that layout. Plain git, not actions/checkout:
+      # checkout@v4 rejects a `path:` outside the workspace ("Repository path
+      # ... is not under ..."). The repo is public, so no token is needed.
+      - name: Check out Iris-Headers beside the main repo
+        shell: bash
+        run: git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-Headers.git ../Iris-Headers
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
