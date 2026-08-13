@@ -1024,6 +1024,26 @@ void test_no_arg_validate_deep_on_every_block() {
     IFE_CHECK(static_cast<bool>(clinical_h.validate()));
 }
 
+// The tile encoding is opaque data to this layer — the codec is Iris-Codec's
+// business — so every declared value must store and read back identically.
+// The snapshot and every fixture write JPEG; AVIF (=3) never appears in
+// committed bytes, and a reader that mishandled it would pass every other
+// test. Regression: the generated store/read path for a non-JPEG value.
+void test_tile_encoding_avif_round_trips() {
+    // header_size, not header_size_v1_0: the handle's __size is the buffer
+    // length, and fits() requires the newest header (46 B with TILE_SIZE).
+    std::vector<BYTE> f(vt::TILE_TABLE::header_size, 0);
+    BYTE* p = f.data();
+    const b::TileTableCreateInfo info{
+        .ENCODING = k::TileEncodings::TILE_ENCODING_AVIF,
+        .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8,
+    };
+    IFE_CHECK(static_cast<bool>(b::store(p, 0, info)));
+    const b::TILE_TABLE tt{p, 0, f.size(), VERSION_1_0};
+    IFE_CHECK(static_cast<bool>(tt.validate()));
+    IFE_CHECK(tt.encoding() == k::TileEncodings::TILE_ENCODING_AVIF);
+}
+
 }  // namespace
 
 int main() {
@@ -1040,6 +1060,7 @@ int main() {
     test_annotation_groups_read_from_entries();
     test_generated_writers_round_trip();
     test_no_arg_validate_deep_on_every_block();
+    test_tile_encoding_avif_round_trips();
     test_writers_stay_within_size_of();
     test_validation_hook_is_dispatched();
 

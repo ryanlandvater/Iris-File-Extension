@@ -160,6 +160,17 @@ void test_attached_enforces_enum_membership() {
     g_reports = 0;
     table.ENCODING = k::TileEncodings::TILE_ENCODING_JPEG;
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, table, &hooks)));
+
+    // Every declared member passes — AVIF in particular: no committed bytes
+    // carry it (the snapshot is JPEG), so the conformance layer must accept
+    // it on the specification's word, and the reserved IRIS value too.
+    for (auto encoding : {k::TileEncodings::TILE_ENCODING_AVIF,
+                          k::TileEncodings::TILE_ENCODING_IRIS}) {
+        g_reports = 0;
+        table.ENCODING = encoding;
+        IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, table, &hooks)));
+        IFE_CHECK(g_reports == 0);
+    }
 }
 
 void test_conformant_input_passes_with_the_layer_attached() {

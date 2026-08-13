@@ -1,6 +1,6 @@
 {
   "v1_snapshot.test_slide": {
-    "url": "https://iris.exampleslides.org/v1_snapshot.test_slide",
+    "url": "https://iris.exampleslides.org/spec-validation/v1_snapshot.test_slide",
     "size": 2857,
     "sha256": "658ead7c395c62c9eec8d3251a720b4e00553b9bf218aed9d4134791edd76fa0",
     "version": "1.0",
@@ -21,7 +21,7 @@
     ]
   },
   "v1_tile_offsets_full_width.bin": {
-    "url": "https://iris.exampleslides.org/v1_tile_offsets_full_width.bin",
+    "url": "https://iris.exampleslides.org/spec-validation/v1_tile_offsets_full_width.bin",
     "size": 32,
     "sha256": "b21ed7691f56b7ba4778f9472290b469b189a2e6c9b8145f7012f745376491aa",
     "version": "1.0",

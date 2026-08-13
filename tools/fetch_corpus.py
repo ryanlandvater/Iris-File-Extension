@@ -4,7 +4,7 @@
 The manifest (tests/corpus/manifest.json) is the committed source of truth:
 URL, byte size, digest, IFE version, and the block types each fixture covers.
 The files themselves live on iris.exampleslides.org (Cloudflare R2) and are
-never committed — see plans/phase-6-corpus.md.
+never committed — see MIGRATION.md §Conformance corpus.
 
 Behaviour, by design:
   * A cached file whose digest matches the manifest is used as-is; the normal
@@ -35,8 +35,15 @@ def sha256(path: pathlib.Path) -> str:
 
 def fetch(url: str, dest: pathlib.Path, expected_size: int, expected_sha: str) -> None:
     tmp = dest.with_name(dest.name + ".tmp")
+    # Cloudflare's bot protection (error 1010) blocks the default
+    # Python-urllib user agent, which is what urllib sends unprompted; curl
+    # gets 200 for the same object. The runners fetch through this script, so
+    # it must send a UA Cloudflare has no reason to block.
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "ife-corpus-fetch/1.0 (Iris-File-Extension CI)"}
+    )
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(request, timeout=30) as resp:
             with open(tmp, "wb") as out:
                 n = 0
                 while True:

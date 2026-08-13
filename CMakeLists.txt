@@ -276,6 +276,28 @@ if(IFE_BUILD_EXAMPLES)
         slide_info_abstraction PUBLIC 
         IrisFileExtension
     )
+
+    # The spec-conformance layer, attached and detached — a worked example
+    # (see examples/validation_layer.cpp). The layer lives in the generated
+    # IFE_Validation.{hpp,cpp}, deliberately OUTSIDE the library (see its
+    # header comment): an application links it only when it wants it. This
+    # compiles it alongside the generated layer, the way such an application
+    # would.
+    add_executable(
+        ife_example_validation
+        ${EXAMPLES_DIR}/validation_layer.cpp
+        ${IFE_VALIDATION_SOURCE}
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_example_validation PRIVATE
+        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_example_validation PRIVATE cxx_std_20)
+    target_link_libraries(
+        ife_example_validation PRIVATE
+        ${IFE_Dependencies}
+    )
 endif(IFE_BUILD_EXAMPLES)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -346,7 +368,7 @@ if(IFE_BUILD_TESTS)
     add_test(NAME ife_window_tests COMMAND ife_window_tests)
 
     # The corpus: hosted fixtures pinned by digest in tests/corpus/manifest.json
-    # (iris.exampleslides.org; never committed -- see plans/phase-6-corpus.md).
+    # (iris.exampleslides.org; never committed -- see MIGRATION.md §Conformance corpus).
     # Fetched at configure into the gitignored .deps/corpus/ so every test that
     # reads v1-written bytes has them before any binary runs. Unconditional
     # within test builds: the oracle and the >4 GiB test depend on the

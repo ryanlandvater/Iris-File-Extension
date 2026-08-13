@@ -10,8 +10,9 @@
 > test — 11/11 ctest on macOS in Release and ASan+UBSan, on both byte orders.
 > Function coverage is 100% in `IFE_Blocks.cpp` and `IFE_Validation.cpp`.
 > Open items: corruption tests (`ife_blocks_corruption_tests.cpp`),
-> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing, and
-> the hosted corpus's remaining five blocks.
+> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing, the
+> hosted corpus's remaining five blocks, and real AVIF-encoded tile bytes
+> (the `TILE_ENCODING_AVIF` value itself is covered in-process).
 > Gates in force: `--validate`, `--check`, the exported-symbol check, the
 > corpus digest fetch, and the test binaries under ASan+UBSan, on both byte
 > orders.
@@ -1923,7 +1924,7 @@ custom preprocessor in the pipeline.
 
 ## Phase 6 — Ecosystem cutover & release
 
-- [ ] **Conformance corpus** — refined in [`plans/phase-6-corpus.md`](plans/phase-6-corpus.md).
+- [ ] **Conformance corpus** — live plan in [§Conformance corpus](#conformance-corpus--live-plan) below.
       The published
       [Iris-Example-Files](https://github.com/IrisDigitalPathology/Iris-Example-Files)
       do not serve: both are the same specimen with entirely empty metadata and
@@ -2029,9 +2030,9 @@ has no specification to adhere to.
 
 Written to the flash-execution standard, inline for the same reason Phase 4's
 is: it is the phase in front of us. **This is the task list.** Complements
-[`plans/phase-6-corpus.md`](plans/phase-6-corpus.md), which covers fixture
-*content*; this covers the *cutover*. Where they disagree, this document is
-newer.
+[§Conformance corpus](#conformance-corpus--live-plan) below, which
+covers fixture *content*; this section covers the *cutover*. Where they
+disagree, this section is newer.
 
 **Status: complete (2026-08-12).** All tasks 6.1–6.7 landed and verified:
 6.1 and 6.2 take both generated files to 100% function coverage (0/181 and
@@ -2068,7 +2069,7 @@ change.
 
 #### Read first
 
-1. `plans/phase-6-corpus.md` — the whole file.
+1. [§Conformance corpus](#conformance-corpus--live-plan) — the whole section.
 2. `tests/ife_v1_oracle_tests.cpp` — its preamble states why an oracle exists.
 3. `tests/ife_wire_parity_tests.cpp` — its preamble states why it is temporary.
 4. `src/IFE_Window.hpp` lines 1–30 — residency, and what it is not.
@@ -2145,7 +2146,7 @@ miscounted the conformance layer. Totals are unchanged: 27 + 9 = 36):
   `check_LAYER_EXTENTS`, and the `TileEncodings`/`PixelFormats` predicates are
   already executed by `ife_validation_tests`).
 * **10 are fixture-content gaps** — the same five blocks
-  `plans/phase-6-corpus.md` lists: `CLINICAL_METADATA` (its `VisitPath&`
+  §Conformance corpus lists: `CLINICAL_METADATA` (its `VisitPath&`
   `validate_deep`, `validate`, `entries_begin`, `encoding`, `bytes`), framed
   `TILE_PIXEL_DATA` (`VisitPath&` `validate_deep`, plus `store` and `size_of`
   for both blocks), `CIPHER`, `ANNOTATION_GROUP_SIZES`,
@@ -2188,8 +2189,7 @@ without one: `build/tests/ife_v1_slide_writer tests/fixtures/v1_snapshot.test_sl
 `tests/fixtures/` is gitignored scratch and stays that way: upload the file to
 `iris.exampleslides.org` (Cloudflare R2, registered 2026-08-12) and record it
 in `tests/corpus/manifest.json` (committed, text — URL, 2,857 B, SHA-256, IFE
-version, blocks covered), the corpus Delivery mechanism from
-`plans/phase-6-corpus.md`. The snapshot is the corpus's first hosted fixture,
+version, blocks covered), the corpus Delivery mechanism (§Conformance corpus). The snapshot is the corpus's first hosted fixture,
 so the oracle and the corpus share one fetch path. Implement the fetch now:
 CMake downloads `manifest.json`'s files into the gitignored `.deps/corpus/`
 and verifies each digest before any test runs — unconditional, like the
@@ -2224,7 +2224,7 @@ fixture and the full-width offsets by digest in the committed manifest, the
 oracle proves the generated readers over v1 bytes, and a schema edit that
 moves a shipped field breaks reading the digest-verified file. The enum values
 absent from the fixture (AVIF/PNG encodings, `ORIENTATION` variants, remaining
-`RECOVERY` codes) are corpus work — see `plans/phase-6-corpus.md`. If a
+`RECOVERY` codes) are corpus work — see §Conformance corpus. If a
 compile-time wall is wanted later, generate its literals mechanically from v1
 headers before deletion; never hand-type them.
 
@@ -2298,11 +2298,121 @@ cmake . -B build && cmake --build build --config Release -j && ctest --test-dir 
   `CIPHER` and the annotation groups need encoder *features* that do not exist.
   Host the resulting `.test_slide` files on `iris.exampleslides.org`
   (Cloudflare R2, registered 2026-08-12) and pin them by SHA-256 in
-  `tests/corpus/manifest.json`; see `plans/phase-6-corpus.md` §Delivery.
+  `tests/corpus/manifest.json`; see §Conformance corpus Delivery.
 * ⚠ **Do not block 6.1–6.7 on the five-block corpus.** The snapshot is
   generated, uploaded and fetched by 6.3 — before anything touches v1 — so the
   cutover depends only on the two hosted snapshot files and the fetch
   machinery, not on the corpus's remaining fixture work.
+
+### Conformance corpus — live plan
+
+The corpus exists to replace what `ife_v1_oracle_tests` proves: that the
+new stack reads bytes **a shipped encoder wrote**, rather than agreeing with
+another description of the format. Two fixtures are live (MIGRATION 6.3/6.4):
+`v1_snapshot.test_slide` (13 of 18 block types) and
+`v1_tile_offsets_full_width.bin`. The remaining five blocks are the reason
+this section exists.
+
+#### Why the published example files are not enough
+
+Measured against `Iris-Example-Files@main`, both files (`425248_JPEG.iris`,
+`425248_AVIF.iris`) are the same specimen and structurally identical: IFE 1.0
+revision 0, 1,718,162,733 / 1,123,383,971 B, 4 layers, 183,134 dense tile
+entries, 1,465,252 B structural bytes, and `ATTRIBUTES`/`IMAGES`/
+`ICC_PROFILE`/`ANNOTATIONS` all NULL. They exercise 6 of 18 block types; a
+corpus built from them would reduce real-byte coverage rather than replace
+it. Fixtures are therefore purpose-built `.test_slide` files, **small by
+construction** — a valid pyramid (8×6 tiles at layer 0 plus two further
+layers) is under 5 MB with real JPEG tiles.
+
+#### What the fixtures must contain
+
+Every block must appear at least once across the set. Blocks marked ⚠ appear
+in no currently published file; they are the reason this work exists.
+Annotations are unblocked (seven v1 writer/reader defects fixed in
+`62eaeeb`; the first masked the rest — see that commit).
+
+| Block | How it is made to appear |
+|---|---|
+| `FILE_HEADER`, `TILE_TABLE`, `LAYER_EXTENTS`, `TILE_OFFSETS`, `TILE_PIXEL_DATA` | any slide |
+| `METADATA` | always present; `MICRONS_PIXEL`/`MAGNIFICATION` non-zero ⚠ |
+| `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES` ⚠ | ≥1 attribute pair; one fixture per meaningful `metadata_formats` (`METADATA_I2S`, `METADATA_DICOM`) |
+| `IMAGES`, `IMAGE_BYTES` ⚠ | ≥2 associated images differing in `ENCODING` and `ORIENTATION` |
+| `ICC_PROFILE` ⚠ | any embedded profile |
+| `ANNOTATIONS`, `ANNOTATION_BYTES` | ≥1 of each `annotation_types` value — PNG, JPEG, SVG, TEXT (unblocked) |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named group — still blocked: no group writer; if it stays deferred, record both as covered by the generated writers alone |
+| `CIPHER` ⚠ | one encrypted fixture, if the encoder can write one; otherwise record as permanently uncovered |
+| `CLINICAL_METADATA` ⚠ | 1.1 only — one fixture per `clinical_encodings` value the encoder supports |
+
+#### Edge cases worth encoding deliberately
+
+* **`u40` tile offsets above 4 GB — covered, no fixture requirement.**
+  `ife_large_file_tests` validates a whole slide over 4 GiB (sparse: 4.00 GiB
+  long, 28 KiB allocated). POSIX/64-bit only; NTFS needs `FSCTL_SET_SPARSE`.
+* **`NULL_TILE` slots** — both published files are dense; a sparse layer is
+  the only thing that exercises the sentinel.
+* **A non-zero `FILE_REVISION`** — so the field is not confirmed only at 0.
+* **Tile encodings other than JPEG** — `TILE_ENCODING_AVIF` never appears in
+  committed bytes; reader and conformance membership are covered in-process
+  (MIGRATION 6.1/6.2 tests). A fixture with real AVIF-encoded tiles — the
+  published specimen's bytes or the pipeline's first AVIF output — belongs in
+  the corpus as it grows.
+* **Both byte orders** are unnecessary — IFE is little-endian at every
+  version; the s390x job covers the reader.
+* **1.1 features**: `Z_PLANES` > 1, a non-256 `TILE_SIZE`, `MICRONS_PLANE`,
+  and a tile frame carrying the optional 11-byte trailer.
+
+#### Delivery
+
+**Host the files; commit only a manifest.** `iris.exampleslides.org`
+(Cloudflare R2, registered 2026-08-12) is the host; the two snapshot files
+are the first fixtures on it. `tests/corpus/manifest.json` (committed, text)
+records per fixture: URL, byte size, SHA-256, IFE version, and the block
+types it covers. CMake fetches into the gitignored `.deps/corpus/` and
+verifies the digest before any test runs — the digest is what makes a hosted
+corpus reproducible.
+
+The corpus is a **living set**: fixtures are added as coverage grows (the
+five deferred blocks) and as new IFE versions land, each recorded with the
+version it proves. **The corpus test must fail loudly when the corpus is
+unreachable, not skip.** Provide `-DIFE_CORPUS=OFF` as the explicit opt-out —
+it disables only the corpus test target, never the snapshot fetch, which the
+oracle depends on. Cache by manifest digest in CI so the normal path never
+touches the host.
+
+**Cloudflare gotcha (2026-08-12):** the zone's bot protection (error 1010)
+blocks the default `Python-urllib` user agent; `tools/fetch_corpus.py` sends
+`ife-corpus-fetch/1.0` instead. If the host changes, keep that.
+
+#### Harness
+
+`tests/ife_corpus_tests.cpp`, one target, iterating the manifest:
+
+1. `IFE::Window::resident` over the fetched file (small enough to map whole).
+2. `validate_file_structure` must succeed.
+3. Walk every `points_to` edge; confirm each block's recovery tag and
+   self-validating `VALIDATION` word.
+4. Assert the manifest's declared coverage was actually observed — a fixture
+   that stops containing annotations must fail, not quietly narrow the gate.
+5. Record which of the 18 block types the corpus reached; fail if a block the
+   manifest claims is absent.
+
+Step 4 keeps this honest: without it the corpus degrades silently, exactly as
+`ANNOTATION_JPEG` did.
+
+#### Where oracle coverage stands
+
+Counted from what the snapshot contains: **13 of the 18 block types**
+(`FILE_HEADER`, `TILE_TABLE`, `LAYER_EXTENTS`, `TILE_OFFSETS`, `METADATA`,
+`ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES`, `IMAGES`, `IMAGE_BYTES`,
+`ICC_PROFILE`, `ANNOTATIONS`, `ANNOTATION_BYTES`), re-verified 2026-08-12
+(2,857 B, digest in MIGRATION 6.3). The remaining five — `CIPHER`,
+`ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES`, framed `TILE_PIXEL_DATA`,
+`CLINICAL_METADATA` — are the ⚠ rows above.
+
+**Exit:** every block type reached by at least one fixture — full real-byte
+coverage. Deleting v1 was not blocked on this; the corpus is the path to the
+five blocks no snapshot contains.
 
 ## Refinement workflow
 
