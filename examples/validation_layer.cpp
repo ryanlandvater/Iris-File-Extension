@@ -19,11 +19,11 @@
  * shipped product links the layer only when it wants it; the default store()
  * costs one null check.
  *
- * This example walks both paths with real inputs — a spec-violating layer
- * extent set, a bad tile-encoding enum, a file header that points nowhere —
- * and shows what each failure looks like through the layer's diagnostic
- * callback. It also chains a tracing layer on top of the conformance layer,
- * which is how a future tool composes rather than competes.
+ * Attaching is three lines: copy `conformance_layer()`, point its
+ * `diagnostic` at a string you own, pass the hooks to store(). A failing
+ * clause comes back twice — as the returned `Status` (code/block/field) and,
+ * if a sink is set, as the formatted diagnostic citing the spec clause.
+ * Layers compose: set `next` to chain a tracing layer in front.
  *
  * Build: the conformance layer lives in generated_source/IFE_Validation.{hpp,cpp}
  * (kept out of the library on purpose — see the header's comment), so this
@@ -32,8 +32,10 @@
  */
 #include "IFE_Validation.hpp"
 
-#include <cstdint>
 #include <cstdio>
+#include <exception>
+#include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -44,184 +46,169 @@ namespace k = ::IFE::constants;
 
 namespace {
 
-int g_failures = 0;
+std::vector<BYTE> buffer() { return std::vector<BYTE>(4096, 0); }
 
-#define CHECK(cond) do { \
-    if (!(cond)) { \
-        std::fprintf(stderr, "FAIL: %s (%s:%d)\n", #cond, __FILE__, __LINE__); \
-        ++g_failures; \
-    } \
-} while (0)
-
-/// Where the layer's diagnostics go. The layer formats; the caller decides
-/// what I/O means — here, a counter and a captured message.
-std::string g_diagnostic;
-
-void collect(const char* __message, void* /*__user*/) {
-    g_diagnostic = __message;
+/// Every expectation below fails loudly: a demonstration that silently
+/// accepts the wrong behaviour teaches the wrong lesson. Throwing keeps the
+/// failure in the message rather than in a return code the reader must
+/// remember to check. `std::source_location` supplies file and line for free.
+void expect(bool ok, const char* what,
+            const std::source_location loc = std::source_location::current()) {
+    if (!ok) throw std::runtime_error(std::string(what) + " (" + loc.file_name() +
+                                 ":" + std::to_string(loc.line()) + ")");
 }
 
-/// A copy of the shared conformance layer with diagnostics attached. The
-/// returned struct is immutable and shared; copy it before touching anything.
-b::ValidationHooks attached() {
-    b::ValidationHooks hooks = b::conformance_layer();
-    hooks.diagnostic = &collect;
-    return hooks;
-}
-
-// A layer extent set that is structurally perfect and violates the spec: a
-// layer with zero tiles, and a scale that does not strictly increase.
-const b::LayerExtentEntry GOOD[3] = {
-    {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
-    {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
-    {.X_TILES = 8, .Y_TILES = 8, .SCALE = 4.0f},
-};
+// A layer extent set that is structurally perfect but violates the spec: a
+// layer with zero tiles.
 const b::LayerExtentEntry ZERO_TILES[2] = {
     {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
     {.X_TILES = 0, .Y_TILES = 4, .SCALE = 2.0f},   // X_TILES shall be >= 1
 };
-const b::LayerExtentEntry FLAT_SCALE[3] = {
-    {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
-    {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
-    {.X_TILES = 8, .Y_TILES = 8, .SCALE = 2.0f},   // shall strictly increase
-};
-
-std::vector<BYTE> buffer() { return std::vector<BYTE>(4096, 0); }
 
 }  // namespace
 
 int main() {
-    // ---- 1. detached: conformance is NOT enforced ------------------------ //
-    // Structurally valid, spec-violating. With no layer attached this stores
-    // and reports success — which is the point: conformance is not the
-    // library's business unless an application asks for it. The block really
-    // is readable; the violation is semantic, not structural.
-    {
-        auto f = buffer();
-        const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
-        const auto status = b::store(f.data(), 0, bad);
-        CHECK(static_cast<bool>(status));
-        std::printf("detached store of zero-tile extents: %s (one null check)\n",
-                    static_cast<bool>(status) ? "accepted" : "rejected");
-    }
+    try {
+        // ---- 1. detached: conformance is NOT enforced -------------------- //
+        // Structurally valid, spec-violating. With no layer attached this
+        // stores and reports success — conformance is not the library's
+        // business unless an application asks for it.
+        {
+            auto f = buffer();
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            expect(static_cast<bool>(b::store(f.data(), 0, bad)),
+                   "a detached store accepts even spec-violating input");
+            std::printf("1. detached store of zero-tile extents: accepted (one null check)\n");
+        }
 
-    // ---- 2. attached: the same input is now a CONFORMANCE failure --------- //
-    {
-        auto f = buffer();
-        auto hooks = attached();
-        g_diagnostic.clear();
+        // ---- 2. attached: a spec violation becomes a CONFORMANCE failure -- //
+        // The pattern every case below uses: copy the shared layer, point its
+        // sink at a string, hand the hooks to store().
+        {
+            auto f = buffer();
+            std::string why;
+            auto hooks = b::conformance_layer();
+            hooks.diagnostic = &why;
 
-        const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
-        const auto status = b::store(f.data(), 0, bad, &hooks);
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            const auto status = b::store(f.data(), 0, bad, &hooks);
+            expect(!status, "an attached store rejects spec-violating input");
+            expect(status.code == b::Check::CONFORMANCE, "the rejection is a conformance failure");
+            expect(why.find("X_TILES") != std::string::npos, "the diagnostic names the clause");
+            std::printf("2. attached store of zero-tile extents: %s.%s\n      %s\n",
+                        status.block, status.field, why.c_str());
+        }
 
-        CHECK(!status);
-        CHECK(status.code == b::Check::CONFORMANCE);
-        CHECK(g_diagnostic.find("X_TILES") != std::string::npos);
-        std::printf("attached store of zero-tile extents: %s.%s — %s\n",
-                    status.block, status.field, g_diagnostic.c_str());
-    }
+        // ---- 3. the ordering clause is a property of the sequence -------- //
+        {
+            auto f = buffer();
+            std::string why;
+            auto hooks = b::conformance_layer();
+            hooks.diagnostic = &why;
 
-    // ---- 3. the ordering clause is a property of the sequence ------------ //
-    {
-        auto f = buffer();
-        auto hooks = attached();
-        g_diagnostic.clear();
+            const b::LayerExtentEntry flat[3] = {
+                {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
+                {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
+                {.X_TILES = 8, .Y_TILES = 8, .SCALE = 2.0f},   // shall strictly increase
+            };
+            const b::LayerExtentsCreateInfo bad{.entries = flat, .count = 3};
+            const auto status = b::store(f.data(), 0, bad, &hooks);
+            expect(!status, "a flat scale fails the ordering clause");
+            expect(why.find("SCALE") != std::string::npos, "the diagnostic names the field");
+            std::printf("3. attached store of flat-scale extents: %s.%s\n      %s\n",
+                        status.block, status.field, why.c_str());
+        }
 
-        const b::LayerExtentsCreateInfo bad{.entries = FLAT_SCALE, .count = 3};
-        const auto status = b::store(f.data(), 0, bad, &hooks);
+        // ---- 4. enum membership: in the width, not in the domain --------- //
+        {
+            auto f = buffer();
+            std::string why;
+            auto hooks = b::conformance_layer();
+            hooks.diagnostic = &why;
 
-        CHECK(!status);
-        CHECK(status.code == b::Check::CONFORMANCE);
-        CHECK(g_diagnostic.find("SCALE") != std::string::npos);
-        std::printf("attached store of flat-scale extents: %s.%s — %s\n",
-                    status.block, status.field, g_diagnostic.c_str());
-    }
+            const b::TileTableCreateInfo bad{
+                .ENCODING = static_cast<k::TileEncodings>(200),
+                .FORMAT   = k::PixelFormats::FORMAT_R8G8B8A8,
+            };
+            const auto status = b::store(f.data(), 0, bad, &hooks);
+            expect(!status, "an undeclared encoding fails enum membership");
+            expect(why.find("TILE_TABLE.ENCODING") != std::string::npos,
+                   "the diagnostic names the field");
+            std::printf("4. attached store of tile-encoding 200: %s.%s\n      %s\n",
+                        status.block, status.field, why.c_str());
+        }
 
-    // ---- 4. enum membership: a value in the width but not the domain ----- //
-    {
-        auto f = buffer();
-        auto hooks = attached();
-        g_diagnostic.clear();
+        // ---- 5. mandatory pointers: a file header that points nowhere ---- //
+        {
+            auto f = buffer();
+            std::string why;
+            auto hooks = b::conformance_layer();
+            hooks.diagnostic = &why;
 
-        b::TileTableCreateInfo table{};
-        table.ENCODING = static_cast<k::TileEncodings>(200);
-        table.FORMAT   = k::PixelFormats::FORMAT_R8G8B8A8;
+            const b::FileHeaderCreateInfo bad{
+                .TILE_TABLE_OFFSET = ::IFE::constants::NULL_OFFSET,
+                .METADATA_OFFSET   = 128,
+            };
+            const auto status = b::store(f.data(), 0, bad, &hooks);
+            expect(!status, "a NULL mandatory pointer fails the clause");
+            expect(why.find("TILE_TABLE_OFFSET") != std::string::npos,
+                   "the diagnostic names the field");
+            std::printf("5. attached store of NULL tile-table pointer: %s.%s\n      %s\n",
+                        status.block, status.field, why.c_str());
+        }
 
-        const auto status = b::store(f.data(), 0, table, &hooks);
+        // ---- 6. conformant input passes with the layer attached ---------- //
+        {
+            auto f = buffer();
+            std::string why;
+            auto hooks = b::conformance_layer();
+            hooks.diagnostic = &why;
 
-        CHECK(!status);
-        CHECK(status.code == b::Check::CONFORMANCE);
-        CHECK(status.found == 200);
-        CHECK(g_diagnostic.find("TILE_TABLE.ENCODING") != std::string::npos);
-        std::printf("attached store of tile-encoding 200: %s.%s — %s\n",
-                    status.block, status.field, g_diagnostic.c_str());
-    }
+            const b::LayerExtentEntry good[3] = {
+                {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
+                {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
+                {.X_TILES = 8, .Y_TILES = 8, .SCALE = 4.0f},
+            };
+            const b::LayerExtentsCreateInfo ok{.entries = good, .count = 3};
+            expect(static_cast<bool>(b::store(f.data(), 0, ok, &hooks)),
+                   "a conformant store passes with the layer attached");
+            expect(why.empty(), "nothing to report for a conformant input");
+            std::printf("6. attached store of conformant extents: accepted, no diagnostic\n");
+        }
 
-    // ---- 5. mandatory pointers: a file header that points nowhere -------- //
-    {
-        auto f = buffer();
-        auto hooks = attached();
-        g_diagnostic.clear();
+        // ---- 7. layering: a tracing layer composes via `next` ------------- //
+        {
+            auto f = buffer();
+            std::string why;
+            auto conformance = b::conformance_layer();
+            conformance.diagnostic = &why;
 
-        b::FileHeaderCreateInfo header{};
-        header.TILE_TABLE_OFFSET = ::IFE::constants::NULL_OFFSET;
-        header.METADATA_OFFSET   = 128;
+            b::ValidationHooks tracing{};
+            tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::IFE::Offset at,
+                                       const b::ValidationHooks* self) -> b::Status {
+                std::printf("    [trace] LAYER_EXTENTS at %llu, %u entries\n",
+                            static_cast<unsigned long long>(at), info.count);
+                // Forward down the chain; the conformance layer runs next and
+                // writes through the sink attached to `conformance`.
+                if (self->next != nullptr && self->next->LAYER_EXTENTS != nullptr)
+                    return self->next->LAYER_EXTENTS(info, at, self->next);
+                return {};
+            };
+            tracing.next = &conformance;
 
-        const auto status = b::store(f.data(), 0, header, &hooks);
-
-        CHECK(!status);
-        CHECK(status.code == b::Check::CONFORMANCE);
-        CHECK(g_diagnostic.find("TILE_TABLE_OFFSET") != std::string::npos);
-        std::printf("attached store of NULL tile-table pointer: %s.%s — %s\n",
-                    status.block, status.field, g_diagnostic.c_str());
-    }
-
-    // ---- 6. conformant input passes with the layer attached -------------- //
-    {
-        auto f = buffer();
-        auto hooks = attached();
-        g_diagnostic.clear();
-
-        const b::LayerExtentsCreateInfo good{.entries = GOOD, .count = 3};
-        const auto status = b::store(f.data(), 0, good, &hooks);
-
-        CHECK(static_cast<bool>(status));
-        CHECK(g_diagnostic.empty());
-        std::printf("attached store of conformant extents: accepted, no diagnostics\n");
-    }
-
-    // ---- 7. layering: a tracing layer composes via `next` ---------------- //
-    {
-        auto f = buffer();
-        auto conformance = attached();          // the real layer, with diagnostics
-        b::ValidationHooks tracing{};           // a fresh chain head
-        tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& __info,
-                                   ::IFE::Offset __at,
-                                   const b::ValidationHooks* __self) -> b::Status {
-            std::printf("    [trace] LAYER_EXTENTS at %llu, %u entries\n",
-                        static_cast<unsigned long long>(__at), __info.count);
-            // Forward down the chain; the conformance layer runs next.
-            if (__self->next != nullptr && __self->next->LAYER_EXTENTS != nullptr)
-                return __self->next->LAYER_EXTENTS(__info, __at, __self->next);
-            return {};
-        };
-        tracing.next = &conformance;
-        g_diagnostic.clear();
-
-        const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
-        const auto status = b::store(f.data(), 0, bad, &tracing);
-
-        CHECK(!status);
-        CHECK(status.code == b::Check::CONFORMANCE);
-        CHECK(!g_diagnostic.empty());
-        std::printf("layered store of zero-tile extents: traced, then %s.%s — %s\n",
-                    status.block, status.field, g_diagnostic.c_str());
-    }
-
-    if (g_failures) {
-        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            const auto status = b::store(f.data(), 0, bad, &tracing);
+            expect(!status, "the chain still rejects spec-violating input");
+            expect(status.code == b::Check::CONFORMANCE, "the rejection is a conformance failure");
+            expect(!why.empty(), "the conformance layer wrote through the shared sink");
+            std::printf("7. layered store of zero-tile extents: traced, then %s.%s\n",
+                        status.block, status.field);
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "validation_layer: FAILED — %s\n", e.what());
         return 1;
     }
+
     std::printf("validation_layer: all checks passed\n");
     return 0;
 }

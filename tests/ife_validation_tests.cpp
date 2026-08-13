@@ -40,21 +40,14 @@ using ::IFE::BYTE;
 namespace b = ::IFE::blocks;
 namespace k = ::IFE::constants;
 
-/// Collects what the layer says, so a test can assert the diagnostic cites its
-/// section rather than merely that something failed.
+/// Where the layer writes its diagnostic, so a test can assert it cites its
+/// section rather than merely that something failed. Cleared before each
+/// store; non-empty afterwards means the layer reported.
 std::string g_diagnostic;
-
-void collect(const char* message, void* user) {
-    ++*static_cast<int*>(user);
-    g_diagnostic = message;
-}
-
-int g_reports = 0;
 
 b::ValidationHooks attached() {
     b::ValidationHooks hooks = b::conformance_layer();   // a copy; the layer is shared
-    hooks.diagnostic = &collect;
-    hooks.user       = &g_reports;
+    hooks.diagnostic = &g_diagnostic;
     return hooks;
 }
 
@@ -79,14 +72,14 @@ std::vector<BYTE> buffer() { return std::vector<BYTE>(4096, 0); }
 
 void test_detached_costs_nothing_and_enforces_nothing() {
     auto f = buffer();
-    g_reports = 0;
+    g_diagnostic.clear();
 
     // Structurally valid, spec-violating. With no layer attached this stores
     // and reports success -- which is the point: conformance is not the
     // library's business unless an application asks for it.
     const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, bad)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 
     // And the block really is readable: the violation is semantic, not structural.
     const b::LAYER_EXTENTS written{f.data(), 0, f.size(), b::VERSION_WRITTEN};
@@ -98,7 +91,6 @@ void test_detached_costs_nothing_and_enforces_nothing() {
 void test_attached_enforces_a_range_clause() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
@@ -107,7 +99,7 @@ void test_attached_enforces_a_range_clause() {
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
     IFE_CHECK(std::strcmp(status.field, "X_TILES") == 0);
-    IFE_CHECK(g_reports == 1);
+    IFE_CHECK(!g_diagnostic.empty());
     // Each diagnostic cites the stable clause id the specification anchors --
     // not a section number, which is positional and would point confidently at
     // the wrong requirement after a renumbering. `--validate` proves the id
@@ -120,7 +112,6 @@ void test_attached_enforces_a_range_clause() {
 void test_attached_enforces_an_ordering_clause() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     const b::LayerExtentsCreateInfo bad{.entries = FLAT_SCALE, .count = 3};
@@ -142,7 +133,6 @@ void test_attached_enforces_an_ordering_clause() {
 void test_attached_enforces_enum_membership() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     // A value in the field's width but not in its declared domain.
@@ -157,7 +147,7 @@ void test_attached_enforces_enum_membership() {
     IFE_CHECK(g_diagnostic.find("ENCODING") != std::string::npos);
 
     // A declared member passes.
-    g_reports = 0;
+    g_diagnostic.clear();
     table.ENCODING = k::TileEncodings::TILE_ENCODING_JPEG;
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, table, &hooks)));
 
@@ -166,21 +156,21 @@ void test_attached_enforces_enum_membership() {
     // it on the specification's word, and the reserved IRIS value too.
     for (auto encoding : {k::TileEncodings::TILE_ENCODING_AVIF,
                           k::TileEncodings::TILE_ENCODING_IRIS}) {
-        g_reports = 0;
+        g_diagnostic.clear();
         table.ENCODING = encoding;
         IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, table, &hooks)));
-        IFE_CHECK(g_reports == 0);
+        IFE_CHECK(g_diagnostic.empty());
     }
 }
 
 void test_conformant_input_passes_with_the_layer_attached() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
+    g_diagnostic.clear();
 
     const b::LayerExtentsCreateInfo good{.entries = GOOD, .count = 3};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
-    IFE_CHECK(g_reports == 0);   // nothing to say about a conformant file
+    IFE_CHECK(g_diagnostic.empty());   // nothing to say about a conformant file
 }
 
 void test_a_block_without_clauses_is_untouched() {
@@ -211,15 +201,16 @@ void test_layers_chain() {
     };
 
     outer_calls = 0;
-    g_reports   = 0;
+    g_diagnostic.clear();
 
-    // The outer layer runs and delegates; the generated one still catches it.
+    // The outer layer runs and delegates; the generated one still catches it,
+    // writing through the sink attached to the generated copy.
     const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
     const auto status = b::store(f.data(), 0, bad, &tracing);
     IFE_CHECK(outer_calls == 1);
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
-    IFE_CHECK(g_reports == 1);
+    IFE_CHECK(!g_diagnostic.empty());
 }
 
 // FILE_HEADER's clauses are the two mandatory pointers, not an enum: a header
@@ -228,7 +219,6 @@ void test_layers_chain() {
 void test_attached_enforces_file_header_clauses() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     b::FileHeaderCreateInfo header{};
@@ -238,10 +228,9 @@ void test_attached_enforces_file_header_clauses() {
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
     IFE_CHECK(std::strcmp(status.field, "TILE_TABLE_OFFSET") == 0);
-    IFE_CHECK(g_reports == 1);
+    IFE_CHECK(!g_diagnostic.empty());
     IFE_CHECK(g_diagnostic.find("clause ife-file-header") != std::string::npos);
 
-    g_reports = 0;
     g_diagnostic.clear();
     header.TILE_TABLE_OFFSET = 64;
     header.METADATA_OFFSET   = ::IFE::constants::NULL_OFFSET;
@@ -251,16 +240,15 @@ void test_attached_enforces_file_header_clauses() {
     IFE_CHECK(std::strcmp(status2.field, "METADATA_OFFSET") == 0);
 
     // Both present: the layer has nothing to say.
-    g_reports = 0;
+    g_diagnostic.clear();
     header.METADATA_OFFSET = 128;
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, header, &hooks)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 }
 
 void test_attached_enforces_attribute_format_membership() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     // A value in the field's width but not in its declared domain.
@@ -271,16 +259,15 @@ void test_attached_enforces_attribute_format_membership() {
     IFE_CHECK(std::strcmp(status.field, "FORMAT") == 0);
     IFE_CHECK(g_diagnostic.find("clause ife-attributes") != std::string::npos);
 
-    g_reports = 0;
+    g_diagnostic.clear();
     const b::AttributesCreateInfo good{.FORMAT = k::MetadataFormats::METADATA_FREE_TEXT};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 }
 
 void test_attached_enforces_image_encoding_membership() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     // Designated initializers must follow declaration order, so the
@@ -297,7 +284,7 @@ void test_attached_enforces_image_encoding_membership() {
     IFE_CHECK(std::strcmp(status.field, "ENCODING") == 0);
     IFE_CHECK(g_diagnostic.find("clause ife-images") != std::string::npos);
 
-    g_reports = 0;
+    g_diagnostic.clear();
     const b::ImageEntry good_entries[1] = {{
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
         .ENCODING = k::ImageEncodings::IMAGE_ENCODING_JPEG,
@@ -305,13 +292,12 @@ void test_attached_enforces_image_encoding_membership() {
     }};
     const b::ImagesCreateInfo good{.entries = good_entries, .count = 1};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 }
 
 void test_attached_enforces_annotation_type_membership() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     const b::AnnotationEntry entries[1] = {{
@@ -326,7 +312,7 @@ void test_attached_enforces_annotation_type_membership() {
     IFE_CHECK(std::strcmp(status.field, "FORMAT") == 0);
     IFE_CHECK(g_diagnostic.find("clause ife-annotations") != std::string::npos);
 
-    g_reports = 0;
+    g_diagnostic.clear();
     const b::AnnotationEntry good_entries[1] = {{
         .IDENTIFIER = 1,
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
@@ -334,13 +320,12 @@ void test_attached_enforces_annotation_type_membership() {
     }};
     const b::AnnotationsCreateInfo good{.entries = good_entries, .count = 1};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 }
 
 void test_attached_enforces_clinical_encoding_membership() {
     auto f = buffer();
     auto hooks = attached();
-    g_reports = 0;
     g_diagnostic.clear();
 
     const b::ClinicalMetadataCreateInfo bad{
@@ -351,11 +336,11 @@ void test_attached_enforces_clinical_encoding_membership() {
     IFE_CHECK(std::strcmp(status.field, "ENCODING") == 0);
     IFE_CHECK(g_diagnostic.find("clause ife-clinical-metadata") != std::string::npos);
 
-    g_reports = 0;
+    g_diagnostic.clear();
     const b::ClinicalMetadataCreateInfo good{
         .ENCODING = k::ClinicalEncodings::CLINICAL_FASTFHIR};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
-    IFE_CHECK(g_reports == 0);
+    IFE_CHECK(g_diagnostic.empty());
 }
 
 }  // namespace
