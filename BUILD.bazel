@@ -1,0 +1,387 @@
+# BUILD.bazel — Bazel build for the Iris File Extension.
+#
+# Mirrors CMakeLists.txt target-for-target: the same sources, the same split
+# (the generated block layer lives inside the library; IFE_Validation.cpp is
+# deliberately OUTSIDE it, opt-in via :ife_validation), and the same
+# include-order guarantees for the version-gating tests. Requires Bazel 7+
+# (bzlmod). Differences forced by Bazel:
+#
+#   - generated_source/ is NEVER committed; a genrule runs generator/ at
+#     build time. Needs python3 on PATH, exactly like CMake's configure step.
+#   - Runfiles cannot hand a test a directory. The corpus tests receive the
+#     runfiles path of one corpus file and resolve its parent
+#     (tests/ife_corpus_path.hpp); ife_large_file_tests takes "-" for its
+#     writable directory, meaning $TEST_TMPDIR.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# tools/ is part of this (root) package; the corpus subpackage consumes the
+# fetcher script, which must be exported to cross the package boundary.
+exports_files(["tools/fetch_corpus.py"])
+
+# Bazel's MSVC wrapper doesn't translate -std=c++20 → /std:c++20, so pass
+# both (same workaround as FastFHIR/BUILD.bazel).
+_COPTS = ["-std=c++20"] + select({
+    "@bazel_tools//src/conditions:windows": ["/std:c++20"],
+    "//conditions:default": [],
+})
+
+# Iris-Headers' IRIS_EXPORT defaults to __declspec(dllimport) on MSVC
+# (IrisTypes.hpp collapses "not exporting" with "importing"). Every IFE
+# target links statically, so the import side must be neutralized — the
+# Bazel form of CMake's INTERFACE IRIS_EXPORT=. IFE_Export.hpp needs no
+# equivalent: its three-state logic already defaults to "static, no
+# attribute".
+_EXPORT_DEFINES = ["IRIS_EXPORT="]
+
+# ── Generated serialization layer ──────────────────────────────────────────
+# spec/*.json is the single source of truth; generated_source/ is gitignored.
+# The generator is stdlib-only Python. A spec or generator change re-runs the
+# genrule — the same drift the CI `python3 -m generator --check` job gates.
+genrule(
+    name = "generated_sources",
+    srcs = glob(["spec/ife_*.json"]) + glob(["generator/**/*.py"]),
+    outs = [
+        "generated_source/IFE_Constants.hpp",
+        "generated_source/IFE_VTables.hpp",
+        "generated_source/IFE_Blocks.hpp",
+        "generated_source/IFE_Blocks.cpp",
+        "generated_source/IFE_Validation.hpp",
+        "generated_source/IFE_Validation.cpp",
+    ],
+    # The genrule's cwd is the workspace root, so `python3 -m generator`
+    # resolves; the schema dir is spelled out so nothing depends on that.
+    # python3 or python: GitHub's Windows runners ship python, not python3;
+    # every other runner has python3. The generator is stdlib-only.
+    cmd = "PY=$$(command -v python3 || command -v python); " +
+          "$$PY -m generator " +
+          "--schema-dir $$(dirname $(location spec/ife_header.json)) " +
+          "--out-dir $(RULEDIR)/generated_source " +
+          "--docs-dir $(RULEDIR)/generated_docs",
+)
+
+filegroup(
+    name = "src_headers",
+    srcs = [
+        "src/IrisFileExtension.hpp",
+        "src/IFE_Export.hpp",
+        "src/IFE_Runtime.hpp",
+        "src/IFE_Bytes.hpp",
+        "src/IFE_Window.hpp",
+    ],
+)
+
+filegroup(
+    name = "generated_headers",
+    srcs = [
+        "generated_source/IFE_Constants.hpp",
+        "generated_source/IFE_VTables.hpp",
+        "generated_source/IFE_Blocks.hpp",
+    ],
+)
+
+# ── Core library ────────────────────────────────────────────────────────────
+# The static equivalent of CMake's IrisFileExtensionLib: IFE_Runtime.cpp,
+# IFE_Window.cpp, the generated block layer, and exactly the two Iris-Headers
+# sources IFE consumes. IFE_Validation.cpp stays out — see :ife_validation.
+cc_library(
+    name = "ife",
+    srcs = [
+        "src/IFE_Runtime.cpp",
+        "src/IFE_Window.cpp",
+        "generated_source/IFE_Blocks.cpp",
+    ],
+    hdrs = [":src_headers", ":generated_headers"],
+    copts = _COPTS,
+    defines = _EXPORT_DEFINES,
+    includes = ["src", "generated_source"],
+    deps = [
+        "@iris_headers//:iris_headers",
+        "@iris_headers//:iris_buffer",
+        "@iris_headers//:iris_memory",
+    ],
+)
+
+# The conformance layer, outside the library exactly as in CMake: an
+# application links :ife_validation only when it wants validation.
+cc_library(
+    name = "ife_validation",
+    srcs = [
+        "generated_source/IFE_Validation.cpp",
+        "generated_source/IFE_Blocks.cpp",
+    ],
+    hdrs = [
+        # :src_headers is required even though validation never includes a
+        # src header directly: the generated IFE_Blocks.hpp includes
+        # "IFE_Bytes.hpp", and every included file must be a declared input.
+        ":src_headers",
+        ":generated_headers",
+        "generated_source/IFE_Validation.hpp",
+    ],
+    copts = _COPTS,
+    includes = ["src", "generated_source"],
+    deps = ["@iris_headers//:iris_headers"],
+)
+
+# ── Conformance corpus ──────────────────────────────────────────────────────
+# Lives in tests/corpus/BUILD.bazel (its own package, so the test data/args
+# labels //tests/corpus:... resolve naturally).
+
+# ── Future-version fixture (version-gating tests) ───────────────────────────
+# The real spec is 1.1-only, so the since-mechanism compiles but never runs.
+# tests/fixtures/build_future_spec.py injects two fields and bumps the
+# version to 200.0; the layer generated from it is what the gating tests
+# compile against (CMake does the same at configure time). Both genrules
+# live in the root package, so they share $(RULEDIR) and the second can name
+# the first's output directory directly.
+genrule(
+    name = "future_spec",
+    srcs = [
+        "tests/fixtures/build_future_spec.py",
+        "spec/ife_fields.json",
+        "spec/ife_constants.json",
+        "spec/ife_header.json",
+    ],
+    outs = [
+        "tests/fixtures/future_versioning/ife_fields.json",
+        "tests/fixtures/future_versioning/ife_constants.json",
+        "tests/fixtures/future_versioning/ife_header.json",
+        "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
+    ],
+    cmd = "python3 $(location tests/fixtures/build_future_spec.py) " +
+          "$$(dirname $(location spec/ife_header.json)) " +
+          "$(RULEDIR)/tests/fixtures/future_versioning",
+)
+
+genrule(
+    name = "future_generated",
+    # generator/ must be declared: a genrule's sandbox contains exactly its
+    # inputs, and `python3 -m generator` resolves the package from the cwd.
+    srcs = [":future_spec"] + glob(["generator/**/*.py"]),
+    outs = [
+        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
+        "tests/fixtures/future_versioning/generated/IFE_Validation.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Validation.cpp",
+    ],
+    cmd = "PY=$$(command -v python3 || command -v python); " +
+          "$$PY -m generator " +
+          "--schema-dir $(RULEDIR)/tests/fixtures/future_versioning " +
+          "--out-dir $(RULEDIR)/tests/fixtures/future_versioning/generated " +
+          "--docs-dir $(RULEDIR)/tests/fixtures/future_versioning/generated_docs",
+)
+
+# ── Tests ───────────────────────────────────────────────────────────────────
+# Include order mirrors CMake exactly, and matters: the PRODUCTION generated
+# dir precedes the FIXTURE generated dir, so "IFE_Blocks.hpp" resolves to the
+# 1.1 layer in the backward test while the forward test sees only the 200.0
+# layer.
+
+# IFE_Blocks.hpp textually #includes its own .cpp under IFE_HEADER_ONLY, so
+# that .cpp must be an INPUT of the header-only test's compile action without
+# ever being compiled itself. A hdrs-only library (no srcs) declares exactly
+# that: files for dependents, nothing to build.
+cc_library(
+    name = "ife_header_only_inputs",
+    hdrs = [
+        ":src_headers",
+        ":generated_headers",
+        "generated_source/IFE_Blocks.cpp",
+    ],
+)
+
+# Scalar load/store primitives: the only place byte order and the packed
+# widths appear. Header-only — deliberately NOT linked against :ife.
+cc_test(
+    name = "ife_bytes_tests",
+    srcs = [
+        "tests/ife_bytes_tests.cpp",
+        ":src_headers",
+        ":generated_headers",
+    ],
+    copts = _COPTS,
+    includes = ["src", "generated_source"],
+    deps = ["@iris_headers//:iris_headers"],
+)
+
+cc_test(
+    name = "ife_blocks_tests",
+    srcs = ["tests/ife_blocks_tests.cpp"],
+    copts = _COPTS,
+    deps = [":ife"],
+)
+
+# The same test compiled with IFE_HEADER_ONLY: IFE_Blocks.hpp #includes its
+# own .cpp, so the file must be an input even though it is never compiled
+# standalone — and :ife must NOT be linked (its compiled block layer would
+# collide with the header-included definitions). :ife_header_only_inputs
+# declares the files without compiling any of them.
+cc_test(
+    name = "ife_blocks_header_only_tests",
+    srcs = ["tests/ife_blocks_tests.cpp"],
+    copts = _COPTS,
+    local_defines = ["IFE_HEADER_ONLY"],
+    includes = ["src", "generated_source"],
+    deps = [
+        ":ife_header_only_inputs",
+        "@iris_headers//:iris_headers",
+    ],
+)
+
+cc_test(
+    name = "ife_window_tests",
+    srcs = ["tests/ife_window_tests.cpp"],
+    copts = _COPTS,
+    deps = [":ife"],
+)
+
+# The public API end to end, against the fetched snapshot.
+cc_test(
+    name = "ife_runtime_tests",
+    srcs = [
+        "tests/ife_runtime_tests.cpp",
+        "tests/ife_v1_fixture.hpp",
+        "tests/ife_corpus_path.hpp",
+    ],
+    copts = _COPTS,
+    deps = [":ife"],
+    data = ["//tests/corpus:v1_snapshot.test_slide"],
+    # Bazel cannot pass a directory; the test receives the runfiles path of
+    # one corpus file and ife_corpus_dir() resolves its parent.
+    args = ["$(rootpath //tests/corpus:v1_snapshot.test_slide)"],
+)
+
+# The v1 oracle: bytes written by the SHIPPED encoder, read back through the
+# generated layer. Needs :ife's STORE_* to run, not merely its headers.
+cc_test(
+    name = "ife_v1_oracle_tests",
+    srcs = [
+        "tests/ife_v1_oracle_tests.cpp",
+        "tests/ife_v1_fixture.cpp",
+        "tests/ife_v1_fixture.hpp",
+        "tests/ife_corpus_path.hpp",
+    ],
+    copts = _COPTS,
+    deps = [":ife"],
+    data = [
+        "//tests/corpus:v1_snapshot.test_slide",
+        "//tests/corpus:v1_tile_offsets_full_width.bin",
+    ],
+    args = ["$(rootpath //tests/corpus:v1_snapshot.test_slide)"],
+)
+
+# A whole slide larger than 4 GiB. 64-bit hosts only, same as CMake.
+cc_test(
+    name = "ife_large_file_tests",
+    srcs = [
+        "tests/ife_large_file_tests.cpp",
+        "tests/ife_corpus_path.hpp",
+    ],
+    copts = _COPTS,
+    deps = [":ife"],
+    data = ["//tests/corpus:v1_snapshot.test_slide"],
+    # "-" → $TEST_TMPDIR (see main()); corpus as in the other tests.
+    args = [
+        "-",
+        "$(rootpath //tests/corpus:v1_snapshot.test_slide)",
+    ],
+)
+
+cc_test(
+    name = "ife_validation_tests",
+    srcs = ["tests/ife_validation_tests.cpp"],
+    copts = _COPTS,
+    deps = [":ife_validation"],
+)
+
+# Forward direction: the 200.0 build reads 1.0 and 200.0 files. This test's
+# include path sees ONLY the fixture layer — the production generated dir is
+# absent on purpose.
+cc_test(
+    name = "ife_version_gating_tests",
+    srcs = [
+        "tests/ife_version_gating_tests.cpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
+        ":src_headers",
+        "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
+    ],
+    copts = _COPTS,
+    # CMake include order: src, fixture generated, fixture root.
+    includes = [
+        "src",
+        "tests/fixtures/future_versioning/generated",
+        "tests/fixtures/future_versioning",
+    ],
+    deps = ["@iris_headers//:iris_headers"],
+)
+
+# Backward direction: the production 1.1 build reads the same 200.0 file.
+# Production generated dir FIRST, so IFE_Blocks.hpp is the 1.1 layer; the
+# fixture layer stays reachable for the file it must still read.
+cc_test(
+    name = "ife_version_gating_backward_tests",
+    srcs = [
+        "tests/ife_version_gating_backward_tests.cpp",
+        "generated_source/IFE_Blocks.cpp",
+        ":src_headers",
+        ":generated_headers",
+        "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
+    ],
+    copts = _COPTS,
+    includes = [
+        "src",
+        "generated_source",
+        "tests/fixtures/future_versioning/generated",
+        "tests/fixtures/future_versioning",
+    ],
+    deps = ["@iris_headers//:iris_headers"],
+)
+
+# ── Examples ────────────────────────────────────────────────────────────────
+cc_binary(
+    name = "slide_info_abstraction",
+    srcs = ["examples/slide_info_abstraction.cpp"],
+    copts = _COPTS,
+    defines = ["BUILD_EXAMPLES_TEST"],
+    deps = [":ife"],
+)
+
+cc_binary(
+    name = "ife_example_validation",
+    srcs = ["examples/validation_layer.cpp"],
+    copts = _COPTS,
+    defines = ["BUILD_EXAMPLES_TEST"],
+    deps = [":ife_validation"],
+)
+
+# Compiles the runtime itself — IFE_USE_RUNTIME changes how IFE_Runtime.cpp
+# compiles, so the sources cannot come from :ife.
+cc_binary(
+    name = "ife_example_runtime",
+    srcs = [
+        "examples/slide_info_abstraction.cpp",
+        "src/IFE_Runtime.cpp",
+        "src/IFE_Window.cpp",
+        "generated_source/IFE_Blocks.cpp",
+        ":src_headers",
+        ":generated_headers",
+    ],
+    copts = _COPTS,
+    defines = _EXPORT_DEFINES,
+    local_defines = ["IFE_USE_RUNTIME"],
+    includes = ["src", "generated_source"],
+    deps = [
+        "@iris_headers//:iris_headers",
+        "@iris_headers//:iris_buffer",
+        "@iris_headers//:iris_memory",
+    ],
+)

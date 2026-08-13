@@ -1,6 +1,9 @@
-# Build trees.  The glob rather than three literals: -asan, -xcode and whatever
-# the next configuration is called all belong here.
-/build*
+# Build trees.  The two globs rather than literals: -asan, -xcode and whatever
+# the next configuration is called all belong here.  Deliberately NOT /build*:
+# git folds case on case-insensitive filesystems (macOS APFS), so that pattern
+# also swallows the root BUILD.bazel and the file never gets committed.
+/build/
+/build-*/
 
 # Bazel convenience symlinks (see .bazelrc --symlink_prefix). MODULE.bazel.lock
 # is committed on purpose: it pins the resolved module graph.
