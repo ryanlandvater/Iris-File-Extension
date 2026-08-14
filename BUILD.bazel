@@ -21,11 +21,13 @@ package(default_visibility = ["//visibility:public"])
 # fetcher script, which must be exported to cross the package boundary.
 exports_files(["tools/fetch_corpus.py"])
 
-# Bazel's MSVC wrapper doesn't translate -std=c++20 → /std:c++20, so pass
-# both (same workaround as FastFHIR/BUILD.bazel).
-_COPTS = ["-std=c++20"] + select({
+# Bazel's MSVC wrapper does not translate -std=c++20 → /std:c++20, so the
+# Windows leg must name it explicitly. Pass exactly one flag per platform:
+# both together make cl.exe warn (D9002 ignores -std=..., D9025 then
+# overrides the /std:c++17 default).
+_COPTS = select({
     "@bazel_tools//src/conditions:windows": ["/std:c++20"],
-    "//conditions:default": [],
+    "//conditions:default": ["-std=c++20"],
 })
 
 # Iris-Headers' IRIS_EXPORT defaults to __declspec(dllimport) on MSVC
@@ -248,11 +250,14 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
-    deps = [":ife"],
+    deps = [":ife", "@rules_cc//cc/runfiles"],
     data = ["//tests/corpus:v1_snapshot.test_slide"],
-    # Bazel cannot pass a directory; the test receives the runfiles path of
-    # one corpus file and ife_corpus_dir() resolves its parent.
-    args = ["$(rootpath //tests/corpus:v1_snapshot.test_slide)"],
+    # Bazel cannot pass a directory, and Windows tests have no runfiles tree
+    # (manifest-only mode) — so pass the manifest-style path and resolve it
+    # through the runfiles library in ife_corpus_dir(). "_main" is the main
+    # repo's runfiles directory name under bzlmod.
+    local_defines = ["IFE_BAZEL_RUNFILES"],
+    args = ["_main/tests/corpus/v1_snapshot.test_slide"],
 )
 
 # The v1 oracle: bytes written by the SHIPPED encoder, read back through the
@@ -266,12 +271,15 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
-    deps = [":ife"],
+    deps = [":ife", "@rules_cc//cc/runfiles"],
     data = [
         "//tests/corpus:v1_snapshot.test_slide",
         "//tests/corpus:v1_tile_offsets_full_width.bin",
     ],
-    args = ["$(rootpath //tests/corpus:v1_snapshot.test_slide)"],
+    # Manifest-style path resolved via the runfiles library (see
+    # ife_runtime_tests); "_main" is the main repo under bzlmod.
+    local_defines = ["IFE_BAZEL_RUNFILES"],
+    args = ["_main/tests/corpus/v1_snapshot.test_slide"],
 )
 
 # A whole slide larger than 4 GiB. 64-bit hosts only, same as CMake.
@@ -282,12 +290,14 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
-    deps = [":ife"],
+    deps = [":ife", "@rules_cc//cc/runfiles"],
     data = ["//tests/corpus:v1_snapshot.test_slide"],
-    # "-" → $TEST_TMPDIR (see main()); corpus as in the other tests.
+    # "-" → $TEST_TMPDIR (see main()); corpus manifest path resolved via the
+    # runfiles library like the other corpus tests.
+    local_defines = ["IFE_BAZEL_RUNFILES"],
     args = [
         "-",
-        "$(rootpath //tests/corpus:v1_snapshot.test_slide)",
+        "_main/tests/corpus/v1_snapshot.test_slide",
     ],
 )
 
