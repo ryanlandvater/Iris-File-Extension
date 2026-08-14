@@ -5,6 +5,8 @@
 # from iris.exampleslides.org, so it must not run inside the
 # network-restricting sandbox; Bazel's action cache still makes repeat
 # builds a no-op, and the script's own digest cache verifies every byte.
+load("//:python_resolve.bzl", "PYTHON_RESOLVE")
+
 package(default_visibility = ["//visibility:public"])
 
 genrule(
@@ -17,7 +19,7 @@ genrule(
         "v1_snapshot.test_slide",
         "v1_tile_offsets_full_width.bin",
     ],
-    cmd = "PY=$$(command -v python3 || command -v python); " +
+    cmd = PYTHON_RESOLVE +
           "$$PY $(location //:tools/fetch_corpus.py) " +
           "--manifest $(location :manifest.json) " +
           "--dest $(RULEDIR)",

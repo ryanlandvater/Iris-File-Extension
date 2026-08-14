@@ -11,7 +11,7 @@
  * the code under test agree about layout by construction — what is being
  * checked here is the *reading and validation logic*, not the offsets. The
  * offsets are pinned separately, against the shipped implementation, by
- * ife_wire_parity_tests.cpp.
+ * ife_v1_oracle_tests.cpp.
  *
  * Self-contained; non-zero exit on failure.
  */

@@ -46,7 +46,9 @@ suite (`BUILD.bazel`). `generated_source/` is regenerated at build time from
 checkout next to this repository (see `MODULE.bazel`).
 
 ```shell
+git clone https://github.com/IrisDigitalPathology/Iris-File-Extension.git
 git clone https://github.com/IrisDigitalPathology/Iris-Headers.git
+cd Iris-File-Extension
 bazel test //... --test_output=errors
 ```
 

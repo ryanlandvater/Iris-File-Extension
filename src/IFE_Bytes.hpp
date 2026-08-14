@@ -237,8 +237,8 @@ inline void store_u40(BYTE* __p, std::uint64_t v) noexcept {
 // to even, as IEEE requires. The generated ORIENTATION_* constants are emitted
 // as float literals so a caller can compare an accessor result against them
 // directly. Both conversions are constexpr so that comparison can also happen
-// at compile time — ife_wire_parity_tests pins the ORIENTATION_* literals to
-// the binary16 patterns v1 published, which is a static_assert only if the
+// at compile time — tests/ife_bytes_tests.cpp pins the ORIENTATION_* literals
+// to the binary16 patterns v1 published, which is a static_assert only if the
 // rounding runs during constant evaluation.
 
 /// Convert an IEEE binary16 bit pattern to `float`. Exact for every input,

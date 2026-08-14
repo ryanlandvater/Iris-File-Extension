@@ -13,6 +13,7 @@
 #     (tests/ife_corpus_path.hpp); ife_large_file_tests takes "-" for its
 #     writable directory, meaning $TEST_TMPDIR.
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("//:python_resolve.bzl", "PYTHON_RESOLVE")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -52,9 +53,9 @@ genrule(
     ],
     # The genrule's cwd is the workspace root, so `python3 -m generator`
     # resolves; the schema dir is spelled out so nothing depends on that.
-    # python3 or python: GitHub's Windows runners ship python, not python3;
-    # every other runner has python3. The generator is stdlib-only.
-    cmd = "PY=$$(command -v python3 || command -v python); " +
+    # The generator is stdlib-only; the interpreter is resolved by
+    # //:python_resolve.bzl (guards against the Windows Store-stub trap).
+    cmd = PYTHON_RESOLVE +
           "$$PY -m generator " +
           "--schema-dir $$(dirname $(location spec/ife_header.json)) " +
           "--out-dir $(RULEDIR)/generated_source " +
@@ -167,7 +168,7 @@ genrule(
         "tests/fixtures/future_versioning/generated/IFE_Validation.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Validation.cpp",
     ],
-    cmd = "PY=$$(command -v python3 || command -v python); " +
+    cmd = PYTHON_RESOLVE +
           "$$PY -m generator " +
           "--schema-dir $(RULEDIR)/tests/fixtures/future_versioning " +
           "--out-dir $(RULEDIR)/tests/fixtures/future_versioning/generated " +

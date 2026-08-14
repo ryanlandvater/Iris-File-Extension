@@ -101,9 +101,11 @@ jobs:
           repository-cache: true
       # Explicit bash: PowerShell mangles the // in target patterns on
       # Windows (documented setup-bazel Windows issue).
+      # --verbose_failures: a failing genrule's command line and output must
+      # reach the log — the runner truncates the bare action summary line.
       - name: Build and test
         shell: bash
-        run: bazel test //... --test_output=errors
+        run: bazel test //... --test_output=errors --verbose_failures
 
   sanitizers:
     name: address and undefined behaviour

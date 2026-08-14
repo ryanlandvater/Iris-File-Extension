@@ -28,7 +28,7 @@
  * what ftruncate gives POSIX for free — so Windows no longer needs its own
  * gate.
  *
- * Usage: ife_large_file_tests <writable-directory>
+ * Usage: ife_large_file_tests <writable-directory> <corpus-dir>
  */
 // POSIX-only: every use of these headers sits in an #else branch below, and
 // MSVC has no sys/mman.h or sys/stat.h. Left over from the pre-MemoryArena
@@ -142,12 +142,14 @@ std::uint64_t file_allocated_bytes(const std::string& __path,
     if (__base) FlushViewOfFile(__base, __len);
     DWORD high = 0;
     const DWORD low = GetCompressedFileSizeA(__path.c_str(), &high);
-    if (low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR) return 0;
+    if (low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR)
+        return ~std::uint64_t{0};   // fail the sparseness bound loudly, not vacuously
     return (static_cast<std::uint64_t>(high) << 32) | low;
 #else
     if (__base) ::msync(__base, __len, MS_SYNC);
     struct stat st {};
-    if (::stat(__path.c_str(), &st) != 0) return 0;
+    if (::stat(__path.c_str(), &st) != 0)
+        return ~std::uint64_t{0};   // fail the sparseness bound loudly, not vacuously
     return static_cast<std::uint64_t>(st.st_blocks) * 512ull;
 #endif
 }

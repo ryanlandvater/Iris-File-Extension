@@ -1600,10 +1600,9 @@ The original task description follows, for the record.
       `:1687-1732`);
       `stride() > entry_size` forward-compat read; a synthetic `1.1` field
       group added to a **copy** of the spec under `tests/fixtures/` to exercise
-   x] **Version-gating test (the core feature — do not skip) — done
+- [x] **Version-gating test (the core feature — do not skip) — done
       (2026-08-12): `ife_version_gating_tests` + `ife_version_gating_backward_tests`
-      in the suite (both green
-- [ ] **Version-gating test (the core feature — do not skip).** Against the
+      in the suite, both green.** Against the
       `1.1` fixture assert, in order: a 1.0 file read by the 1.1 build returns
       empty `std::optional` for every 1.1 field and correct values for every
       1.0 field; a 1.1 file read by the same build returns both; a 1.1 file
