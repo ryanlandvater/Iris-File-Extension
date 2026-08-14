@@ -206,6 +206,7 @@ cc_test(
         ":generated_headers",
     ],
     copts = _COPTS,
+    size = "small",
     includes = ["src", "generated_source"],
     deps = ["@iris_headers//:iris_headers"],
 )
@@ -214,6 +215,7 @@ cc_test(
     name = "ife_blocks_tests",
     srcs = ["tests/ife_blocks_tests.cpp"],
     copts = _COPTS,
+    size = "small",
     deps = [":ife"],
 )
 
@@ -226,6 +228,7 @@ cc_test(
     name = "ife_blocks_header_only_tests",
     srcs = ["tests/ife_blocks_tests.cpp"],
     copts = _COPTS,
+    size = "small",
     local_defines = ["IFE_HEADER_ONLY"],
     includes = ["src", "generated_source"],
     deps = [
@@ -238,6 +241,7 @@ cc_test(
     name = "ife_window_tests",
     srcs = ["tests/ife_window_tests.cpp"],
     copts = _COPTS,
+    size = "small",
     deps = [":ife"],
 )
 
@@ -250,6 +254,7 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
+    size = "small",
     deps = [":ife", "@rules_cc//cc/runfiles"],
     data = ["//tests/corpus:v1_snapshot.test_slide"],
     # Bazel cannot pass a directory, and Windows tests have no runfiles tree
@@ -271,6 +276,7 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
+    size = "small",
     deps = [":ife", "@rules_cc//cc/runfiles"],
     data = [
         "//tests/corpus:v1_snapshot.test_slide",
@@ -290,6 +296,7 @@ cc_test(
         "tests/ife_corpus_path.hpp",
     ],
     copts = _COPTS,
+    size = "small",
     deps = [":ife", "@rules_cc//cc/runfiles"],
     data = ["//tests/corpus:v1_snapshot.test_slide"],
     # "-" → $TEST_TMPDIR (see main()); corpus manifest path resolved via the
@@ -305,6 +312,7 @@ cc_test(
     name = "ife_validation_tests",
     srcs = ["tests/ife_validation_tests.cpp"],
     copts = _COPTS,
+    size = "small",
     deps = [":ife_validation"],
 )
 
@@ -323,6 +331,7 @@ cc_test(
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
     ],
     copts = _COPTS,
+    size = "small",
     # CMake include order: src, fixture generated, fixture root.
     includes = [
         "src",
@@ -348,6 +357,7 @@ cc_test(
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
     ],
     copts = _COPTS,
+    size = "small",
     includes = [
         "src",
         "generated_source",

@@ -248,7 +248,6 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     const auto an = md.annotations_offset();
     IFE_CHECK(static_cast<bool>(an));
     IFE_CHECK(an.count() == expected.annotations.size());
-    constexpr std::uint32_t PARENT_NONE = v1_fixture::NULL_ANNOTATION_ID;
     for (std::size_t i = 0; i < expected.annotations.size(); ++i) {
         const auto& spec = expected.annotations[i];
         const auto e = an.entry(i);

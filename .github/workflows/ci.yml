@@ -38,7 +38,7 @@ jobs:
     name: spec documents and drift
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python3 -m generator --validate
       - run: python3 -m generator
       - run: python3 -m generator --check
@@ -60,7 +60,7 @@ jobs:
           - {os: macos-latest, compiler: AppleClang}
           - {os: windows-latest, compiler: MSVC}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The configuration is named three times on purpose. Visual Studio is a
       # multi-config generator: it ignores CMAKE_BUILD_TYPE and picks a
       # configuration when it builds and again when it tests. Omit --config
@@ -85,7 +85,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # MODULE.bazel resolves Iris-Headers via local_path_override
       # ../Iris-Headers (the sibling-checkout layout of local development);
       # CI materializes exactly that layout. Plain git, not actions/checkout:
@@ -115,7 +115,7 @@ jobs:
     name: address and undefined behaviour
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure with ASan + UBSan
         run: >
           cmake -B build-asan -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
@@ -129,7 +129,7 @@ jobs:
     name: specification document
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
@@ -143,7 +143,7 @@ jobs:
       - name: Build HTML and PDF
         run: spec/build_document.sh "$GITHUB_WORKSPACE/build/doc"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ife-specification
           path: build/doc/
@@ -152,8 +152,8 @@ jobs:
     name: emscripten (the residency branch)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: mymindstorm/setup-emsdk@v14
+      - uses: actions/checkout@v7
+      - uses: mymindstorm/setup-emsdk@v16
 
       # src/IFE_Window.cpp holds the project's only __EMSCRIPTEN__ branch, and
       # no other job compiles it: every native build takes the other side of
@@ -171,8 +171,8 @@ jobs:
     name: big-endian (s390x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4.2.0
         with:
           platforms: s390x
 
