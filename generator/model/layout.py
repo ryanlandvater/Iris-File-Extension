@@ -194,6 +194,12 @@ class BlockLayout:
     # gated off. With today's spec both are exactly (("1.0", <total>),).
     header_sizes: tuple[tuple[str, int], ...] = ()
     entry_sizes: tuple[tuple[str, int], ...] = ()
+    # Written from key/value pairs: the writer derives both the sizes array
+    # and the packed byte run from a single `vector<pair<string,string>>`,
+    # so the slicing cannot drift from the bytes it describes. Declared in
+    # the schema ("from_pairs": true) -- a writer-convenience marker, not a
+    # statement about the wire layout.
+    from_pairs: bool = False
 
 
 @dataclass(frozen=True)
@@ -481,6 +487,7 @@ def derive_layout(fields_doc: dict[str, Any], constants_doc: dict[str, Any]) -> 
             entry_fields=entry_fields,
             header_sizes=tuple(header_sizes),
             entry_sizes=tuple(entry_sizes),
+            from_pairs=spec.get("from_pairs", False),
         )
 
     return LayoutResult(primitives=primitives, blocks=blocks)

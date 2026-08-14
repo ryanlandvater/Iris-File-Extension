@@ -46,10 +46,7 @@ genrule(
     name = "generated_sources",
     srcs = glob(["spec/ife_*.json"]) + glob(["generator/**/*.py"]),
     outs = [
-        "generated_source/IFE_Constants.hpp",
-        "generated_source/IFE_VTables.hpp",
         "generated_source/IFE_Blocks.hpp",
-        "generated_source/IFE_Blocks.cpp",
         "generated_source/IFE_Validation.hpp",
         "generated_source/IFE_Validation.cpp",
     ],
@@ -67,19 +64,15 @@ genrule(
 filegroup(
     name = "src_headers",
     srcs = [
-        "src/IrisFileExtension.hpp",
-        "src/IFE_Export.hpp",
-        "src/IFE_Runtime.hpp",
-        "src/IFE_Bytes.hpp",
-        "src/IFE_Window.hpp",
+        "include/IrisFileExtension.hpp",
+        "include/IFE_Runtime.hpp",
+        "include/IFE_Bytes.hpp",
     ],
 )
 
 filegroup(
     name = "generated_headers",
     srcs = [
-        "generated_source/IFE_Constants.hpp",
-        "generated_source/IFE_VTables.hpp",
         "generated_source/IFE_Blocks.hpp",
     ],
 )
@@ -93,12 +86,11 @@ cc_library(
     srcs = [
         "src/IFE_Runtime.cpp",
         "src/IFE_Window.cpp",
-        "generated_source/IFE_Blocks.cpp",
     ],
     hdrs = [":src_headers", ":generated_headers"],
     copts = _COPTS,
     defines = _EXPORT_DEFINES,
-    includes = ["src", "generated_source"],
+    includes = ["include", "generated_source"],
     deps = [
         "@iris_headers//:iris_headers",
         "@iris_headers//:iris_buffer",
@@ -112,7 +104,6 @@ cc_library(
     name = "ife_validation",
     srcs = [
         "generated_source/IFE_Validation.cpp",
-        "generated_source/IFE_Blocks.cpp",
     ],
     hdrs = [
         # :src_headers is required even though validation never includes a
@@ -123,7 +114,7 @@ cc_library(
         "generated_source/IFE_Validation.hpp",
     ],
     copts = _COPTS,
-    includes = ["src", "generated_source"],
+    includes = ["include", "generated_source"],
     deps = ["@iris_headers//:iris_headers"],
 )
 
@@ -163,10 +154,7 @@ genrule(
     # inputs, and `python3 -m generator` resolves the package from the cwd.
     srcs = [":future_spec"] + glob(["generator/**/*.py"]),
     outs = [
-        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
         "tests/fixtures/future_versioning/generated/IFE_Validation.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Validation.cpp",
     ],
@@ -192,7 +180,6 @@ cc_library(
     hdrs = [
         ":src_headers",
         ":generated_headers",
-        "generated_source/IFE_Blocks.cpp",
     ],
 )
 
@@ -207,7 +194,7 @@ cc_test(
     ],
     copts = _COPTS,
     size = "small",
-    includes = ["src", "generated_source"],
+    includes = ["include", "generated_source"],
     deps = ["@iris_headers//:iris_headers"],
 )
 
@@ -219,18 +206,18 @@ cc_test(
     deps = [":ife"],
 )
 
-# The same test compiled with IFE_HEADER_ONLY: IFE_Blocks.hpp #includes its
-# own .cpp, so the file must be an input even though it is never compiled
-# standalone — and :ife must NOT be linked (its compiled block layer would
-# collide with the header-included definitions). :ife_header_only_inputs
-# declares the files without compiling any of them.
+# The same test compiled without linking :ife: the block layer is
+# header-only by design, so every definition is inline in IFE_Blocks.hpp and
+# the test must pass without the compiled library's symbols. IFE_HEADER_ONLY
+# is accepted for compatibility but is now a no-op — there is no .cpp to
+# fold in.
 cc_test(
     name = "ife_blocks_header_only_tests",
     srcs = ["tests/ife_blocks_tests.cpp"],
     copts = _COPTS,
     size = "small",
     local_defines = ["IFE_HEADER_ONLY"],
-    includes = ["src", "generated_source"],
+    includes = ["include", "generated_source"],
     deps = [
         ":ife_header_only_inputs",
         "@iris_headers//:iris_headers",
@@ -297,6 +284,22 @@ cc_test(
     ],
     copts = _COPTS,
     size = "small",
+    # 64-bit hosts only (a 32-bit address space cannot map 4 GiB) — the Bazel
+    # form of CMake's CMAKE_SIZEOF_VOID_P gate. select() has no pointer-size
+    # test, so allowlist the 64-bit @platforms//cpu values and let everything
+    # else (all 32-bit cpus, unknown cpus) fail closed.
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "@platforms//cpu:aarch64": [],
+        "@platforms//cpu:arm64": [],
+        "@platforms//cpu:arm64e": [],
+        "@platforms//cpu:mips64": [],
+        "@platforms//cpu:ppc64le": [],
+        "@platforms//cpu:riscv64": [],
+        "@platforms//cpu:s390x": [],
+        "@platforms//cpu:wasm64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     deps = [":ife", "@rules_cc//cc/runfiles"],
     data = ["//tests/corpus:v1_snapshot.test_slide"],
     # "-" → $TEST_TMPDIR (see main()); corpus manifest path resolved via the
@@ -323,18 +326,15 @@ cc_test(
     name = "ife_version_gating_tests",
     srcs = [
         "tests/ife_version_gating_tests.cpp",
-        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
         ":src_headers",
         "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
     ],
     copts = _COPTS,
     size = "small",
-    # CMake include order: src, fixture generated, fixture root.
+    # CMake include order: include, fixture generated, fixture root.
     includes = [
-        "src",
+        "include",
         "tests/fixtures/future_versioning/generated",
         "tests/fixtures/future_versioning",
     ],
@@ -348,18 +348,15 @@ cc_test(
     name = "ife_version_gating_backward_tests",
     srcs = [
         "tests/ife_version_gating_backward_tests.cpp",
-        "generated_source/IFE_Blocks.cpp",
         ":src_headers",
         ":generated_headers",
         "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_Constants.hpp",
-        "tests/fixtures/future_versioning/generated/IFE_VTables.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
     ],
     copts = _COPTS,
     size = "small",
     includes = [
-        "src",
+        "include",
         "generated_source",
         "tests/fixtures/future_versioning/generated",
         "tests/fixtures/future_versioning",
@@ -392,14 +389,13 @@ cc_binary(
         "examples/slide_info_abstraction.cpp",
         "src/IFE_Runtime.cpp",
         "src/IFE_Window.cpp",
-        "generated_source/IFE_Blocks.cpp",
         ":src_headers",
         ":generated_headers",
     ],
     copts = _COPTS,
     defines = _EXPORT_DEFINES,
     local_defines = ["IFE_USE_RUNTIME"],
-    includes = ["src", "generated_source"],
+    includes = ["include", "generated_source"],
     deps = [
         "@iris_headers//:iris_headers",
         "@iris_headers//:iris_buffer",

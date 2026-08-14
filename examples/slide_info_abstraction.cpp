@@ -109,7 +109,8 @@
              << "\t Lowest resolution pixel dimensions: "
              << slide.tileTable.extent.width << "px by "
              << slide.tileTable.extent.height << "px\n"
-             << "\t Layer Extents (256px tiles): \n";
+             << "\t Layer Extents (" << slide.tileTable.tileLength
+            << "px tiles): \n";
  
          int layer_index = 0;
          for (auto&& layer : slide.tileTable.extent.layers) {

@@ -4,7 +4,7 @@
 The manifest (tests/corpus/manifest.json) is the committed source of truth:
 URL, byte size, digest, IFE version, and the block types each fixture covers.
 The files themselves live on iris.exampleslides.org (Cloudflare R2) and are
-never committed — see MIGRATION.md §Conformance corpus.
+never committed — see tests/corpus/README.md.
 
 Behaviour, by design:
   * A cached file whose digest matches the manifest is used as-is; the normal
@@ -14,7 +14,7 @@ Behaviour, by design:
     that the manifest has not blessed is rejected, not silently adopted.
   * Any failure exits non-zero. A gate that disables itself on a network
     error is the ctest-from-stale-binaries failure mode wearing a different
-    hat (MIGRATION.md, Phase 6 traps).
+    hat.
 """
 import argparse
 import hashlib

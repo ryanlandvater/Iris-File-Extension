@@ -5,7 +5,7 @@
  * This file used to build its bytes with v1's STORE_* functions. Those bytes
  * are now permanent evidence: hosted on iris.exampleslides.org, pinned by
  * digest in tests/corpus/manifest.json, fetched into .deps/corpus/ at
- * configure time (MIGRATION 6.3). The loader stays free of both layers'
+ * configure time. The loader stays free of both layers'
  * types — nothing here includes IFE_Runtime or the retired hand-written
  * layer — so any test in any TU can consume the snapshot.
  */

@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 from generator.validate import _PLATFORM_MACROS  # noqa: E402
 
-SOURCE_DIRS = ("src", "tests", "examples")
+SOURCE_DIRS = ("src", "include", "tests", "examples")
 SOURCE_SUFFIXES = (".cpp", ".hpp", ".h", ".cc")
 
 
@@ -116,7 +116,12 @@ def check_paths_through_string_literals() -> list[str]:
     found: list[str] = []
     pattern = re.compile(r'^\s*([A-Za-z_][\w]*)\s*=\s*"\$<TARGET_(?:FILE|PROPERTY)')
     for path in sorted(ROOT.rglob("CMakeLists.txt")) + sorted(ROOT.rglob("*.cmake")):
-        if ".deps" in path.parts or "build" in path.parts:
+        if not path.is_file():
+            continue  # an Xcode build dir contains a directory literally named `.cmake`
+        # Skip the fetched dependency tree and every build directory — plain
+        # `build` and the -suffixed variants (build-xcode, build-asan) alike.
+        # These are gitignored; nothing committed can be inside them.
+        if any(part == ".deps" or part.startswith("build") for part in path.parts):
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             match = pattern.match(line)

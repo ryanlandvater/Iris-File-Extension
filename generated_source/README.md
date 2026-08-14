@@ -8,14 +8,16 @@ regenerated from the committed JSON specification — never hand-edited.
 |------|----------|
 | `spec/ife_header.json`, `spec/ife_fields.json`, `spec/ife_constants.json` | **Source of truth. Committed.** Every field, type, and value. |
 | `generator/` | Stdlib-only Python package, `python -m generator`. |
-| `generated_source/` (this dir) | **Freely regenerable. Gitignored.** The four files below. |
+| `generated_source/` (this dir) | **Freely regenerable. Gitignored.** The three files below. |
 
 | File | Content |
 |------|---------|
-| `IFE_Constants.hpp` | Enumerations and statically defined values. Dependency-free. |
-| `IFE_VTables.hpp` | Derived byte offsets and cumulative sizes, per block and per array entry, per version group. Dependency-free. |
-| `IFE_Blocks.hpp` | Typed block handles: accessors, `points_to` navigation, structural validators. Declarations only; includes the Iris headers itself. |
-| `IFE_Blocks.cpp` | Their definitions. Compiled into the library, or folded into the header by `#define IFE_HEADER_ONLY`. |
+| `IFE_Blocks.hpp` | The whole layer, in one header: `IFE::constants` (enumerations and sentinels), each block's derived offset and size tables, the typed block handles with their accessors, `points_to` navigation and structural validators, the `*CreateInfo` writer payloads, and the `IrisCodec::Serialization` consumer namespace. Includes the Iris headers itself. |
+| `IFE_Validation.hpp` / `.cpp` | The conformance layer — the normative `shall`/`should` clauses from the JSON, compiled into an attachable set of `ValidationHooks`. Its own target; never a link-time dependency of the library. |
+
+One header, not several: the split cost consumers an include list and bought
+nothing, since the JSON is the single source of truth and a generated file may
+duplicate freely.
 
 ## Regenerate
 
@@ -42,17 +44,13 @@ is stdlib-only Python, so no toolchain beyond Python 3 is required.
 
 ## Consuming this layer
 
-**`IFE_HEADER_ONLY` is the only way to reach it.** Nothing
-here is exported from the shared library — `IFE::blocks`, `IFE::vtables` and
+Nothing here is exported from the shared library — `IFE::blocks` and
 `IFE::constants` carry no export marking, and a test fails the build if any of
-them becomes visible:
+them becomes visible. Include the header and the definitions come with it:
 
 ```cpp
-#define IFE_HEADER_ONLY
-#include "IFE_Blocks.hpp"       // definitions fold in; nothing to link
+#include "IFE_Blocks.hpp"       // inline definitions; nothing to link
 ```
-
-or compile `generated_source/IFE_Blocks.cpp` into your own target.
 
 That is deliberate, not an oversight. This layer is field arithmetic — inlining
 a `u24` load beats calling it across a library boundary — and it is *generated*,

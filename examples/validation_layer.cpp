@@ -60,7 +60,7 @@ void expect(bool ok, const char* what,
 
 // A layer extent set that is structurally perfect but violates the spec: a
 // layer with zero tiles.
-const b::LayerExtentEntry ZERO_TILES[2] = {
+const std::vector<b::LayerExtentEntry> ZERO_TILES = {
     {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
     {.X_TILES = 0, .Y_TILES = 4, .SCALE = 2.0f},   // X_TILES shall be >= 1
 };
@@ -75,7 +75,7 @@ int main() {
         // business unless an application asks for it.
         {
             auto f = buffer();
-            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
             expect(static_cast<bool>(b::store(f.data(), 0, bad)),
                    "a detached store accepts even spec-violating input");
             std::printf("1. detached store of zero-tile extents: accepted (one null check)\n");
@@ -90,7 +90,7 @@ int main() {
             auto hooks = b::conformance_layer();
             hooks.diagnostic = &why;
 
-            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
             const auto status = b::store(f.data(), 0, bad, &hooks);
             expect(!status, "an attached store rejects spec-violating input");
             expect(status.code == b::Check::CONFORMANCE, "the rejection is a conformance failure");
@@ -106,12 +106,12 @@ int main() {
             auto hooks = b::conformance_layer();
             hooks.diagnostic = &why;
 
-            const b::LayerExtentEntry flat[3] = {
+            const std::vector<b::LayerExtentEntry> flat = {
                 {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
                 {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
                 {.X_TILES = 8, .Y_TILES = 8, .SCALE = 2.0f},   // shall strictly increase
             };
-            const b::LayerExtentsCreateInfo bad{.entries = flat, .count = 3};
+            const b::LayerExtentsCreateInfo bad{.entries = flat};
             const auto status = b::store(f.data(), 0, bad, &hooks);
             expect(!status, "a flat scale fails the ordering clause");
             expect(why.find("SCALE") != std::string::npos, "the diagnostic names the field");
@@ -164,12 +164,12 @@ int main() {
             auto hooks = b::conformance_layer();
             hooks.diagnostic = &why;
 
-            const b::LayerExtentEntry good[3] = {
+            const std::vector<b::LayerExtentEntry> good = {
                 {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
                 {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
                 {.X_TILES = 8, .Y_TILES = 8, .SCALE = 4.0f},
             };
-            const b::LayerExtentsCreateInfo ok{.entries = good, .count = 3};
+            const b::LayerExtentsCreateInfo ok{.entries = good};
             expect(static_cast<bool>(b::store(f.data(), 0, ok, &hooks)),
                    "a conformant store passes with the layer attached");
             expect(why.empty(), "nothing to report for a conformant input");
@@ -186,8 +186,8 @@ int main() {
             b::ValidationHooks tracing{};
             tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::IFE::Offset at,
                                        const b::ValidationHooks* self) -> b::Status {
-                std::printf("    [trace] LAYER_EXTENTS at %llu, %u entries\n",
-                            static_cast<unsigned long long>(at), info.count);
+                std::printf("    [trace] LAYER_EXTENTS at %llu, %zu entries\n",
+                            static_cast<unsigned long long>(at), info.entries.size());
                 // Forward down the chain; the conformance layer runs next and
                 // writes through the sink attached to `conformance`.
                 if (self->next != nullptr && self->next->LAYER_EXTENTS != nullptr)
@@ -196,7 +196,7 @@ int main() {
             };
             tracing.next = &conformance;
 
-            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+            const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
             const auto status = b::store(f.data(), 0, bad, &tracing);
             expect(!status, "the chain still rejects spec-violating input");
             expect(status.code == b::Check::CONFORMANCE, "the rejection is a conformance failure");

@@ -196,43 +196,55 @@ Two kinds of top-level entry, and the distinction is load-bearing:
   `enum class : float`. Reach for an enumeration only when the value domain is
   genuinely closed.
 
-## `ife_spec.adoc` insertion markers (provisional)
+## Generated tables in the document
 
-These mark where generated content belongs. They are **placeholders, not a
-supported syntax** — no preprocessor implements them, and the document pipeline replaces
-each with an Asciidoctor `include::` of the corresponding generated file. Do
-not build tooling against them.
+`ife_spec.adoc` pulls every layout and value table in with an Asciidoctor
+`include::` of a file under `generated_docs/` — the mechanism Khronos uses for
+the Vulkan specification. There is no preprocessor and no marker syntax of our
+own; if you see `{{layout:BLOCK}}` referenced anywhere, it is a leftover from
+an abandoned design.
 
-| Marker | Will include |
-|--------|--------------|
-| `{{preamble}}`, `{{block_header}}`, `{{array_header}}` | Shared structure layout tables |
-| `{{layout:BLOCK}}` | Derived block layout table (parameter, type, derived offset, value/linkage) |
-| `{{entry_layout:BLOCK}}` | Derived entry layout table for an array block |
-| `{{constants:group}}` | Value table for a constants group |
-
-Keep one marker per generated table rather than one per section: the pipeline
-emits fine-grained include files so the narrative pulls in exactly what it
+Keep one `include::` per generated table rather than one per section: the
+generator emits fine-grained files so the narrative pulls in exactly what it
 needs, and moving a section never drags unrelated tables along.
 
-## Design decisions embedded in this draft (awaiting ratification)
+## Decisions the schema embeds
 
-1. **Universal block header, no exceptions** — every block starts
-   `VALIDATION (u64) | RECOVERY (u16)`; the file header conforms (its
-   validation value is always 8).
-2. **8-byte version-invariant preamble** (`MAGIC | SPEC_MAJOR | SPEC_MINOR`);
-   v1 files detected by bytes 4–5 reading 0x5501.
-3. **Spec version lives in the preamble**, not the file header;
-   `FILE_REVISION` stays in the header.
+Each of these was settled against the shipped bytes; the parity of the
+generated layout with IFE 1.0 is what holds them true.
+
+1. **The universal block header has exactly one exception, by design.** Every
+   block reached through an offset starts `VALIDATION (u64) | RECOVERY (u16)`.
+   The file header does not: it is at byte 0, where a self-offset could only
+   encode zero, so it opens `MAGIC (u32) | RECOVERY (u16)` instead.
+2. **There is no file preamble.** The proposal for an 8-byte
+   `MAGIC | SPEC_MAJOR | SPEC_MINOR` prefix was reversed — it would have moved
+   every field in the root, which append-only forbids. A file is identified by
+   the magic bytes at 0 and the recovery tag at 4.
+3. **The specification version lives inside the file header**
+   (`EXTENSION_MAJOR` @14, `EXTENSION_MINOR` @16), read once at the root and
+   propagated to every block. `FILE_REVISION` is a separate counter and is not
+   a version.
 4. **`FILE_SIZE` doubles as the atomic write-head** during encoding.
-5. **Uniform array header** (`STRIDE u16 | COUNT u32`) on every array block,
-   blobs included (stride 1); block-specific `header_fields` always follow it.
-6. **Recovery tags keep v1 values and the 0x55 entropy convention**;
-   explicit in JSON, uniqueness enforced by the meta-schema.
+5. **The array header is not uniform, and that is the point.** A typed `ARRAY`
+   carries `STRIDE u16 | COUNT u32`; a `BYTE_ARRAY` carries `COUNT` alone,
+   because a byte's stride is intrinsically 1 and storing it would encode no
+   information. `IMAGE_BYTES` is a `BLOCK`, not an array — its payload is
+   sized by its own `TITLE_SIZE`/`IMAGE_SIZE`.
+6. **Recovery tags keep the 1.0 values and the `0x55` entropy convention.**
+   Values are *derived* from block order, never authored; `--validate`
+   enforces that the order matches.
 7. **Packed widths retained** (`u40`/`u24` tile entries) as a deliberate
    density feature.
 8. **Sentinel errata corrected** (`NULL_TILE` → 40-bit max, `NULL_ID` →
-   24-bit max).
-9. **`METADATA_FREE_TEXT` gets a distinct value (3).**
+   24-bit max) — documentation defects where the shipped code was already
+   right.
+9. **`METADATA_FREE_TEXT` gets a distinct value (3).** 1.0 aliased it to
+   `METADATA_I2S`'s value, so two conformance claims could not be told apart.
+   In a file written under 1.0 the two are distinguished by
+   `ATTRIBUTES.VERSION`: I2S carries a version, free text has none, and an
+   unversioned I2S claim is by definition free text — it names no
+   specification to conform to.
 10. **Tile pixel streams stay unframed** — the bytes a tile offsets entry
     addresses are exactly the codec stream, so they can be handed to a
     decoder or served without arithmetic. IFE 1.1 adds the optional
@@ -240,11 +252,10 @@ needs, and moving a section never drags unrelated tables along.
     rather than inside it, so the property above is unchanged and a 1.0
     reader cannot tell a framed file from an unframed one.
 
-Derived layout consequences (computed, never stored): preamble 8 B;
-universal header 10 B; array header 16 B total; `FILE_HEADER` 38 B (46 B from
-SOF); `TILE_TABLE` 44 B; `METADATA` 56 B; `ATTRIBUTES` 29 B; strides — layer
-extent 12, tile offset 8, attribute size 6, image entry 20, annotation
-entry 39, group size 6.
+No size or offset is restated here, deliberately — `python3 -m generator`
+prints every derived block size, and `generated_docs/layout/` carries the
+tables. A number transcribed into prose is a number that can disagree with the
+schema.
 
 ## Not yet present (later phases)
 

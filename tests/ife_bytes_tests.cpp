@@ -18,7 +18,7 @@
 // decodes them to float literals, and load_f16 widens the wire value to
 // float. If either half changes alone, a comparison against ORIENTATION_*
 // silently stops matching. The cross-check below is what makes that loud.
-#include "IFE_Constants.hpp"
+#include "IFE_Blocks.hpp"
 
 #include <cmath>
 #include <memory>

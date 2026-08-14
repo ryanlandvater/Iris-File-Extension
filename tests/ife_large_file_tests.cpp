@@ -68,7 +68,6 @@ int g_failures = 0;
 
 namespace b = ::IFE::blocks;
 namespace k = ::IFE::constants;
-namespace vt = ::IFE::vtables;
 
 /// Report a failed Status in full. Without this a validation failure here says
 /// only "false", and the block and offset are the whole diagnosis.
@@ -241,24 +240,24 @@ void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __cor
 
     // Patch FILE_SIZE: whole-file validation compares it against the size the
     // OS reports, which is now TILE_BASE plus the two relocated tiles.
-    ::IFE::store<std::uint64_t>(p + vt::FILE_HEADER::offset::FILE_SIZE, file_size);
+    ::IFE::store<std::uint64_t>(p + b::FILE_HEADER::offset::FILE_SIZE, file_size);
 
     // Patch the first two tile-offset entries to address the relocated tile
     // region. Their position follows from the 1.0 sizes alone: header, tile
     // table, then the three-entry extents array -- the same arithmetic v1's
     // place() did, without v1.
     constexpr ::IFE::Offset TILES_AT =
-        vt::FILE_HEADER::header_size_v1_0 + vt::TILE_TABLE::header_size_v1_0
-        + vt::LAYER_EXTENTS::header_size_v1_0
-        + 3 * vt::LAYER_EXTENTS::entry_size_v1_0;
-    Iris::BYTE* entry0 = p + TILES_AT + vt::TILE_OFFSETS::header_size
-                      + 0 * vt::TILE_OFFSETS::entry_size_v1_0;
-    Iris::BYTE* entry1 = p + TILES_AT + vt::TILE_OFFSETS::header_size
-                      + 1 * vt::TILE_OFFSETS::entry_size_v1_0;
-    ::IFE::store_u40(entry0 + vt::TILE_OFFSETS::entry::offset::OFFSET, TILE_BASE);
-    ::IFE::store_u24(entry0 + vt::TILE_OFFSETS::entry::offset::SIZE, TILE0_SIZE);
-    ::IFE::store_u40(entry1 + vt::TILE_OFFSETS::entry::offset::OFFSET, TILE_BASE + TILE0_SIZE);
-    ::IFE::store_u24(entry1 + vt::TILE_OFFSETS::entry::offset::SIZE, TILE1_SIZE);
+        b::FILE_HEADER::header_size_v1_0 + b::TILE_TABLE::header_size_v1_0
+        + b::LAYER_EXTENTS::header_size_v1_0
+        + 3 * b::LAYER_EXTENTS::LAYER_EXTENT::entry_size_v1_0;
+    Iris::BYTE* entry0 = p + TILES_AT + b::TILE_OFFSETS::header_size
+                      + 0 * b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0;
+    Iris::BYTE* entry1 = p + TILES_AT + b::TILE_OFFSETS::header_size
+                      + 1 * b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0;
+    ::IFE::store_u40(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE);
+    ::IFE::store_u24(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE0_SIZE);
+    ::IFE::store_u40(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE + TILE0_SIZE);
+    ::IFE::store_u24(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE1_SIZE);
 
     // A byte at each end of the tile region, so the pages carrying the tile
     // data are really allocated and the offsets address something written

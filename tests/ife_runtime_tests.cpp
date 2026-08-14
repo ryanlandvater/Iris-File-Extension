@@ -8,7 +8,7 @@
  * Iris-Codec calls today.
  *
  * This translation unit includes IFE_Runtime.hpp and the type-free fixture
- * loader; the bytes come from the fetched corpus (MIGRATION 6.3).
+ * loader; the bytes come from the fetched corpus (tests/corpus/README.md).
  *
  * Self-contained; non-zero exit on failure.
  */
@@ -50,7 +50,7 @@ std::string g_corpus_dir;
 /// Read the snapshot the shipped encoder wrote. The bytes under test were
 /// produced by the implementation that has been writing real slides, not by
 /// this test; they are pinned by digest in tests/corpus/manifest.json and
-/// fetched into .deps/corpus/ at configure time (MIGRATION 6.3).
+/// fetched into .deps/corpus/ at configure time.
 std::vector<BYTE> v1_slide(v1_fixture::Expected& expected) {
     expected = v1_fixture::expectations();
 
@@ -269,7 +269,6 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
 /// pass a tidy fixture and be wrong on a real one written in parallel.
 void test_recovery_finds_tile_frames_and_rebuilds_entries() {
     using namespace IrisCodec::Abstraction;
-    namespace vt = ::IFE::vtables;
     namespace b  = ::IFE::blocks;
 
     struct Tile { std::uint32_t index; std::uint32_t size; };
@@ -280,13 +279,13 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
     std::vector<Iris::BYTE> f(64, 0xA5);   // leading junk, so nothing sits at 0
     std::vector<IFE::Offset> stream_at;
     for (const auto& t : tiles) {
-        f.resize(f.size() + vt::TILE_PIXEL_DATA::header_size);
+        f.resize(f.size() + b::TILE_PIXEL_DATA::header_size);
         const IFE::Offset at = f.size();
         stream_at.push_back(at);
-        ::IFE::store_u40(f.data() + at + vt::TILE_FRAME::offset::VALIDATION,
-                         at + vt::TILE_FRAME::offset::VALIDATION);
-        ::IFE::store<std::uint32_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
-        ::IFE::store<std::uint16_t>(f.data() + at + vt::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
+        ::IFE::store_u40(f.data() + at + b::TILE_PIXEL_DATA::offset::VALIDATION,
+                         at + b::TILE_PIXEL_DATA::offset::VALIDATION);
+        ::IFE::store<std::uint32_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
+        ::IFE::store<std::uint16_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
         f.resize(f.size() + t.size, 0x5A);
     }
 

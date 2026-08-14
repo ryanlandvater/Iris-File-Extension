@@ -9,10 +9,15 @@
 > (reading the hosted, digest-pinned snapshot) and the >4 GiB sparse-file
 > test — 11/11 ctest on macOS in Release and ASan+UBSan, on both byte orders.
 > Function coverage is 100% in `IFE_Blocks.cpp` and `IFE_Validation.cpp`.
-> Open items: corruption tests (`ife_blocks_corruption_tests.cpp`),
-> diagnostics sourced from the JSON's normative clauses, TSan/fuzzing, the
-> hosted corpus's remaining five blocks, and real AVIF-encoded tile bytes
-> (the `TILE_ENCODING_AVIF` value itself is covered in-process).
+> Open items: the Iris-Codec encoder cutover (the generated
+> `IrisCodec::Serialization` consumer namespace landed and the encoder is
+> migrated onto it in the scratch clone — remaining is a full link on the
+> codec dependencies and the coordinated commit; see the open question
+> below), corruption tests
+> (`ife_blocks_corruption_tests.cpp`), diagnostics sourced from the JSON's
+> normative clauses, TSan/fuzzing, the hosted corpus's remaining five
+> blocks, and real AVIF-encoded tile bytes (the `TILE_ENCODING_AVIF` value
+> itself is covered in-process).
 > Gates in force: `--validate`, `--check`, the exported-symbol check, the
 > corpus digest fetch, and the test binaries under ASan+UBSan, on both byte
 > orders.
@@ -1619,9 +1624,9 @@ The original task description follows, for the record.
       and `:1641-1686`. Truncation,
       clobbered `VALIDATION`, clobbered `RECOVERY`, `stride == 0`,
       `count` overflow, and an offset cycle; each must return the specific
-   x] `tests/ife_runtime_tests.cpp` (gates 4.4) — **done (2026-08-12).**t of bounds (run under
+      `Check` code, never crash and never read out of bounds (run under
       `-fsanitize=address,undefined`).
-- [ ] `tests/ife_runtime_tests.cpp` (gates 4.4) — v1 source:
+- [x] `tests/ife_runtime_tests.cpp` (gates 4.4) — **done (2026-08-12).** v1 source:
       `src/IrisCodecExtension.cpp:283-330`. Encode a synthetic slide,
       `abstract_file_structure`, compare field-by-field to the input;
       `generate_file_map` ordering; `recover_file_structure` against a file
@@ -1931,7 +1936,19 @@ custom preprocessor in the pipeline.
       coverage rather than replace it. Purpose-built `.test_slide` fixtures,
       hosted rather than committed, pinned by digest in a committed manifest.
 - [ ] **Iris-Codec coordinated update** consuming the generated API; boundary
-      unchanged (structure here, compression/API there).
+      unchanged (structure here, compression/API there). **Decision made and
+      encoder migrated — link pending.** The `downstream` CI job
+      (`.github/workflows/ci.yml`, uncommitted) clones Iris-Codec and
+      redirects its FetchContent fetch at this checkout via
+      `FETCHCONTENT_SOURCE_DIR_IRISFILEEXTENSION`; the job was validated
+      locally in a Docker container before being added. The consumer-facing
+      namespace question (below) resolved to a *generated*
+      `IrisCodec::Serialization`; Iris-Codec's encoder — the 24
+      `Serialization::` refs + 9 bare `NULL_OFFSET`, all write-side — is
+      migrated onto it in the scratch clone (one file, include fix at
+      `src/IrisCodecPriv.hpp:47`) and compiles clean against this branch.
+      Remaining: full link on the codec dependencies, commit the Iris-Codec
+      side, push the IFE side.
 - [ ] **Python bindings (pybind11) over the abstraction layer.** Not a scope
       question: modularity is decided by where the boundary is drawn, not by
       how many languages cross it. This repository owns the byte structure and
@@ -2025,6 +2042,215 @@ has no specification to adhere to.
 
 ---
 
+### Open question — the consumer-facing namespace: `Serialization::` vs the generated three-way split
+
+The owner's concern (carried in the session handoff): the generated layer's
+three-way namespace split — `IFE::blocks` / `IFE::constants` / `IFE::vtables`
+— may have been an unnecessary distinction, and the retired hand-written
+`Serialization::` namespace may have been the better system for the consumer
+that actually codes against it. This is the analysis that decides how the
+Iris-Codec encoder cutover (the red `downstream` gate) is done.
+
+**What `Serialization::` exposed.** One flat namespace under `IrisCodec`,
+re-exporting `Iris` and `Abstraction`; 16 `DATA_BLOCK`-derived block structs,
+their `*CreateInfo` payload structs, a `SIZE_*`/`STORE_*` free-function write
+API per block, the `Offsets`/`RECOVERY`/`TYPE_SIZES` enums and the
+`NULL_OFFSET` sentinel — all 139 symbols `IFE_EXPORT`ed.
+
+**What the generated layer exposes instead.** Three namespaces, one per
+generated file, one per schema data-kind: `IFE::constants` (enums,
+sentinels), `IFE::vtables` (derived per-block and per-primitive offset/size
+tables, version-annotated), `IFE::blocks` (typed handles, the
+`Status`/`Check` validation vocabulary, `*CreateInfo` structs, and
+`store()`/`size_of()` for all 18 blocks). The block layer carries no export
+marking — hidden in a shared build by design (decision D, §4.1); a consumer
+reaches it via `IFE_HEADER_ONLY` or by compiling `IFE_Blocks.cpp` into its
+own target.
+
+**Measured, from primary sources:**
+
+- The encoder's usage is **write-side, entirely**: the 24 `Serialization::`
+  references in `src/IrisCodecEncoder.cpp` are 13 `STORE_*`, 6 `SIZE_*`,
+  4 `X::HEADER_SIZE` and 1 `*CreateInfo` construction; the 9 bare
+  `NULL_OFFSET` come from `using namespace`. The encoder never names a block
+  handle or a vtable — the read-side half of the three-way split is not what
+  the consumer exercises.
+- Every retired name has a generated analogue, field for field: `SIZE_X` →
+  `size_of`, `STORE_X` → `store` (same `CreateInfo` payloads plus a defaulted
+  `ValidationHooks*` parameter), `X::HEADER_SIZE` →
+  `::IFE::vtables::X::header_size` (with `header_size_v1_0` alongside),
+  `NULL_OFFSET` → `::IFE::constants::NULL_OFFSET`. The one non-mechanical
+  step: some retired stores took semantic payloads directly
+  (`STORE_ICC_COLOR_PROFILE(__base, off, vector<BYTE>)`) while generated
+  stores always want a flat `CreateInfo`, so those call sites gain a
+  construction. The 1.1 additions (`CLINICAL_OFFSET`, `MICRONS_PLANE`) are
+  already in the generated `MetadataCreateInfo`; nothing hand-written can
+  know them.
+- The split is a **consequence of the generator, not an API design**: three
+  emitters (`emit_constants_header`, `emit_vtables_header`,
+  `emit_blocks_header`), three files, three namespaces — the C++ projection
+  of the three data kinds the JSON distinguishes. One semantic namespace
+  *is* expressible (the namespace lines are emitter output), but it would
+  merge ~2,000 lines of three dependency-ordered files under one name and
+  change every qualified reference and consumer include for zero functional
+  gain — and it would not change the export story, which is about symbol
+  visibility, not spelling.
+- A **compat layer** — a `Serialization`-style semantic namespace over the
+  generated layer — is the one route that is *not* free. It is a
+  hand-written second projection of the schema, exactly what Phase 6
+  deleted, and it cannot be purely mechanical: the bare-payload signatures
+  need hand-written payload→`CreateInfo` conversion, and appended fields stay
+  invisible until a human extends the wrapper. It would also keep the
+  retired symbol surface alive against decision D.
+
+**Options.** (a) Keep the three-way split and migrate Iris-Codec's encoder —
+one file, 33 sites, rename-plus-reshape, include fix at
+`src/IrisCodecPriv.hpp:47`. (b) Reintroduce a unified semantic namespace
+over the generated layer. (c) Hybrid — semantic aliases for the write path
+only.
+
+**Decision (2026-08-12): (b), but *generated*, not hand-written.** The
+owner's ruling, recorded verbatim: the reason for a unified
+`IrisCodec::Serialization` is *not* past compatibility — it is that the
+three-way split is unintuitive, the prior API contract was simple, and "the
+API should make it foolproof". A hand-written compat layer was tried and
+rejected on the spot: a hand-maintained CreateInfo struct cannot carry
+changes to the specification — "additional fields may be added to
+AssociatedImage in the future (the JSON spec) but this will be stuck and
+we'll have to remember. It's a bad design."
+
+**What was built instead.** The generator now emits a fourth file,
+`generated_source/IFE_Serialization.hpp`, a pure re-export of the whole
+write surface under one `IrisCodec::Serialization` namespace: block
+handles, `*CreateInfo` payloads, entry structs, `store()`/`size_of()`,
+the enumerations, and the sentinels (`NULL_OFFSET`, `MAGIC_BYTES`, ...).
+It is a projection of the schema, so a field appended to the JSON appears
+here on the next run — the drift problem that killed the hand-written layer
+cannot exist. Two deliberate scoping calls:
+
+- `FILE_HEADER`'s `EXTENSION_MAJOR/MINOR` default to the schema version in
+  the generated CreateInfo (`_writer_default`), because the generated
+  `store()` always lays out the newest fields: the self-consistent claim
+  becomes the zero-effort one, and a writer that needs an older claim has
+  to set the fields explicitly — the moment to think about what layout that
+  claim implies.
+- The `image_orientations` value group is *not* re-exported: its members
+  duplicate the Iris-Headers `ImageOrientation` enum a consumer already has
+  (same names, different types — half-precision bits there, decoded floats
+  here), and exporting both would make identical-looking names mean
+  different things.
+
+**The block layer is header-only — the owner's ruling.** `store()` and
+`size_of()` were originally inline in the header; the cutover split them
+into `IFE_Blocks.cpp` with an `IFE_HEADER_ONLY` fold, and that split is
+gone. The emitter now puts every definition inline in `IFE_Blocks.hpp`
+(handles, accessors, validation, writers), the `.cpp` is no longer emitted,
+and `IFE_HEADER_ONLY` is a compatibility no-op. A consumer reaches the
+whole write API with an include alone — no translation unit to compile,
+nothing to link, nothing to install beyond headers. The export decision is
+untouched: inline definitions create no symbols, and the library's
+`VISIBILITY_INLINES_HIDDEN` keeps them out of the dynamic table (verified:
+zero `IFE::` symbols exported, and the exported-symbols test still passes).
+
+**One generated header — the owner's ruling, applied.** The generated
+C++ layer is now a single `IFE_Blocks.hpp`: constants, derived vtables,
+the block handles with their inline definitions, and the
+`IrisCodec::Serialization` consumer namespace all in one file. The
+three-way namespace split inside is kept — it is the generator's structure
+(one data kind per namespace) — but the file split was pure consumer cost,
+and the install is down from 9 headers to 6. The schema's `primitives`
+base classes are folded into the blocks themselves: a generated header may
+duplicate freely (the JSON is the single source of truth, not the C++), so
+the `primitives::` indirection and the base-class explanation disappear
+from the consumer's view. Consumers still include exactly one name
+(`IrisFileExtension.hpp`), and the append-only invariant and
+"schema stays weak" rule are untouched — this changed only how the C++ is
+packaged, not what the schema drives. The file is ordered for reading, per
+the owner: the writers' payloads and entry points (the `*CreateInfo`
+structs, `ValidationHooks`, `store()`/`size_of()` declarations) come first
+inside `IFE::blocks`, and each block's derived vtable is emitted beside its
+struct rather than in one separate table wall. The final step folded the
+tables into the structs themselves: `IFE::vtables` is gone, each block now
+carries its `offset`/`size` tables and version markers as nested members
+(the retired hand-written layer kept the same tables inside each struct as
+enums), and the primitives' shared tables duplicate per block — generated
+duplication, like the accessors, so the JSON remains the single source.
+The array blocks' `*CreateInfo` payloads went the same way: from C-style
+`(const Entry* entries, uint32_t count)` to an immutable
+`const std::vector<Entry>& entries` — the caller hands over its vector,
+`store()`/`size_of()` read `entries.size()`, and the `.data()`/`.count`
+noise at call sites is gone. Byte blobs keep `(const BYTE*, Size)`: their
+payloads are strings and opaque runs, and copying them into a vector would
+be worse. Attributes go one step further: `ATTRIBUTE_SIZES` and
+`ATTRIBUTE_BYTES` share one semantic payload —
+`const std::vector<std::pair<std::string, std::string>>& entries` — and
+the generated writers derive both the sizes array and the packed byte run
+from it, so the slicing cannot drift from the bytes it describes (the
+retired layer's `STORE_ATTRIBUTES_SIZES`/`STORE_ATTRIBUTES_BYTES` took the
+same semantic `Attributes`). The pairing is declared in the schema
+(`"from_pairs": true` on the two blocks) so the generator derives it
+rather than hard-coding block names.
+
+**⚠⚠⚠ THE ATTRIBUTE WIRE IS BEING RESHAPED — DECISION (2026-08-12, owner, pre-consumer window).** Attribute values become **tagged**: a `KIND` byte in the `ATTRIBUTE_SIZE` entry (KEY_SIZE, VALUE_SIZE, KIND) says whether the value is a plain string (`0`) or an **offset to a complete nested attribute structure** (`1`) — its own sizes+bytes laid out recursively, so DICOM sequences (and any tree) are representable natively instead of flattened-by-convention. This is a **reshape, not an addition** — it changes what the value bytes mean — and it is being done now because the format is pre-ratification and effectively unused: the oracle fixtures on `iris.exampleslides.org` are regenerated by the new writer as part of the change, and append-only binds the *result*, not the process of defining it. Design shape fixed at decision time:
+- **A byte, not a bit** — `0` = string, `1` = offset; room for future kinds without another wire break.
+- **The offset target is a complete nested attribute structure** — well-formed by construction, recursed with a depth bound and the existing `VisitPath` / `MAX_BLOCK_DEPTH` cycle machinery.
+- **Claims stay orthogonal to structure** — `METADATA_I2S` / `METADATA_DICOM` keep describing the key *vocabulary*; `KIND` describes the value's *structure*; one attributes block can mix strings and nested offsets, which is exactly a DICOM sequence tree.
+- **The rebuilt format is born as its real 1.0** — spec document, oracle, and encoder regenerate together as one coherent act.
+Status: **DECIDED — NOT YET IMPLEMENTED.** The generator, spec JSON, oracle, Iris-Codec encoder, and this document's other records update together in the implementation pass. This paragraph is the loud announcement; the historical flat contract below it is superseded.
+
+**⚠ SUPERSEDED BY THE DECISION ABOVE — the flat contract this paragraph records described the format as shipped; it is being reshaped.** The attribute index (`ATTRIBUTE_SIZES`' `KEY_SIZE`/`VALUE_SIZE` entry + the packed `ATTRIBUTE_BYTES` run) is a flat key→value slice store, and that is the format's shipped 1.0 contract — not an omission this migration can repair, and not a regression: the retired layer's `Attributes` was equally flat (`std::map<std::string, std::u8string>`), and the pinned oracle fixtures prove the flat wire. The `METADATA_DICOM` claim is "DICOM PS3.3 tag-value pairs (32-bit tags, UTF-8 values per NEMA character-set requirements), carried without restriction" — "without restriction" constrains the *vocabulary* (any DICOM tag may be carried), not the *structure* (nested sequences are not represented). DICOM's tree is flattened at the consumer boundary — `IrisCodecDcmBridge.cpp` descends nested sequences and emits flat pairs, the standard DICOM→flat-store interop pattern, with the key encoding the path (`0040,A730[0]/0008,0100` or the leaf tag). The pairs payload (`std::vector<std::pair<std::string, std::string>>`) carries those flat path-keys unchanged; nothing in the API blocks DICOM. The format cannot grow nesting in place — the index is shipped 1.0 and append-only forbids reshaping it — and the "schema stays weak" rule forbids adding a tree vocabulary to describe how one consumer serializes its structures. **The honest residual, stated plainly:** if a future consumer needs the DICOM tree *structure itself* preserved rather than its flattened leaf pairs, the flat format cannot hold it. The additive escape hatch is a future appended block, deliberately gated behind a real consumer need — it must never change the shipped 1.0 blocks.
+
+
+**Public headers moved to `include/` (same session).** A dry-run install
+found the installed package could not compile a consumer: `IFE_Export.hpp`
+was missing from the FILE_SET export list (every public header includes it),
+and nothing caught it — the public surface was invisible inside `src/`. The
+hand-written public headers (`IrisFileExtension.hpp`, `IFE_Runtime.hpp`,
+`IFE_Bytes.hpp`, `IFE_Window.hpp`) now live in `include/`; `src/` holds only
+implementation. The install surface is the `include/` FILE_SET plus the
+generated layer minus `IFE_Validation.hpp` (a dev tool that ships only with
+the validation library) and minus `IFE_Window.hpp` (Emscripten-only — the
+WASM remote windowed fetch — and the installed package is native), verified
+by compiling a find_package consumer against the installed tree. Generated
+headers stay in `generated_source/` — the generator owns them — so the
+public surface is two directories, both on the FILE_SET base-dir list.
+
+Two further install-surface fixes from the same dry run: `IFE_Export.hpp`
+was folded into `IFE_Runtime.hpp` and deleted — its original reason (one
+definition shared by the retired hand-written layer and the generated one)
+died with the cutover, since the generated layer never exports and
+`IFE_Runtime.hpp` is the only header with exported symbols. And IFE's
+install no longer drags Iris-Headers' whole package (IrisCore.hpp,
+IrisCodecCore.hpp, IrisHeadersConfig.cmake — downstream runtime/codec
+concerns): the exported targets do not link the IrisHeaders target, and the
+two headers the public surface actually includes (`IrisTypes.hpp`,
+`IrisCodecTypes.hpp`) install with IFE's own FILE_SET.
+The installed package is
+verified end-to-end by a `find_package(IrisFileExtension)` consumer that
+compiles and runs against it; that verification also fixed the config
+destination (`cmake/IrisFileExtension`, matching the package name), the
+missing `INSTALL_INTERFACE` include dirs on the shared/static targets, and
+the header-only route's need for `IFE_Blocks.cpp` alongside the headers —
+the installed form of decision D, since the block layer is deliberately
+unexported and `IFE_HEADER_ONLY` folds that `.cpp` into the header.
+
+**Verified in a scratch workspace (both repos, uncommitted):** the
+`IrisCodec::Serialization` namespace round-trips all 18 block kinds through
+the generated readers (417-byte synthetic slide, deep validation green), and
+Iris-Codec's encoder — 24 `Serialization::` refs + bare `NULL_OFFSET`
+migrated to the generated API in a /tmp clone, one file — compiles clean
+against this branch (`-fsyntax-only`, zero diagnostics). The migration is
+exactly the bounded one-file reshape the earlier analysis priced: the
+semantic payloads (`Layers`, `Attributes`, `Extent::layers`) flatten into
+the generated entry arrays at the call sites, the include fix is
+`IrisCodecPriv.hpp:47`, and `using namespace Serialization;` inside
+`namespace IrisCodec` restores the bare sentinels. Remaining before the
+`downstream` job can go green: install the codec dependencies (jpeg-turbo,
+AVIF, highway, libpng) for a full link, commit the Iris-Codec side, and
+push the IFE side.
+
+---
+
 ### Phase 6 execution plan — retire `src/IrisCodecExtension.*` (2026-08-12)
 
 Written to the flash-execution standard, inline for the same reason Phase 4's
@@ -2094,7 +2320,7 @@ comment mention.
 | Where | Kind |
 |---|---|
 | `src/IrisCodecExtension.cpp` | itself |
-| `src/IrisFileExtension.hpp` | **public umbrella** — what Iris-Codec includes |
+| `include/IrisFileExtension.hpp` | **public umbrella** — what Iris-Codec includes |
 | `tests/ife_wire_parity_tests.cpp` | offsets + enum values vs v1 |
 | `tests/ife_v1_oracle_tests.cpp` | v1 writes → generated reads |
 | `tests/ife_v1_fixture.cpp` | writes the shared fixture |

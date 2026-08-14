@@ -228,7 +228,7 @@
         "METADATA_FREE_TEXT": {
           "value": 3,
           "description": "Key-value pairs following the I2S byte structure without claiming conformance to any clinical standard.",
-          "errata": "v1.0 defined METADATA_FREE_TEXT as an alias of METADATA_I2S's value; this schema assigns it a distinct value so conformance claims are unambiguous."
+          "errata": "v1.0 defined METADATA_FREE_TEXT as an alias of METADATA_I2S's value; this schema assigns it a distinct value so conformance claims are unambiguous. A file written under 1.0 therefore encodes 1 for both, and the two are told apart by ATTRIBUTES.VERSION: an I2S claim carries the specification version it conforms to, and an unversioned one is free text by definition, naming no specification to adhere to."
         }
       }
     }

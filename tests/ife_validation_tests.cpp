@@ -53,16 +53,16 @@ b::ValidationHooks attached() {
 
 // A layer extent set that is structurally perfect and violates the spec: zero
 // tiles in a layer, and a scale that does not increase.
-const b::LayerExtentEntry GOOD[3] = {
+const std::vector<b::LayerExtentEntry> GOOD = {
     {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
     {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
     {.X_TILES = 8, .Y_TILES = 8, .SCALE = 4.0f},
 };
-const b::LayerExtentEntry ZERO_TILES[2] = {
+const std::vector<b::LayerExtentEntry> ZERO_TILES = {
     {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
     {.X_TILES = 0, .Y_TILES = 4, .SCALE = 2.0f},   // X_TILES shall be >= 1
 };
-const b::LayerExtentEntry FLAT_SCALE[3] = {
+const std::vector<b::LayerExtentEntry> FLAT_SCALE = {
     {.X_TILES = 2, .Y_TILES = 2, .SCALE = 1.0f},
     {.X_TILES = 4, .Y_TILES = 4, .SCALE = 2.0f},
     {.X_TILES = 8, .Y_TILES = 8, .SCALE = 2.0f},   // shall strictly increase
@@ -77,7 +77,7 @@ void test_detached_costs_nothing_and_enforces_nothing() {
     // Structurally valid, spec-violating. With no layer attached this stores
     // and reports success -- which is the point: conformance is not the
     // library's business unless an application asks for it.
-    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, bad)));
     IFE_CHECK(g_diagnostic.empty());
 
@@ -93,7 +93,7 @@ void test_attached_enforces_a_range_clause() {
     auto hooks = attached();
     g_diagnostic.clear();
 
-    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
     const auto status = b::store(f.data(), 0, bad, &hooks);
 
     IFE_CHECK(!status);
@@ -114,7 +114,7 @@ void test_attached_enforces_an_ordering_clause() {
     auto hooks = attached();
     g_diagnostic.clear();
 
-    const b::LayerExtentsCreateInfo bad{.entries = FLAT_SCALE, .count = 3};
+    const b::LayerExtentsCreateInfo bad{.entries = FLAT_SCALE};
     const auto status = b::store(f.data(), 0, bad, &hooks);
 
     IFE_CHECK(!status);
@@ -168,7 +168,7 @@ void test_conformant_input_passes_with_the_layer_attached() {
     auto hooks = attached();
     g_diagnostic.clear();
 
-    const b::LayerExtentsCreateInfo good{.entries = GOOD, .count = 3};
+    const b::LayerExtentsCreateInfo good{.entries = GOOD};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
     IFE_CHECK(g_diagnostic.empty());   // nothing to say about a conformant file
 }
@@ -205,7 +205,7 @@ void test_layers_chain() {
 
     // The outer layer runs and delegates; the generated one still catches it,
     // writing through the sink attached to the generated copy.
-    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES, .count = 2};
+    const b::LayerExtentsCreateInfo bad{.entries = ZERO_TILES};
     const auto status = b::store(f.data(), 0, bad, &tracing);
     IFE_CHECK(outer_calls == 1);
     IFE_CHECK(!status);
@@ -272,12 +272,12 @@ void test_attached_enforces_image_encoding_membership() {
 
     // Designated initializers must follow declaration order, so the
     // BYTES_OFFSET/WIDTH/HEIGHT slots are named before ENCODING.
-    const b::ImageEntry entries[1] = {{
+    const std::vector<b::ImageEntry> entries = {{
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
         .ENCODING = static_cast<k::ImageEncodings>(200),
         .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
     }};
-    const b::ImagesCreateInfo bad{.entries = entries, .count = 1};
+    const b::ImagesCreateInfo bad{.entries = entries};
     const auto status = b::store(f.data(), 0, bad, &hooks);
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
@@ -285,12 +285,12 @@ void test_attached_enforces_image_encoding_membership() {
     IFE_CHECK(g_diagnostic.find("clause ife-images") != std::string::npos);
 
     g_diagnostic.clear();
-    const b::ImageEntry good_entries[1] = {{
+    const std::vector<b::ImageEntry> good_entries = {{
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
         .ENCODING = k::ImageEncodings::IMAGE_ENCODING_JPEG,
         .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
     }};
-    const b::ImagesCreateInfo good{.entries = good_entries, .count = 1};
+    const b::ImagesCreateInfo good{.entries = good_entries};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
     IFE_CHECK(g_diagnostic.empty());
 }
@@ -300,12 +300,12 @@ void test_attached_enforces_annotation_type_membership() {
     auto hooks = attached();
     g_diagnostic.clear();
 
-    const b::AnnotationEntry entries[1] = {{
+    const std::vector<b::AnnotationEntry> entries = {{
         .IDENTIFIER = 1,
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
         .FORMAT = static_cast<k::AnnotationTypes>(200),
     }};
-    const b::AnnotationsCreateInfo bad{.entries = entries, .count = 1};
+    const b::AnnotationsCreateInfo bad{.entries = entries};
     const auto status = b::store(f.data(), 0, bad, &hooks);
     IFE_CHECK(!status);
     IFE_CHECK(status.code == b::Check::CONFORMANCE);
@@ -313,12 +313,12 @@ void test_attached_enforces_annotation_type_membership() {
     IFE_CHECK(g_diagnostic.find("clause ife-annotations") != std::string::npos);
 
     g_diagnostic.clear();
-    const b::AnnotationEntry good_entries[1] = {{
+    const std::vector<b::AnnotationEntry> good_entries = {{
         .IDENTIFIER = 1,
         .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
         .FORMAT = k::AnnotationTypes::ANNOTATION_TEXT,
     }};
-    const b::AnnotationsCreateInfo good{.entries = good_entries, .count = 1};
+    const b::AnnotationsCreateInfo good{.entries = good_entries};
     IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, good, &hooks)));
     IFE_CHECK(g_diagnostic.empty());
 }

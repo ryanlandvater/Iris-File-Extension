@@ -7,7 +7,7 @@
  * consumed from either side must not name either. The seam survives because
  * what crosses it is bytes, not types: v1 wrote the snapshot once; it is
  * hosted, pinned by digest in tests/corpus/manifest.json, and fetched into
- * .deps/corpus/ at configure time (MIGRATION 6.3/6.5). Nothing but
+ * .deps/corpus/ at configure time. Nothing but
  * `std::vector<unsigned char>` crosses between.
  */
 

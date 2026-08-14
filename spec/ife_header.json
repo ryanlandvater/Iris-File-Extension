@@ -29,7 +29,7 @@
       "authors": [
         "Ryan Landvater MD"
       ],
-      "summary": "Adds focal-plane support (PLANES on the layer extent entry, MICRONS_PLANE spacing), a configurable tile edge length (TILE_SIZE), an optional self-describing tile frame, a clinical metadata block reached by a new METADATA offset, carrying a stream whose serialization -- HL7 v2, FHIR as JSON, or FastFHIR -- is declared by an ENCODING field rather than inferred from the bytes, and redefines METADATA_I2S as Iris Interoperability Specification conformance. The two metadata channels divide by shape as well as by subject: laboratory metadata is key-value and stays in the attribute arrays under I2S or DICOM, while the clinical resource graph goes in the stream. Only the stream carries identity, so a slide is de-identified by dropping it alone."
+      "summary": "Adds focal-plane support (PLANES on the layer extent entry, MICRONS_PLANE spacing), a configurable tile edge length (TILE_LENGTH), an optional self-describing tile frame, a clinical metadata block reached by a new METADATA offset, carrying a stream whose serialization -- HL7 v2, FHIR as JSON, or FastFHIR -- is declared by an ENCODING field rather than inferred from the bytes, and redefines METADATA_I2S as Iris Interoperability Specification conformance. The two metadata channels divide by shape as well as by subject: laboratory metadata is key-value and stays in the attribute arrays under I2S or DICOM, while the clinical resource graph goes in the stream. Only the stream carries identity, so a slide is de-identified by dropping it alone."
     }
   ],
   "// MARK: - PUBLICATION": "Legal terms, reproduced verbatim into generated file banners and the published document. The single source for both.",

@@ -56,6 +56,9 @@ if(IRIS_EXTENSION_BUILD_ALL)
 endif(IRIS_EXTENSION_BUILD_ALL)
 
 set(IFE_SOURCE_DIR ${PROJECT_SOURCE_DIR}/src)
+# Public headers live in include/, implementation (compiled .cpp) in src/.
+# The install surface is the include/ FILE_SET; src/ is never installed.
+set(IFE_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -87,11 +90,18 @@ endif()
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 set (
     IFE_SourcesExport 
-    ${IFE_SOURCE_DIR}/IrisFileExtension.hpp
-    ${IFE_SOURCE_DIR}/IFE_Runtime.hpp
-    ${IFE_SOURCE_DIR}/IFE_Bytes.hpp
-    ${IFE_SOURCE_DIR}/IFE_Window.hpp
+    ${IFE_INCLUDE_DIR}/IrisFileExtension.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Runtime.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Bytes.hpp
+    # The two Iris-Headers headers the public surface includes. IrisCore.hpp
+    # and IrisCodecCore.hpp are runtime/codec concerns IFE does not use —
+    # they stay with Iris-Headers' own package, not this one.
+    ${irisheaders_SOURCE_DIR}/include/IrisTypes.hpp
+    ${irisheaders_SOURCE_DIR}/include/IrisCodecTypes.hpp
 )
+# IFE_Window.{hpp,cpp} is Emscripten-only (the WASM remote windowed fetch)
+# and the installed package is native, so it is not exported; source-tree
+# consumers (FetchContent, WASM) still get it via IFE_SourcesPriv.
 set (
     IFE_SourcesPriv
     ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
@@ -104,8 +114,9 @@ set (
 )
 set (
     IFE_IncludeDir
+    ${irisheaders_SOURCE_DIR}/include
     ${irisheaders_SOURCE_DIR}/priv
-    ${IFE_SOURCE_DIR}
+    ${IFE_INCLUDE_DIR}
 )
 set (
     IFE_Dependencies
@@ -121,7 +132,7 @@ set (
 set(IFE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_source")
 set(IFE_DOCS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/generated_docs")
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/generator/pipeline.py)
-    if(IFE_RUN_GENERATOR OR NOT EXISTS "${IFE_GENERATED_DIR}/IFE_VTables.hpp")
+    if(IFE_RUN_GENERATOR OR NOT EXISTS "${IFE_GENERATED_DIR}/IFE_Blocks.hpp")
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         execute_process(
             COMMAND ${Python3_EXECUTABLE} -m generator
@@ -145,6 +156,10 @@ file(GLOB IFE_GENERATED_SOURCES CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.cpp)
 set(IFE_VALIDATION_SOURCE ${IFE_GENERATED_DIR}/IFE_Validation.cpp)
 list(REMOVE_ITEM IFE_GENERATED_SOURCES ${IFE_VALIDATION_SOURCE})
 file(GLOB IFE_GENERATED_HEADERS CONFIGURE_DEPENDS ${IFE_GENERATED_DIR}/*.hpp)
+# The conformance layer is a development tool: its header ships only with
+# the validation library (which this repo does not install), never with the
+# base install.
+list(FILTER IFE_GENERATED_HEADERS EXCLUDE REGEX "IFE_Validation\\.hpp$")
 if(IFE_GENERATED_SOURCES OR IFE_GENERATED_HEADERS)
     list(APPEND IFE_SourcesPriv   ${IFE_GENERATED_SOURCES})
     list(APPEND IFE_SourcesExport ${IFE_GENERATED_HEADERS})
@@ -154,11 +169,17 @@ endif()
 # Generated headers live under their own base dir for the FILE_SET; keep
 # the base list conditional so an empty generated_source/ (before the first
 # generation) never references a nonexistent directory.
-set(IFE_FILE_SET_BASE_DIRS ${IFE_SOURCE_DIR})
+set(IFE_FILE_SET_BASE_DIRS ${IFE_INCLUDE_DIR})
+# The two Iris-Headers headers above are under their own base dir.
+list(APPEND IFE_FILE_SET_BASE_DIRS ${irisheaders_SOURCE_DIR}/include)
 if(IFE_GENERATED_HEADERS)
     list(APPEND IFE_FILE_SET_BASE_DIRS ${IFE_GENERATED_DIR})
 endif()
 add_library(IrisFileExtensionLib OBJECT)
+# Deliberately no link to the IrisHeaders target: the exported package would
+# then carry Iris-Headers' whole install (IrisCore.hpp, IrisCodecCore.hpp —
+# downstream runtime/codec concerns). The two headers IFE's public surface
+# includes are on the include paths above and install with IFE's own FILE_SET.
 target_sources (
     IrisFileExtensionLib INTERFACE FILE_SET HEADERS
     BASE_DIRS ${IFE_FILE_SET_BASE_DIRS} FILES
@@ -175,6 +196,23 @@ target_sources (
 target_include_directories (
     IrisFileExtensionLib PRIVATE
     ${IFE_IncludeDir}
+)
+# FetchContent consumers (Iris-Codec) include the PUBLIC headers —
+# IrisFileExtension.hpp → IFE_Runtime.hpp → generated IFE_Blocks.hpp — so
+# src/ and generated_source/ must be on the INTERFACE path too. priv/ stays
+# private on purpose: IrisMemory.hpp must not leak windows.h into consumers.
+# $<BUILD_INTERFACE:...>: the paths are build-tree absolute and must not be
+# exported to the install package (installed headers land flat in include/Iris).
+target_include_directories (
+    IrisFileExtensionLib INTERFACE
+    $<BUILD_INTERFACE:${IFE_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${IFE_GENERATED_DIR}>
+    # In-tree consumers need the two Iris-Headers headers the public surface
+    # includes; installed ones get them flat from IFE's own FILE_SET below.
+    $<BUILD_INTERFACE:${irisheaders_SOURCE_DIR}/include>
+    # Installed headers land flat in include/Iris; the exported target must
+    # say so, or a find_package consumer has no include path at all.
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Iris>
 )
 target_compile_definitions (
     IrisFileExtensionLib
@@ -200,10 +238,6 @@ set_target_properties(
     VISIBILITY_INLINES_HIDDEN ON
     POSITION_INDEPENDENT_CODE ON
 )
-target_link_libraries (
-    IrisFileExtensionLib
-    PRIVATE ${IFE_Dependencies}
-)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # END Universal Object Build
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -216,9 +250,9 @@ if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
         IrisFileExtension SHARED 
         $<TARGET_OBJECTS:IrisFileExtensionLib>
     ) 
-    target_link_libraries(
-        IrisFileExtension
-        PRIVATE ${IFE_Dependencies}
+    target_include_directories(
+        IrisFileExtension INTERFACE
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Iris>
     )
     set(IFE_Targets ${IFE_Targets} IrisFileExtension)
 endif(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
@@ -228,25 +262,20 @@ if(IFE_BUILD_STATIC)
         IrisFileExtensionStatic STATIC 
         $<TARGET_OBJECTS:IrisFileExtensionLib>
     )
-    target_link_libraries (
-        IrisFileExtensionStatic
-        PRIVATE ${IFE_Dependencies}
+    target_include_directories(
+        IrisFileExtensionStatic INTERFACE
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Iris>
     )
     set(IFE_Targets ${IFE_Targets} IrisFileExtensionStatic)
 endif(IFE_BUILD_STATIC)
 
 if (${PROJECT_IS_TOP_LEVEL})
-    install(
-        TARGETS IrisHeaders
-        EXPORT IrisHeadersConfig
-        FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/Iris
-    )
-    install(
-        EXPORT IrisHeadersConfig
-        FILE IrisHeadersConfig.cmake
-        NAMESPACE "Iris::"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Iris
-    )
+    # Iris-Headers is a build-time dependency only. Its target is not exported
+    # and its headers do not ship with this package: IFE's public surface
+    # includes exactly IrisTypes.hpp and IrisCodecTypes.hpp, which install
+    # with IFE's own FILE_SET below. Its runtime and codec headers
+    # (IrisCore.hpp, IrisCodecCore.hpp) are downstream concerns and stay out
+    # of IFE's install.
     install(
         TARGETS ${IFE_Targets}
         EXPORT IrisFileExtensionConfig
@@ -255,7 +284,7 @@ if (${PROJECT_IS_TOP_LEVEL})
     install(
         EXPORT IrisFileExtensionConfig
         FILE IrisFileExtensionConfig.cmake
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Iris
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/IrisFileExtension
     )
 endif(${PROJECT_IS_TOP_LEVEL})
 
@@ -274,7 +303,7 @@ if(IFE_BUILD_EXAMPLES)
     # on its include path.
     target_include_directories (
         slide_info_abstraction PRIVATE 
-        ${IFE_SOURCE_DIR} ${irisheaders_SOURCE_DIR}/include
+        ${IFE_INCLUDE_DIR} ${irisheaders_SOURCE_DIR}/include
         ${irisheaders_SOURCE_DIR}/priv
     )  
     target_link_libraries(
@@ -296,7 +325,7 @@ if(IFE_BUILD_EXAMPLES)
     )
     target_include_directories(
         ife_example_validation PRIVATE
-        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_example_validation PRIVATE cxx_std_20)
     target_link_libraries(
@@ -326,7 +355,7 @@ if(IFE_BUILD_TESTS)
         ife_bytes_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_bytes_tests.cpp
     )
-    target_include_directories(ife_bytes_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_include_directories(ife_bytes_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR})
     target_compile_features(ife_bytes_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_bytes_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_bytes_tests COMMAND ife_bytes_tests)
@@ -339,7 +368,7 @@ if(IFE_BUILD_TESTS)
         ${IFE_GENERATED_SOURCES}
     )
     target_include_directories(
-        ife_blocks_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ife_blocks_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_blocks_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_blocks_tests PRIVATE ${IFE_Dependencies})
@@ -353,7 +382,7 @@ if(IFE_BUILD_TESTS)
     )
     target_compile_definitions(ife_blocks_header_only_tests PRIVATE IFE_HEADER_ONLY)
     target_include_directories(
-        ife_blocks_header_only_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ife_blocks_header_only_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_blocks_header_only_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_blocks_header_only_tests PRIVATE ${IFE_Dependencies})
@@ -367,13 +396,13 @@ if(IFE_BUILD_TESTS)
         ${PROJECT_SOURCE_DIR}/tests/ife_window_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
     )
-    target_include_directories(ife_window_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR})
+    target_include_directories(ife_window_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR})
     target_compile_features(ife_window_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_window_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_window_tests COMMAND ife_window_tests)
 
     # The corpus: hosted fixtures pinned by digest in tests/corpus/manifest.json
-    # (iris.exampleslides.org; never committed -- see MIGRATION.md §Conformance corpus).
+    # (iris.exampleslides.org; never committed -- see tests/corpus/README.md).
     # Fetched at configure into the gitignored .deps/corpus/ so every test that
     # reads v1-written bytes has them before any binary runs. Unconditional
     # within test builds: the oracle and the >4 GiB test depend on the
@@ -404,7 +433,7 @@ if(IFE_BUILD_TESTS)
         ${IFE_GENERATED_SOURCES}
     )
     target_include_directories(
-        ife_runtime_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ife_runtime_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_runtime_tests PRIVATE cxx_std_20)
     # The writer's path is a test ARGUMENT, not a compile definition. As a
@@ -454,15 +483,16 @@ if(IFE_BUILD_TESTS)
         message(FATAL_ERROR "IFE future-version fixture generation failed — see output above")
     endif()
 
-    # Forward direction: the 200.0 build reads 1.0 and 200.0 files.
+    # Forward direction: the 200.0 build reads 1.0 and 200.0 files. The
+    # fixture's block layer is header-only like the production one — nothing
+    # to compile.
     add_executable(
         ife_version_gating_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_version_gating_tests.cpp
-        ${IFE_FUTURE_FIXTURE_DIR}/generated/IFE_Blocks.cpp
     )
     target_include_directories(
         ife_version_gating_tests PRIVATE
-        ${IFE_SOURCE_DIR}
+        ${IFE_INCLUDE_DIR}
         ${IFE_FUTURE_FIXTURE_DIR}/generated
         ${IFE_FUTURE_FIXTURE_DIR}
     )
@@ -478,7 +508,7 @@ if(IFE_BUILD_TESTS)
     )
     target_include_directories(
         ife_version_gating_backward_tests PRIVATE
-        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
         ${IFE_FUTURE_FIXTURE_DIR}/generated
         ${IFE_FUTURE_FIXTURE_DIR}
     )
@@ -501,7 +531,7 @@ if(IFE_BUILD_TESTS)
     target_compile_definitions(ife_example_runtime PRIVATE IFE_USE_RUNTIME)
     target_include_directories(
         ife_example_runtime PRIVATE
-        ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR} ${irisheaders_SOURCE_DIR}/priv
+        ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR} ${irisheaders_SOURCE_DIR}/priv
     )
     target_compile_features(ife_example_runtime PRIVATE cxx_std_20)
     target_link_libraries(ife_example_runtime PRIVATE ${IFE_Dependencies})
@@ -517,7 +547,7 @@ if(IFE_BUILD_TESTS)
         ${IFE_GENERATED_SOURCES}
     )
     target_include_directories(
-        ife_validation_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ife_validation_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_validation_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_validation_tests PRIVATE ${IFE_Dependencies})
@@ -547,7 +577,7 @@ if(IFE_BUILD_TESTS)
         ${PROJECT_SOURCE_DIR}/tests/ife_v1_fixture.cpp
     )
     target_include_directories(
-        ife_v1_oracle_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+        ife_v1_oracle_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
     )
     target_compile_features(ife_v1_oracle_tests PRIVATE cxx_std_20)
     target_link_libraries(
@@ -574,7 +604,7 @@ if(IFE_BUILD_TESTS)
         # priv/ as well: the test's SparseFile maps through Iris::MemoryArena,
         # declared in IrisMemory.hpp there.
         target_include_directories(
-            ife_large_file_tests PRIVATE ${IFE_SOURCE_DIR} ${IFE_GENERATED_DIR}
+            ife_large_file_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
                                         ${irisheaders_SOURCE_DIR}/priv
         )
         target_compile_features(ife_large_file_tests PRIVATE cxx_std_20)
@@ -610,7 +640,7 @@ endif()
 # generated layer straight into the executable, or link the object library,
 # so neither IFE_EXPORT nor IRIS_EXPORT should carry an attribute.
 #
-# IFE_EXPORT resolves correctly on its own (src/IFE_Export.hpp distinguishes
+# IFE_EXPORT resolves correctly on its own (IFE_Runtime.hpp distinguishes
 # "not exporting" from "importing"). IRIS_EXPORT is declared in Iris-Headers,
 # which still conflates the two: undefined, it becomes __declspec(dllimport)
 # on MSVC, and every use of Iris::Result or IrisCodec::AssociatedImageInfo

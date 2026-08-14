@@ -146,7 +146,7 @@
       "primitive": "FILE_HEADER",
       "recovery_tag": "RECOVER_FILE_HEADER",
       "fixed_location": true,
-      "description": "Root of the file structure; its universal header immediately follows the file preamble at byte offset 8.",
+      "description": "Root of the file structure, at byte offset 0. It opens with the magic number rather than a VALIDATION field, which at byte 0 could only ever store zero, and it carries the specification version every other block inherits.",
       "fields": {
         "ife_version": {
           "1.0": [
@@ -263,7 +263,7 @@
           ],
           "1.1": [
             {
-              "name": "TILE_SIZE",
+              "name": "TILE_LENGTH",
               "type": "u16",
               "description": "Edge length in pixels of the square tiles this slide is divided into. Zero, and absence in a file written under 1.0, both denote the default of 256. Encoders are recommended to use 256."
             }
@@ -414,7 +414,7 @@
               {
                 "name": "X_TILES",
                 "type": "u32",
-                "description": "Number of tiles in the horizontal direction, each TILE_TABLE.TILE_SIZE pixels square.",
+                "description": "Number of tiles in the horizontal direction, each TILE_TABLE.TILE_LENGTH pixels square.",
                 "conformance": {
                   "level": "shall",
                   "clause": "ife-layer-extents",
@@ -425,7 +425,7 @@
               {
                 "name": "Y_TILES",
                 "type": "u32",
-                "description": "Number of tiles in the vertical direction, each TILE_TABLE.TILE_SIZE pixels square.",
+                "description": "Number of tiles in the vertical direction, each TILE_TABLE.TILE_LENGTH pixels square.",
                 "conformance": {
                   "level": "shall",
                   "clause": "ife-layer-extents",
@@ -485,6 +485,7 @@
       "primitive": "ARRAY",
       "recovery_tag": "RECOVER_ATTRIBUTE_SIZES",
       "description": "Slicing tuples converting the attribute byte array into key-value pairs.",
+      "from_pairs": true,
       "entry": {
         "name": "ATTRIBUTE_SIZE",
         "fields": {
@@ -508,7 +509,8 @@
     "ATTRIBUTE_BYTES": {
       "primitive": "BYTE_ARRAY",
       "recovery_tag": "RECOVER_ATTRIBUTE_BYTES",
-      "description": "Tightly packed key and value strings sliced by the attribute sizes array."
+      "description": "Tightly packed key and value strings sliced by the attribute sizes array.",
+      "from_pairs": true
     },
     "// MARK: - ASSOCIATED IMAGES": "Ancillary images such as labels and thumbnails: the entry array and the per-image label-plus-stream block.",
     "IMAGES": {

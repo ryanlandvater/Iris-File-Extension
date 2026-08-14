@@ -1,6 +1,6 @@
 name: CI
 
-# The gates, in one place. Seven jobs, each pinning a
+# The gates, in one place. Eight jobs, each pinning a
 # property nothing else can:
 #
 #   spec        the JSON is self-consistent, and generated_source/ is what the
@@ -14,6 +14,9 @@ name: CI
 #               default toolchain AND MSVC -- the only job that exercises the
 #               /std:c++20 select and the IRIS_EXPORT= dllimport
 #               neutralization the Bazel rules need on Windows
+#   downstream  Iris-Codec (the primary consumer) builds against THIS branch
+#               via a FetchContent source override -- the check that a change
+#               here does not break the ecosystem that depends on it
 #   sanitizers  the packed loads read exactly 3 and exactly 5 bytes. Without
 #               ASan those tests are ordinary passing round-trips and prove
 #               nothing
@@ -61,6 +64,13 @@ jobs:
           - {os: windows-latest, compiler: MSVC}
     steps:
       - uses: actions/checkout@v7
+      # .deps/corpus is fetched from iris.exampleslides.org at configure (see
+      # tools/fetch_corpus.py); cache it by manifest digest so a fresh runner
+      # never touches the external host — the fetch script's own guarantee.
+      - uses: actions/cache@v6
+        with:
+          path: .deps/corpus
+          key: corpus-${{ hashFiles('tests/corpus/manifest.json') }}
       # The configuration is named three times on purpose. Visual Studio is a
       # multi-config generator: it ignores CMAKE_BUILD_TYPE and picks a
       # configuration when it builds and again when it tests. Omit --config
@@ -111,11 +121,49 @@ jobs:
         shell: bash
         run: bazel test //... --test_output=errors --verbose_failures --action_env=PATH
 
+  downstream:
+    name: Iris-Codec builds against this branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Iris-Codec's CMake FetchContent-pulls IFE from origin/main; the
+      # FETCHCONTENT_SOURCE_DIR override redirects that fetch to THIS
+      # checkout — the exact state the PR would ship. Plain git, not
+      # actions/checkout: checkout rejects paths outside the workspace.
+      # Build-only, matching Iris-Codec's own CI (which runs no ctest). The
+      # apt + jpeg-turbo recipe is copied from that CI verbatim.
+      - name: Check out Iris-Codec beside this repository
+        shell: bash
+        run: git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-Codec.git ../Iris-Codec
+      - name: Configure Jpeg-Turbo PPA
+        run: |
+          sudo wget -q https://packagecloud.io/dcommander/libjpeg-turbo/gpgkey -O /etc/apt/trusted.gpg.d/libjpeg-turbo
+          sudo gpg --dearmor /etc/apt/trusted.gpg.d/libjpeg-turbo
+          sudo wget https://raw.githubusercontent.com/libjpeg-turbo/repo/main/libjpeg-turbo.list -O /etc/apt/sources.list.d/libjpeg-turbo.list
+          sudo apt update
+      - name: Fetch Dependencies
+        run: sudo apt install libhwy-dev libjpeg-turbo-official libavif-dev libpng-dev zlib1g-dev openslide-tools python3-dev meson ninja-build -y
+      - name: Configure CMake
+        run: >
+          cmake -B build -S ../Iris-Codec
+          -D CMAKE_BUILD_TYPE=Release
+          -D CMAKE_PREFIX_PATH="/opt/libjpeg-turbo/lib64/cmake/libjpeg-turbo/"
+          -D TURBOJPEG_INCLUDE="/opt/libjpeg-turbo/include/"
+          -D FETCHCONTENT_SOURCE_DIR_IRISFILEEXTENSION=$GITHUB_WORKSPACE
+      - name: Build
+        run: cmake --build build --config Release -j
+
   sanitizers:
     name: address and undefined behaviour
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Corpus cache as in the tests job: fresh runners must not hit the
+      # external host for the two pinned fixtures.
+      - uses: actions/cache@v6
+        with:
+          path: .deps/corpus
+          key: corpus-${{ hashFiles('tests/corpus/manifest.json') }}
       - name: Configure with ASan + UBSan
         run: >
           cmake -B build-asan -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
@@ -185,7 +233,7 @@ jobs:
 
       # The three suites that touch bytes. The parity wall was a compile-time
       # comparison against the shipped constants and died with the hand-written
-      # layer (MIGRATION 6.5); the oracle is the byte-level gate and runs here.
+      # layer; the oracle is the byte-level gate and runs here.
       #
       # The oracle earns its place here twice over: it reads bytes the shipped
       # encoder wrote, on a host whose byte order is the opposite of every

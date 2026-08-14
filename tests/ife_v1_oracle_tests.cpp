@@ -19,7 +19,7 @@
  * The bytes come from the snapshot: a whole slide the shipped encoder wrote,
  * hosted on iris.exampleslides.org, pinned by SHA-256 in
  * tests/corpus/manifest.json and fetched into .deps/corpus/ at configure
- * time (MIGRATION 6.3). Nothing here writes a byte. The retired hand-written
+ * time. Nothing here writes a byte. The retired hand-written
  * layer that produced the snapshot is gone; the snapshot is what outlived it.
  */
 #include "IFE_Blocks.hpp"
@@ -45,13 +45,12 @@ int g_failures = 0;
 using ::IFE::BYTE;
 namespace b = ::IFE::blocks;
 namespace k = ::IFE::constants;
-namespace vt = ::IFE::vtables;
 
 /// Where the snapshot's LAYER_EXTENTS sits: v1 laid the file out head to
 /// tail, header then tile table, so this is the sum of their 1.0 sizes —
 /// the same arithmetic v1's place() did at encode time.
 constexpr std::uint64_t EXTENTS_AT =
-    vt::FILE_HEADER::header_size_v1_0 + vt::TILE_TABLE::header_size_v1_0;
+    b::FILE_HEADER::header_size_v1_0 + b::TILE_TABLE::header_size_v1_0;
 
 std::vector<BYTE> read_whole_file(const std::string& __path) {
     std::FILE* in = std::fopen(__path.c_str(), "rb");
@@ -153,7 +152,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     // EOF.
     const auto to = tt.tile_offsets_offset();
     IFE_CHECK(to.count() == expected.tiles);
-    IFE_CHECK(to.stride() == vt::TILE_OFFSETS::entry_size_v1_0);
+    IFE_CHECK(to.stride() == b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0);
     IFE_CHECK(to.entry(0).size_field() == 16);
     for (std::uint32_t i = 0; i + 1 < expected.tiles; ++i) {
         IFE_CHECK(to.entry(i).size_field() == 16);
@@ -161,7 +160,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     }
     IFE_CHECK(to.entry(expected.tiles - 1).offset() + 16 == expected.file_size);
 
-    // TILE_SIZE, and the asymmetry that governs every appended header field.
+    // TILE_LENGTH, and the asymmetry that governs every appended header field.
     //
     // An appended *entry* field has two gates: the declared version and the
     // stride the array stores. An appended *block header* field has only the
@@ -171,17 +170,17 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     // Both halves are asserted, because the second is the hazard. Read at the
     // declared version the field is correctly absent; read at this build's
     // version it is not absent but *wrong*, and wrong in the worst available
-    // way. tile_size() gates on __version alone, and TILE_SIZE sits at offset
-    // 44 -- exactly where v1's 44-byte header ends. The next block begins
-    // there, so the accessor returns the low two bytes of LAYER_EXTENTS'
+    // way. tile_length() gates on __version alone, and TILE_LENGTH sits at
+    // offset 44 -- exactly where v1's 44-byte header ends. The next block
+    // begins there, so the accessor returns the low two bytes of LAYER_EXTENTS'
     // VALIDATION word: not a sentinel, not zero, just a neighbouring block's
-    // data wearing the name of a tile size.
+    // data wearing the name of a tile length.
     //
     // Nothing reports an error. That is why the version comes from the file,
     // and why nothing else in this test hangs off `newest`.
-    IFE_CHECK(root.tile_table_offset().tile_size() == std::nullopt);
-    IFE_CHECK(newest.tile_table_offset().tile_size() != std::nullopt);
-    IFE_CHECK(newest.tile_table_offset().tile_size().value() ==
+    IFE_CHECK(root.tile_table_offset().tile_length() == std::nullopt);
+    IFE_CHECK(newest.tile_table_offset().tile_length() != std::nullopt);
+    IFE_CHECK(newest.tile_table_offset().tile_length().value() ==
               static_cast<std::uint16_t>(EXTENTS_AT));
 
     const auto md = root.metadata_offset();
@@ -299,7 +298,7 @@ void test_v1_packed_widths_at_full_width(const std::string& __corpus_dir) {
     const b::TILE_OFFSETS to{f.data(), 0, f.size(), b::VERSION_WRITTEN};
     IFE_CHECK(static_cast<bool>(to.validate()));
     IFE_CHECK(to.count() == 2);
-    IFE_CHECK(to.stride() == vt::TILE_OFFSETS::entry_size_v1_0);
+    IFE_CHECK(to.stride() == b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0);
 
     IFE_CHECK(to.entry(0).offset()     == OFFSET_FULL);
     IFE_CHECK(to.entry(0).size_field() == SIZE_FULL);
@@ -332,7 +331,7 @@ void test_v1_layer_extents_gate_the_1_1_plane_count(const std::vector<BYTE>& f) 
 
     // The 1.0 stride is what gates it; if the entry ever stops being 12 bytes
     // at 1.0 this test is measuring something else and should be revisited.
-    IFE_CHECK(le.stride() == vt::LAYER_EXTENTS::entry_size_v1_0);
+    IFE_CHECK(le.stride() == b::LAYER_EXTENTS::LAYER_EXTENT::entry_size_v1_0);
     IFE_CHECK(b::VERSION_WRITTEN >= 0x00010001u);
 
     IFE_CHECK(le.entry(0).z_planes() == std::nullopt);

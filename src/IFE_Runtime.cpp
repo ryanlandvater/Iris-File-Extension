@@ -141,11 +141,11 @@ Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t 
     abstraction.tileTable.extent.width  = table.x_extent();
     abstraction.tileTable.extent.height = table.y_extent();
     // Absent before 1.1, and zero means the same thing as absent, so both
-    // normalise to the default here. The abstraction states the tile size
+    // normalise to the default here. The abstraction states the tile length
     // there is; it does not make the caller decode the two ways the file can
     // say "256".
-    if (const auto size = table.tile_size(); size && *size != 0)
-        abstraction.tileTable.tileSize = *size;
+    if (const auto length = table.tile_length(); length && *length != 0)
+        abstraction.tileTable.tileLength = *length;
 
     const auto extents = table.layer_extents_offset();
     if (!extents) fail(extents.validate());
@@ -431,7 +431,7 @@ namespace {
 
 /// Every block type, by tag, with the map entry it becomes. Derived from the
 /// generated enumeration rather than a second literal table: the tag values
-/// live in IFE_Constants.hpp and are stated once.
+/// live in IFE_Blocks.hpp and are stated once.
 Abstraction::MapEntryType entry_for(k::RecoveryCodes __tag) noexcept {
     using namespace Abstraction;
     switch (__tag) {

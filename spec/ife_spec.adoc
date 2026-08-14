@@ -108,8 +108,8 @@ structure element (<<ife-file-structure-elements>>) is located.
 
 The use of the term "*slide tile*" or "*tile*" shall correspond with a square
 sub-image comprising one or more color channels in a compressed or
-uncompressed format. The edge length of that square is the *tile size*, given
-by TILE_TABLE.TILE_SIZE (<<ife-tile-table>>) and 256 pixels unless a file
+uncompressed format. The edge length of that square is the *tile length*, given
+by TILE_TABLE.TILE_LENGTH (<<ife-tile-table>>) and 256 pixels unless a file
 states otherwise, so a tile is an array of 65,536 pixel values by default.
 
 The use of the term "*slide layer*" or "*layer*" shall correspond with a series
@@ -133,7 +133,7 @@ The use of the term "*slide space*" or "*fractional tile location*" shall refer
 to a horizontal (_X_) and vertical (_Y_) floating point (decimal) spatial axis
 that can be used to define a location within a rendered slide that is layer
 independent. The value along an axis shall be defined as the pixel location at
-the *highest-resolution* layer (_l~N−1~_) divided by the tile size to give the
+the *highest-resolution* layer (_l~N−1~_) divided by the tile length to give the
 decimal number of highest-resolution layer tiles such that a location or size
 (_x_, _y_) in *slide space* ranges from ([0, _T~(N−1)x~_], [0, _T~(N−1)y~_])
 where the origin (0, 0) is defined as the upper-left of the slide and the point
@@ -193,32 +193,28 @@ The file is a series of floating, tightly packed data-blocks within a sea of
 bytes. Statically sized *header blocks* contain data parameters and offsets
 to other blocks, forming the offset-chain; dynamically sized *array blocks*
 carry repeated entries or raw byte blobs. Entry into the structure is the
-*file preamble* and *file header* at the start of file; every other block is
-located exclusively through offset fields.
+*file header* at the start of file; every other block is located exclusively
+through offset fields.
 
-[[ife-file-preamble]]
-==== File Preamble
+[[ife-file-identification]]
+==== File Identification
 
 include::{generated}/layout/primitive_FILE_HEADER.adoc[]
 
-The first eight bytes of every IFE file are version-invariant: their layout
-will never change in any future IFE version, so a reader can always identify
-an Iris file and select the correct specification before parsing any block.
+The first six bytes of every IFE file are version-invariant: their layout will
+never change in any future IFE version, so a reader can identify an Iris file
+before parsing anything else.
 
 * The first four bytes of the file *shall* be the magic bytes 0x49726973
   ('Iris') in little-endian order.
-* SPEC_MAJOR *shall* encode the major version of the IFE specification to
-  which the file conforms. A decoder whose supported major version is less
-  than the encoded major version *shall not* attempt to read the file
-  structure and *should* report the version mismatch.
-* SPEC_MINOR *shall* encode the minor version. A decoder whose supported
-  minor version is less than the encoded minor version *shall* read the
-  file, restricting itself to the fields defined by its own minor version,
-  and *should* surface a warning that later-version content is present but
-  inaccessible.
-* IFE v1.0 files are distinguished by the two bytes at offset 4 reading
-  0x5501 (the v1.0 recovery code position); readers *should* detect
-  this pattern and report a v1 file rather than a version mismatch.
+* The two bytes at offset 4 *shall* encode RECOVER_FILE_HEADER (0x5501). A
+  reader identifies an IFE file by these two checks and no others.
+
+The file header is the one block that carries no validation field. Every other
+block stores its own byte offset there (<<ife-block-header>>); the root begins
+at byte 0, where that field could only ever encode zero, so the magic number
+occupies the slot instead. The specification version is carried inside the
+header itself (<<ife-file-header>>) rather than ahead of it.
 
 [[ife-block-header]]
 ==== Universal Block Header
@@ -323,9 +319,23 @@ include::{generated}/layout/FILE_HEADER.adoc[]
 The file header is the root of the file structure and the only block with a
 statically defined location.
 
-* The file header block *shall* begin at byte offset 8, immediately
-  following the file preamble (its validation field therefore always encodes
-  the value 8).
+* The file header block *shall* begin at byte offset 0, opening with the
+  magic bytes (<<ife-file-identification>>) in place of the validation field
+  every other block carries.
+* EXTENSION_MAJOR and EXTENSION_MINOR *shall* encode the specification
+  version the file was written under. They are read once, at the root, and
+  propagated to every block reached from it; no block carries its own
+  version.
+* A decoder encountering a version newer than its own — minor or major —
+  *shall* read the file, restricting itself to the fields its own version
+  defines, and *should* report that later-version content is present but
+  inaccessible. Because no version moves, resizes or reshapes a field an
+  earlier one published, a newer file is always readable to the extent of the
+  fields the reader knows, and refusing to parse on version alone is never
+  structurally justified. A major version *may* still denote a semantic
+  incompatibility — content a prior decoder can read but cannot act on
+  correctly — which is a judgement for the consuming application and not a
+  parsing failure.
 * FILE_SIZE *shall* encode the size of the file in bytes, identical to the
   value returned by an operating system file-size query, at all times other
   than during active encoding. Validation *shall* fail, and file recovery
@@ -361,22 +371,26 @@ include::{generated}/constants/pixel_formats.adoc[]
   array.
 * LAYER_EXTENTS_OFFSET *shall* contain a valid offset to the layer extents
   array.
-* TILE_SIZE *shall* encode the edge length in pixels of the square tiles the
+* TILE_LENGTH *shall* encode the edge length in pixels of the square tiles the
   slide is divided into. A value of zero, and the field's absence in a file
   written under 1.0, *shall* both denote 256.
 
-[[ife-tile-size]]
-===== Tile Size
+[[ife-tile-length]]
+===== Tile Length
 
-Every tile in a slide is the same size. That size sets the axis of the global
-tile indexing scheme and of slide space (<<ife-terms>>), and is a property of
-the whole slide: layers differ in how many tiles they hold, never in how large
-a tile is.
+Every tile in a slide has the same edge length. That length sets the axis of
+the global tile indexing scheme and of slide space (<<ife-terms>>), and is a
+property of the whole slide: layers differ in how many tiles they hold, never
+in how large a tile is.
+
+The field names an edge, not an area and not a byte count — a slide of 512
+pixel tiles encodes 512, and the compressed size of any one of those tiles is
+the tile offsets entry's SIZE (<<ife-tile-offsets>>).
 
 Encoders *should* use 256. Every IFE file written to date does, and it is what
 a reader that ignores this field assumes.
 
-IMPORTANT: A 1.0 reader does not read TILE_SIZE and will assume 256. A file
+IMPORTANT: A 1.0 reader does not read TILE_LENGTH and will assume 256. A file
 that sets it to any other value is readable by a 1.0 decoder but will be
 rendered incorrectly by one. This is the only field added in 1.1 whose absence
 changes what a prior decoder computes.
@@ -436,6 +450,12 @@ include::{generated}/constants/metadata_formats.adoc[]
   Interoperability Specification version for METADATA_I2S, the encoding year
   for METADATA_DICOM — and *shall* encode zero (0x0000) where that standard
   has no version.
+
+NOTE: IFE 1.0 gave METADATA_FREE_TEXT the same value as METADATA_I2S, so a
+file written under 1.0 encodes 1 for either. Read VERSION to tell them apart:
+an I2S claim carries the specification version it conforms to, and an
+unversioned claim is free text by definition, naming no specification to
+adhere to.
 * SIZES_OFFSET *shall* encode a valid offset to the attribute sizes array.
 * BYTES_OFFSET *shall* encode a valid offset to the attribute byte array.
 

@@ -26,12 +26,57 @@
 #include <unordered_map>
 #include <vector>
 
-#include "IFE_Export.hpp"
+// The IFE_EXPORT symbol-visibility scheme. Three states, not two: building
+// the shared library exports; consuming that shared library imports;
+// everything else — a static archive, an object library, a translation unit
+// compiled straight into an executable — does neither and needs no attribute.
+// CMake sets IFE_EXPORT_API=true when building the library (see
+// CMakeLists.txt); consumers of a separately built shared library set
+// IFE_IMPORT_API=true.
+//
+// This lives here rather than in a header of its own: it was extracted from
+// the retired hand-written layer so both layers could share one definition,
+// but the generated layer never exports (decision D — the block layer is
+// deliberately out of the shared library), so IFE_Runtime.hpp — the only
+// header with exported symbols — is the single home that remains.
+#ifndef IFE_EXPORT_API
+#define IFE_EXPORT_API      false
+#endif
+// Set this only when linking against a separately built IFE shared library.
+#ifndef IFE_IMPORT_API
+#define IFE_IMPORT_API      false
+#endif
+
+#ifndef IFE_EXPORT
+    #if IFE_EXPORT_API
+        #if defined(_MSC_VER)
+        #define IFE_EXPORT  __declspec(dllexport)
+        #else
+        #define IFE_EXPORT  __attribute__ ((visibility ("default")))
+        #endif
+    #elif IFE_IMPORT_API
+        #if defined(_MSC_VER)
+        #define IFE_EXPORT  __declspec(dllimport)
+        #else
+        #define IFE_EXPORT
+        #endif
+    #else
+        // Static or object linkage: no attribute. Default visibility is
+        // hidden by CXX_VISIBILITY_PRESET (see CMakeLists).
+        #define IFE_EXPORT
+    #endif
+#endif
+
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
 
 #include "IFE_Blocks.hpp"
+// IFE::Window is the Emscripten windowed fetch (remote file ranges over
+// HTTP). Native builds never use it; gating keeps it out of native
+// consumers' translation units and out of the native install.
+#ifdef __EMSCRIPTEN__
 #include "IFE_Window.hpp"
+#endif
 
 namespace IrisCodec {
 using namespace Iris;
@@ -160,7 +205,7 @@ struct IFE_EXPORT TileTable {
     Planes   planes;
     /// Edge length in pixels of this slide's square tiles; 256 unless the file
     /// says otherwise, including for every file written before 1.1.
-    uint16_t tileSize = 256;
+    uint16_t tileLength = 256;
 };
 
 /// Abstraction of non-tile and named associated images within the slide file.

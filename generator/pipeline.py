@@ -25,9 +25,6 @@ from .emit.cpp import (
     emit_validation_header,
     emit_validation_source,
     emit_blocks_header,
-    emit_blocks_source,
-    emit_constants_header,
-    emit_vtables_header,
 )
 from .emit.docs import emit_documents
 from .model.layout import RECOVERY_PREFIX, LayoutResult, derive_layout
@@ -47,15 +44,8 @@ def _render(
     """Render every output: relative path -> content (byte-stable)."""
     layout = derive_layout(fields_doc, constants_doc)
     outputs = {
-        f"{_CPP_ROOT}/IFE_Constants.hpp": emit_constants_header(
-            constants_doc, fields_doc.get("types", {}), header
-        ),
-        f"{_CPP_ROOT}/IFE_VTables.hpp": emit_vtables_header(layout, header),
         f"{_CPP_ROOT}/IFE_Blocks.hpp": emit_blocks_header(
-            layout, fields_doc.get("types", {}), header
-        ),
-        f"{_CPP_ROOT}/IFE_Blocks.cpp": emit_blocks_source(
-            layout, fields_doc.get("types", {}), header
+            layout, fields_doc.get("types", {}), constants_doc, header
         ),
         f"{_CPP_ROOT}/IFE_Validation.hpp": emit_validation_header(layout, header),
         f"{_CPP_ROOT}/IFE_Validation.cpp": emit_validation_source(

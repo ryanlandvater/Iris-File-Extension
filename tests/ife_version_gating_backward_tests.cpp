@@ -36,7 +36,6 @@ int g_failures = 0;
 using ::IFE::BYTE;
 using ::IFE::Offset;
 namespace k  = ::IFE::constants;
-namespace vt = ::IFE::vtables;
 namespace b  = ::IFE::blocks;
 
 // The 200.0 file's layout. The sizes this build knows come from the
@@ -44,11 +43,11 @@ namespace b  = ::IFE::blocks;
 // this build does not know come from the derived fixture header.
 constexpr Offset FH_AT = 0;   // FILE_HEADER is fixed at byte 0
 constexpr Offset TT_AT = ife_test::FILE_HEADER_HEADER_SIZE;                    // 38 (1.0) + RUNTIME_FLAGS
-constexpr Offset LE_AT = TT_AT + vt::TILE_TABLE::header_size;
-constexpr Offset TO_AT = LE_AT + vt::LAYER_EXTENTS::header_size
+constexpr Offset LE_AT = TT_AT + b::TILE_TABLE::header_size;
+constexpr Offset TO_AT = LE_AT + b::LAYER_EXTENTS::header_size
                          + 2 * ife_test::LAYER_EXTENT_ENTRY_SIZE;
-constexpr Offset MD_AT = TO_AT + vt::TILE_OFFSETS::header_size + vt::TILE_OFFSETS::entry_size;
-constexpr Offset END_OFFSET = MD_AT + vt::METADATA::header_size;
+constexpr Offset MD_AT = TO_AT + b::TILE_OFFSETS::header_size + b::TILE_OFFSETS::TILE_OFFSET::entry_size;
+constexpr Offset END_OFFSET = MD_AT + b::METADATA::header_size;
 
 constexpr std::uint16_t ENTRY_STRIDE_200 = static_cast<std::uint16_t>(ife_test::LAYER_EXTENT_ENTRY_SIZE);
 constexpr std::uint32_t RUNTIME_FLAGS_VALUE = 0xCAFEBABEu;  // written, never read here
@@ -59,67 +58,67 @@ std::vector<BYTE> make_200_0_file() {
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
 
     // ---- FILE_HEADER: the 1.0 prefix, then the field this build lacks ---- //
-    ::IFE::store<std::uint32_t>(at(FH_AT, vt::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
-    ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::RECOVERY),
+    ::IFE::store<std::uint32_t>(at(FH_AT, b::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
+    ::IFE::store<std::uint16_t>(at(FH_AT, b::FILE_HEADER::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_FILE_HEADER));
-    ::IFE::store<std::uint64_t>(at(FH_AT, vt::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
-    ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::EXTENSION_MAJOR), 200);
-    ::IFE::store<std::uint16_t>(at(FH_AT, vt::FILE_HEADER::offset::EXTENSION_MINOR), 0);
-    ::IFE::store<std::uint32_t>(at(FH_AT, vt::FILE_HEADER::offset::FILE_REVISION), 7);
-    ::IFE::store<std::uint64_t>(at(FH_AT, vt::FILE_HEADER::offset::TILE_TABLE_OFFSET), TT_AT);
-    ::IFE::store<std::uint64_t>(at(FH_AT, vt::FILE_HEADER::offset::METADATA_OFFSET), MD_AT);
+    ::IFE::store<std::uint64_t>(at(FH_AT, b::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
+    ::IFE::store<std::uint16_t>(at(FH_AT, b::FILE_HEADER::offset::EXTENSION_MAJOR), 200);
+    ::IFE::store<std::uint16_t>(at(FH_AT, b::FILE_HEADER::offset::EXTENSION_MINOR), 0);
+    ::IFE::store<std::uint32_t>(at(FH_AT, b::FILE_HEADER::offset::FILE_REVISION), 7);
+    ::IFE::store<std::uint64_t>(at(FH_AT, b::FILE_HEADER::offset::TILE_TABLE_OFFSET), TT_AT);
+    ::IFE::store<std::uint64_t>(at(FH_AT, b::FILE_HEADER::offset::METADATA_OFFSET), MD_AT);
     ::IFE::store<std::uint32_t>(p + FH_AT + ife_test::RUNTIME_FLAGS_AT, RUNTIME_FLAGS_VALUE);  // 200.0-only
 
     // ---- TILE_TABLE ------------------------------------------------------- //
-    ::IFE::store<std::uint64_t>(at(TT_AT, vt::BLOCK::offset::VALIDATION), TT_AT);
-    ::IFE::store<std::uint16_t>(at(TT_AT, vt::BLOCK::offset::RECOVERY),
+    ::IFE::store<std::uint64_t>(at(TT_AT, b::TILE_TABLE::offset::VALIDATION), TT_AT);
+    ::IFE::store<std::uint16_t>(at(TT_AT, b::TILE_TABLE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_TABLE));
-    ::IFE::store<std::uint8_t>(at(TT_AT, vt::TILE_TABLE::offset::ENCODING),
+    ::IFE::store<std::uint8_t>(at(TT_AT, b::TILE_TABLE::offset::ENCODING),
                                static_cast<std::uint8_t>(k::TileEncodings::TILE_ENCODING_JPEG));
-    ::IFE::store<std::uint8_t>(at(TT_AT, vt::TILE_TABLE::offset::FORMAT),
+    ::IFE::store<std::uint8_t>(at(TT_AT, b::TILE_TABLE::offset::FORMAT),
                                static_cast<std::uint8_t>(k::PixelFormats::FORMAT_R8G8B8A8));
-    ::IFE::store<std::uint64_t>(at(TT_AT, vt::TILE_TABLE::offset::CIPHER_OFFSET), k::NULL_OFFSET);
-    ::IFE::store<std::uint64_t>(at(TT_AT, vt::TILE_TABLE::offset::TILE_OFFSETS_OFFSET), TO_AT);
-    ::IFE::store<std::uint64_t>(at(TT_AT, vt::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET), LE_AT);
-    ::IFE::store<std::uint32_t>(at(TT_AT, vt::TILE_TABLE::offset::X_EXTENT), 4096);
-    ::IFE::store<std::uint32_t>(at(TT_AT, vt::TILE_TABLE::offset::Y_EXTENT), 2048);
+    ::IFE::store<std::uint64_t>(at(TT_AT, b::TILE_TABLE::offset::CIPHER_OFFSET), k::NULL_OFFSET);
+    ::IFE::store<std::uint64_t>(at(TT_AT, b::TILE_TABLE::offset::TILE_OFFSETS_OFFSET), TO_AT);
+    ::IFE::store<std::uint64_t>(at(TT_AT, b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET), LE_AT);
+    ::IFE::store<std::uint32_t>(at(TT_AT, b::TILE_TABLE::offset::X_EXTENT), 4096);
+    ::IFE::store<std::uint32_t>(at(TT_AT, b::TILE_TABLE::offset::Y_EXTENT), 2048);
 
     // ---- LAYER_EXTENTS: stored stride 14, the 1.0 fields within ----------- //
-    ::IFE::store<std::uint64_t>(at(LE_AT, vt::ARRAY::offset::VALIDATION), LE_AT);
-    ::IFE::store<std::uint16_t>(at(LE_AT, vt::ARRAY::offset::RECOVERY),
+    ::IFE::store<std::uint64_t>(at(LE_AT, b::LAYER_EXTENTS::offset::VALIDATION), LE_AT);
+    ::IFE::store<std::uint16_t>(at(LE_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_LAYER_EXTENTS));
-    ::IFE::store<std::uint16_t>(at(LE_AT, vt::ARRAY::offset::STRIDE), ENTRY_STRIDE_200);
-    ::IFE::store<std::uint32_t>(at(LE_AT, vt::ARRAY::offset::COUNT), 2);
+    ::IFE::store<std::uint16_t>(at(LE_AT, b::LAYER_EXTENTS::offset::STRIDE), ENTRY_STRIDE_200);
+    ::IFE::store<std::uint32_t>(at(LE_AT, b::LAYER_EXTENTS::offset::COUNT), 2);
     for (std::uint32_t i = 0; i < 2; ++i) {
-        BYTE* e = p + LE_AT + vt::LAYER_EXTENTS::header_size + i * ENTRY_STRIDE_200;
-        ::IFE::store<std::uint32_t>(e + vt::LAYER_EXTENTS::entry::offset::X_TILES, i == 0 ? 8u : 16u);
-        ::IFE::store<std::uint32_t>(e + vt::LAYER_EXTENTS::entry::offset::Y_TILES, i == 0 ? 8u : 8u);
-        ::IFE::store<float>(e + vt::LAYER_EXTENTS::entry::offset::SCALE, i == 0 ? 1.0f : 2.0f);
+        BYTE* e = p + LE_AT + b::LAYER_EXTENTS::header_size + i * ENTRY_STRIDE_200;
+        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, i == 0 ? 8u : 16u);
+        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::Y_TILES, i == 0 ? 8u : 8u);
+        ::IFE::store<float>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::SCALE, i == 0 ? 1.0f : 2.0f);
         ::IFE::store<std::uint16_t>(e + ife_test::RESERVED_EXTENT_AT, static_cast<std::uint16_t>(0xBEEFu + i));  // 200.0-only
     }
 
     // ---- TILE_OFFSETS: one entry ------------------------------------------ //
-    ::IFE::store<std::uint64_t>(at(TO_AT, vt::ARRAY::offset::VALIDATION), TO_AT);
-    ::IFE::store<std::uint16_t>(at(TO_AT, vt::ARRAY::offset::RECOVERY),
+    ::IFE::store<std::uint64_t>(at(TO_AT, b::LAYER_EXTENTS::offset::VALIDATION), TO_AT);
+    ::IFE::store<std::uint16_t>(at(TO_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_OFFSETS));
-    ::IFE::store<std::uint16_t>(at(TO_AT, vt::ARRAY::offset::STRIDE), vt::TILE_OFFSETS::entry_size);
-    ::IFE::store<std::uint32_t>(at(TO_AT, vt::ARRAY::offset::COUNT), 1);
-    BYTE* te = p + TO_AT + vt::TILE_OFFSETS::header_size;
-    ::IFE::store_u40(te + vt::TILE_OFFSETS::entry::offset::OFFSET, 0xFEDCBA98ull);
-    ::IFE::store_u24(te + vt::TILE_OFFSETS::entry::offset::SIZE, 0x00ABCDu);
+    ::IFE::store<std::uint16_t>(at(TO_AT, b::LAYER_EXTENTS::offset::STRIDE), b::TILE_OFFSETS::TILE_OFFSET::entry_size);
+    ::IFE::store<std::uint32_t>(at(TO_AT, b::LAYER_EXTENTS::offset::COUNT), 1);
+    BYTE* te = p + TO_AT + b::TILE_OFFSETS::header_size;
+    ::IFE::store_u40(te + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, 0xFEDCBA98ull);
+    ::IFE::store_u24(te + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, 0x00ABCDu);
 
     // ---- METADATA: no optional blocks ------------------------------------- //
-    ::IFE::store<std::uint64_t>(at(MD_AT, vt::BLOCK::offset::VALIDATION), MD_AT);
-    ::IFE::store<std::uint16_t>(at(MD_AT, vt::BLOCK::offset::RECOVERY),
+    ::IFE::store<std::uint64_t>(at(MD_AT, b::TILE_TABLE::offset::VALIDATION), MD_AT);
+    ::IFE::store<std::uint16_t>(at(MD_AT, b::TILE_TABLE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_METADATA));
-    ::IFE::store<std::uint16_t>(at(MD_AT, vt::METADATA::offset::CODEC_MAJOR), 2);
-    ::IFE::store<std::uint16_t>(at(MD_AT, vt::METADATA::offset::CODEC_MINOR), 1);
-    ::IFE::store<std::uint16_t>(at(MD_AT, vt::METADATA::offset::CODEC_BUILD), 3);
-    for (auto field : {vt::METADATA::offset::ATTRIBUTES_OFFSET, vt::METADATA::offset::IMAGES_OFFSET,
-                       vt::METADATA::offset::ICC_COLOR_OFFSET, vt::METADATA::offset::ANNOTATIONS_OFFSET})
+    ::IFE::store<std::uint16_t>(at(MD_AT, b::METADATA::offset::CODEC_MAJOR), 2);
+    ::IFE::store<std::uint16_t>(at(MD_AT, b::METADATA::offset::CODEC_MINOR), 1);
+    ::IFE::store<std::uint16_t>(at(MD_AT, b::METADATA::offset::CODEC_BUILD), 3);
+    for (auto field : {b::METADATA::offset::ATTRIBUTES_OFFSET, b::METADATA::offset::IMAGES_OFFSET,
+                       b::METADATA::offset::ICC_COLOR_OFFSET, b::METADATA::offset::ANNOTATIONS_OFFSET})
         ::IFE::store<std::uint64_t>(at(MD_AT, field), k::NULL_OFFSET);
-    ::IFE::store<float>(at(MD_AT, vt::METADATA::offset::MICRONS_PIXEL), 0.25f);
-    ::IFE::store<float>(at(MD_AT, vt::METADATA::offset::MAGNIFICATION), 40.0f);
+    ::IFE::store<float>(at(MD_AT, b::METADATA::offset::MICRONS_PIXEL), 0.25f);
+    ::IFE::store<float>(at(MD_AT, b::METADATA::offset::MAGNIFICATION), 40.0f);
     return f;
 }
 
@@ -157,7 +156,7 @@ void test_200_0_file_read_by_1_0_build() {
     // The stored stride is the 200.0 entry width, wider than the 1.0 entry
     // this build compiles against -- which is exactly what it must step by.
     IFE_CHECK(le.stride() == ENTRY_STRIDE_200);
-    IFE_CHECK(le.stride() > vt::LAYER_EXTENTS::entry_size);
+    IFE_CHECK(le.stride() > b::LAYER_EXTENTS::LAYER_EXTENT::entry_size);
     IFE_CHECK(le.count() == 2);
     IFE_CHECK(le.entry(0).x_tiles() == 8);
     IFE_CHECK(le.entry(1).x_tiles() == 16);
