@@ -103,9 +103,13 @@ jobs:
       # Windows (documented setup-bazel Windows issue).
       # --verbose_failures: a failing genrule's command line and output must
       # reach the log — the runner truncates the bare action summary line.
+      # --action_env=PATH: Bazel's strict action env strips PATH to
+      # Git+system dirs on Windows, so genrules would find no python at all
+      # (observed in the corpus genrule's `SET PATH=...`); inherit the
+      # runner PATH instead. CI-only, no effect on production builds.
       - name: Build and test
         shell: bash
-        run: bazel test //... --test_output=errors --verbose_failures
+        run: bazel test //... --test_output=errors --verbose_failures --action_env=PATH
 
   sanitizers:
     name: address and undefined behaviour

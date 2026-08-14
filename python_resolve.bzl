@@ -1,18 +1,14 @@
 """Shared python-interpreter resolution for IFE genrules.
 
-`command -v python3` alone is not enough on GitHub Windows runners: python3 can
-resolve to the Microsoft Store stub — a real file that exits 9009 with no
-output. bash reports that as exit 1 and the CI log shows nothing, which is
-exactly how the corpus genrule failed before this rule existed. Probe each
-candidate with a real invocation; the stub fails the probe and the working
-interpreter wins. Diagnostics are emitted only on the failure path, so a
-successful build stays silent (the fetch/generator output is the only noise).
+Bazel's strict action environment (Bazel 7+) gives genrules a minimal PATH
+that excludes the host's python — observed on the Windows runner as
+`SET PATH=C:/Program Files/Git/usr/bin;...` with no interpreter. CI therefore
+passes `--action_env=PATH` (see .github/workflows/ci.yml) so genrules inherit
+the runner PATH. This leaves one platform naming difference to cover: some
+runners ship `python3`, some only `python`.
 """
 
 PYTHON_RESOLVE = (
-    "PY=$$(for c in python3 python; do " +
-    "command -v $$c >/dev/null 2>&1 && $$c -c 'import sys' >/dev/null 2>&1 " +
-    "&& { echo $$c; break; }; done); " +
-    "[ -n \"$$PY\" ] || { echo 'genrule: no usable python on PATH " +
-    "(python3 and python both failed the probe)' >&2; exit 1; }; "
+    "PY=$$(command -v python3 || command -v python); " +
+    "[ -n \"$$PY\" ] || { echo 'genrule: no python on PATH' >&2; exit 1; }; "
 )
