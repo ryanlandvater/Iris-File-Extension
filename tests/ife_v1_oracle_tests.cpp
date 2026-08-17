@@ -194,20 +194,84 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     // published example files), key-value pair sliced by the sizes array.
     const auto attrs = md.attributes_offset();
     IFE_CHECK(static_cast<bool>(attrs));
-    // v1 defined METADATA_FREE_TEXT as an alias of METADATA_I2S, so the byte
-    // it stored reads back as I2S under the schema's distinct value (errata
-    // recorded in ife_fields.json; conformance claims are now unambiguous).
-    IFE_CHECK(attrs.format() == k::MetadataFormats::METADATA_I2S);
+    // Free text, and it reads back as free text.
+    //
+    // This assertion used to expect METADATA_I2S, and the change is the one
+    // piece of coverage that died with v1's bytes rather than moving. v1
+    // defined METADATA_FREE_TEXT as an alias of METADATA_I2S, so a file it
+    // wrote stored 1 for either and a schema-aware reader saw I2S -- the
+    // errata recorded against the enum member. Demonstrating that needs bytes
+    // a v1 encoder actually wrote, and the snapshot is no longer one: it
+    // stores the corrected distinct value. The errata still governs files in
+    // the wild, and nothing in this suite exercises it any more.
+    IFE_CHECK(attrs.format() == k::MetadataFormats::METADATA_FREE_TEXT);
     const auto attr_sizes = attrs.sizes_offset();
-    IFE_CHECK(attr_sizes.count() == 1);
+    IFE_CHECK(attr_sizes.count() == 1 + expected.nested_attributes.size());
     IFE_CHECK(attr_sizes.entry(0).key_size()   == expected.attribute_key.size());
     IFE_CHECK(attr_sizes.entry(0).value_size() == expected.attribute_value.size());
+    IFE_CHECK(attr_sizes.entry(0).kind() == k::AttributeKinds::ATTRIBUTE_STRING);
     const auto attr_bytes = attrs.bytes_offset().bytes();
-    IFE_CHECK(attr_bytes.size == expected.attribute_key.size() + expected.attribute_value.size());
     IFE_CHECK(std::memcmp(attr_bytes.data, expected.attribute_key.data(),
                           expected.attribute_key.size()) == 0);
     IFE_CHECK(std::memcmp(attr_bytes.data + expected.attribute_key.size(),
                           expected.attribute_value.data(), expected.attribute_value.size()) == 0);
+
+    // ---- nested values, walked off the pinned bytes ------------------------ //
+    //
+    // The tree on disk, not in memory. ife_blocks_tests round-trips nesting
+    // through the writers, which proves the readers agree with the writers;
+    // this walks a file whose bytes are pinned by digest, which is what
+    // catches the two agreeing with each other about a changed layout.
+    ::IFE::Size cursor = 0;
+    for (std::uint32_t i = 0; i < attr_sizes.count(); ++i) {
+        const auto entry = attr_sizes.entry(i);
+        const std::string key(reinterpret_cast<const char*>(attr_bytes.data + cursor),
+                              entry.key_size());
+        cursor += entry.key_size();
+        const ::IFE::BYTE* value = attr_bytes.data + cursor;
+        cursor += entry.value_size();
+
+        if (i == 0) {   // the text value, checked above
+            IFE_CHECK(key == expected.attribute_key);
+            continue;
+        }
+        const auto& sequence = expected.nested_attributes[i - 1];
+        IFE_CHECK(key == sequence.key);
+        IFE_CHECK(entry.kind() == k::AttributeKinds::ATTRIBUTE_NESTED);
+        // VALUE_SIZE is the slice length at every kind, so the item count is
+        // what the slice holds. An empty sequence is a zero-length value, and
+        // is not the same as a text value of length zero -- KIND is what tells
+        // them apart, which is the whole reason it is a byte on the wire.
+        IFE_CHECK(b::nested_count(entry.value_size()) == sequence.items.size());
+
+        for (std::size_t item = 0; item < sequence.items.size(); ++item) {
+            const ::IFE::Offset at = b::nested_offset(value, item);
+            // Each item is a complete attributes structure: it validates on
+            // its own terms, exactly as the root does.
+            const b::ATTRIBUTES nested{p, at, f.size(), declared};
+            IFE_CHECK(static_cast<bool>(nested.validate_deep()));
+
+            const auto nested_sizes = nested.sizes_offset();
+            const auto nested_bytes = nested.bytes_offset().bytes();
+            IFE_CHECK(nested_sizes.count() == sequence.items[item].size());
+
+            ::IFE::Size at_byte = 0;
+            for (std::uint32_t j = 0; j < nested_sizes.count(); ++j) {
+                const auto pair = nested_sizes.entry(j);
+                const std::string nk(reinterpret_cast<const char*>(nested_bytes.data + at_byte),
+                                     pair.key_size());
+                at_byte += pair.key_size();
+                const std::string nv(reinterpret_cast<const char*>(nested_bytes.data + at_byte),
+                                     pair.value_size());
+                at_byte += pair.value_size();
+                IFE_CHECK(pair.kind() == k::AttributeKinds::ATTRIBUTE_STRING);
+                IFE_CHECK(nk == sequence.items[item][j].first);
+                IFE_CHECK(nv == sequence.items[item][j].second);
+            }
+            IFE_CHECK(at_byte == nested_bytes.size);
+        }
+    }
+    IFE_CHECK(cursor == attr_bytes.size);   // the walk consumed the whole run
 
     // A blob, sized by a u32 length v1 wrote.
     const auto icc = md.icc_color_offset().bytes();

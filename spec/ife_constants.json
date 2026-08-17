@@ -233,6 +233,22 @@
       }
     }
   },
+  "attribute_kinds": {
+    "description": "What an attribute value's bytes are, as distinct from what they mean. This is orthogonal to metadata_formats: that names the key vocabulary a file claims to follow, this describes the structure of a single value, and one attributes block may freely mix the two kinds -- which is what a DICOM data set containing both element values and sequences is.",
+    "underlying_type": "u8",
+    "ife_version": {
+      "1.0": {
+        "ATTRIBUTE_STRING": {
+          "value": 0,
+          "description": "The value slice is the value itself: VALUE_SIZE bytes of UTF-8 text."
+        },
+        "ATTRIBUTE_NESTED": {
+          "value": 1,
+          "description": "The value slice holds file offsets instead of text. VALUE_SIZE keeps the meaning it has everywhere else -- how many bytes the value occupies -- so a decoder walks the packed run identically whatever the kind, and never has to interpret a value to find the next one. Those bytes are 64-bit absolute file offsets, eight bytes apiece, each locating an attributes block that is a complete key-value structure in its own right: a slice of sixteen bytes is two nested structures, and a slice of zero bytes is a sequence of none, which is legal and is not the same as a text value of length zero. The offsets are absolute, the form every offset in the format takes, so a value resolves without reference to the block carrying it. This is what lets a tree be carried natively -- a DICOM sequence, whose items are each a data set -- instead of flattened into path-shaped keys by a convention this specification does not state."
+        }
+      }
+    }
+  },
   "annotation_types": {
     "description": "The byte format of an annotation visual-object byte stream. Encoded streams shall follow the corresponding external specification (e.g. PNG, SVG).",
     "underlying_type": "u8",

@@ -206,8 +206,14 @@ def emit_revision_history(document: dict[str, Any]) -> str:
         out += [
             f"*Version {version}* — {when}, {authors}::",
             _cell(entry.get("summary", "")),
-            "",
         ]
+        # A revision may carry an erratum: something the version did that its
+        # summary should not have to bury, because a reader looking for it is
+        # looking for exactly this. Rendered as an admonition inside the list
+        # item, which is what the `+` continuation is for.
+        if errata := entry.get("errata"):
+            out += ["+", "[CAUTION]", "====", _cell(errata), "===="]
+        out.append("")
     return "\n".join(out)
 
 

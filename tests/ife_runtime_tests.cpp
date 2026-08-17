@@ -14,6 +14,12 @@
  */
 #include "IFE_Runtime.hpp"
 
+// The corruption test below has to reach one field of one entry to break it.
+// Included for the generated offsets rather than to test the block layer,
+// which ife_blocks_tests owns: a test that hand-computes a byte position
+// stops testing the format and starts testing its own arithmetic.
+#include "IFE_Blocks.hpp"
+
 #include "ife_corpus_path.hpp"
 #include "ife_v1_fixture.hpp"
 
@@ -157,6 +163,41 @@ void test_abstraction_matches_what_was_encoded() {
                                 attribute->second.size());
         IFE_CHECK(value == expected.attribute_value);
     }
+    // The flat map carries the text values and only those: a sequence has no
+    // representation in a map of string to string, which is why the tree
+    // exists beside it rather than instead of it.
+    IFE_CHECK(slide.metadata.attributes.size() == 1);
+
+    // ---- the attribute tree ----------------------------------------------- //
+    // The abstraction's own descent, over pinned bytes. Everything above this
+    // reads the wire through generated handles; this is the one assertion that
+    // the runtime lifts a nested structure into something a caller can use.
+    IFE_CHECK(slide.attributeTree.size() == 1 + expected.nested_attributes.size());
+    if (slide.attributeTree.size() == 1 + expected.nested_attributes.size()) {
+        IFE_CHECK(slide.attributeTree[0].key == expected.attribute_key);
+        IFE_CHECK(slide.attributeTree[0].nested == false);
+        IFE_CHECK(slide.attributeTree[0].items.empty());
+
+        for (std::size_t i = 0; i < expected.nested_attributes.size(); ++i) {
+            const auto& sequence = expected.nested_attributes[i];
+            const auto& node     = slide.attributeTree[i + 1];
+            IFE_CHECK(node.key == sequence.key);
+            IFE_CHECK(node.nested);
+            IFE_CHECK(node.value.empty());
+            IFE_CHECK(node.items.size() == sequence.items.size());
+            for (std::size_t item = 0; item < node.items.size(); ++item) {
+                IFE_CHECK(node.items[item].size() == sequence.items[item].size());
+                for (std::size_t j = 0; j < node.items[item].size(); ++j) {
+                    const auto& leaf = node.items[item][j];
+                    const std::string value(reinterpret_cast<const char*>(leaf.value.data()),
+                                            leaf.value.size());
+                    IFE_CHECK(leaf.nested == false);
+                    IFE_CHECK(leaf.key == sequence.items[item][j].first);
+                    IFE_CHECK(value    == sequence.items[item][j].second);
+                }
+            }
+        }
+    }
 
     // Associated images, keyed by the label sliced from the image block.
     IFE_CHECK(slide.images.size() == 1);
@@ -172,6 +213,54 @@ void test_abstraction_matches_what_was_encoded() {
         IFE_CHECK(image->second.offset + image->second.byteSize <= expected.file_size);
         IFE_CHECK(f[image->second.offset] == 0xAB);
     }
+}
+
+// A nested value that is not a whole number of offsets, rejected on reading.
+//
+// The encode side cannot produce this -- a nested value's size is derived from
+// the item count, so store() has no way to emit a partial offset -- which is
+// exactly why the read side has to be tested against bytes rather than against
+// a writer. The fixture is corrupted in memory: one VALUE_SIZE moved off a
+// multiple of eight, everything else left alone.
+void test_partial_nested_offset_is_rejected() {
+    v1_fixture::Expected expected;
+    auto f = v1_slide(expected);
+    IFE_CHECK(static_cast<bool>(IrisCodec::validate_file_structure(f.data(), f.size())));
+
+    // Find the root attributes' sizes array through the public map, then the
+    // nested entry within it, rather than hard-coding either position.
+    namespace b = ::IFE::blocks;
+    const auto map = IrisCodec::generate_file_map(f.data(), f.size());
+    bool corrupted = false;
+    for (const auto& [offset, entry] : map) {
+        if (entry.type != IrisCodec::Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES) continue;
+        const b::ATTRIBUTE_SIZES sizes{f.data(), offset, f.size(), b::VERSION_WRITTEN};
+        for (std::uint32_t i = 0; i < sizes.count() && !corrupted; ++i) {
+            const auto e = sizes.entry(i);
+            if (e.kind() != ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED) continue;
+            if (e.value_size() == 0) continue;   // an empty sequence is already whole
+            // One byte short of a whole offset: the file still fits, the run
+            // still has room, and only the divisibility rule is broken.
+            ::IFE::store<std::uint32_t>(
+                f.data() + e.__offset + b::ATTRIBUTE_SIZES::ATTRIBUTE_SIZE::offset::VALUE_SIZE,
+                e.value_size() - 1);
+            corrupted = true;
+        }
+        if (corrupted) break;
+    }
+    IFE_CHECK(corrupted);   // the fixture must contain a nested value to corrupt
+
+    // Validation rejects it, and says which rule was broken.
+    const auto result = IrisCodec::validate_file_structure(f.data(), f.size());
+    IFE_CHECK(result != Iris::IRIS_SUCCESS);
+    IFE_CHECK(std::string(result.message).find("whole number") != std::string::npos);
+
+    // And the abstraction refuses to lift it rather than reading a partial
+    // offset and inventing a structure the encoder never wrote.
+    bool threw = false;
+    try { (void)IrisCodec::abstract_file_structure(f.data(), f.size()); }
+    catch (const std::runtime_error&) { threw = true; }
+    IFE_CHECK(threw);
 }
 
 void test_file_map_finds_every_block() {
@@ -205,9 +294,18 @@ void test_file_map_finds_every_block() {
         else ++blocks;
     }
     // Header, tile table, extents, offsets, metadata, attributes, sizes,
-    // bytes, ICC, images, image bytes, the annotations array, and one
-    // ANNOTATION_BYTES per annotation.
-    IFE_CHECK(blocks == 12 + static_cast<int>(expected.annotations.size()));
+    // bytes, ICC, images, image bytes, the annotations array, one
+    // ANNOTATION_BYTES per annotation, and three blocks per nested sequence
+    // item -- its own attributes header, sizes array and byte run.
+    //
+    // The nested blocks are the reason the map descends attribute values at
+    // all: the map exists to answer "what lies after the byte I am about to
+    // overwrite", and a live block it never mentions is one it will let a
+    // caller land on.
+    int nested_blocks = 0;
+    for (const auto& sequence : expected.nested_attributes)
+        nested_blocks += 3 * static_cast<int>(sequence.items.size());
+    IFE_CHECK(blocks == 12 + nested_blocks + static_cast<int>(expected.annotations.size()));
     IFE_CHECK(tile_data == static_cast<int>(expected.tiles));
 
     // upper_bound is the documented use: everything after a write point.
@@ -243,10 +341,30 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     IFE_CHECK(found(MAP_ENTRY_ANNOTATION_BYTES));
 
     // Every self-validating block written is found, and nothing is invented:
-    // ten, plus the annotations array and one ANNOTATION_BYTES apiece. A false
-    // positive needs eight bytes equal to their own offset followed by a u16
-    // in the 0x55 tag set -- the reason that prefix is worth keeping.
-    IFE_CHECK(recovered.size() == 11 + expected.annotations.size());
+    // ten, plus the annotations array and one ANNOTATION_BYTES apiece, plus
+    // three per nested sequence item. A false positive needs eight bytes equal
+    // to their own offset followed by a u16 in the 0x55 tag set -- the reason
+    // that prefix is worth keeping.
+    //
+    // The nested blocks are the point of counting them here. This scan never
+    // reads an attribute value -- the offset graph is deliberately destroyed
+    // below -- so finding them proves a nested structure is an ordinary block
+    // that carries its own VALIDATION word and recovery tag, and is
+    // recoverable without the parent that names it.
+    int nested_blocks = 0;
+    for (const auto& sequence : expected.nested_attributes)
+        nested_blocks += 3 * static_cast<int>(sequence.items.size());
+    IFE_CHECK(recovered.size() ==
+              11 + nested_blocks + expected.annotations.size());
+
+    // What a scan cannot do is tell the root attributes structure from an
+    // item: they are structurally identical, and only the reference from a
+    // parent's byte run distinguishes them. Recorded here because a recovery
+    // tool has to resolve that by reference, not by position.
+    int attribute_headers = 0;
+    for (const auto& [offset, entry] : recovered)
+        if (entry.type == MAP_ENTRY_ATTRIBUTES) ++attribute_headers;
+    IFE_CHECK(attribute_headers == 1 + nested_blocks / 3);
 
     // And the graph walk really is defeated, so the comparison is meaningful.
     bool threw = false;
@@ -366,6 +484,7 @@ int main(int argc, char** argv) {
 
     test_validate_accepts_a_v1_file();
     test_abstraction_matches_what_was_encoded();
+    test_partial_nested_offset_is_rejected();
     test_file_map_finds_every_block();
     test_recovery_finds_blocks_without_the_offset_graph();
 

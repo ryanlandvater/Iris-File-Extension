@@ -1,9 +1,37 @@
 # Conformance corpus
 
-Real bytes, written by a shipped encoder. The corpus exists so the test suite
-proves the stack reads **files that exist**, rather than agreeing with a second
-description of the format — which is all any fixture built by our own writers
-can prove.
+Real bytes on disk, pinned by digest. The corpus exists so the test suite
+proves the stack reads **files that exist**, rather than re-deriving the format
+from the same schema it was generated from.
+
+> **`v1_snapshot.test_slide` is no longer an independent witness — read this
+> before relying on it.** It was written by the shipped v1 encoder, which made
+> it evidence about *another implementation's* bytes: the one check that cannot
+> be fooled by a reader and a writer agreeing with each other about the wrong
+> thing. That ended with the 1.0 correction that gave `ATTRIBUTE_SIZE` its
+> `KIND` byte. The entry went from six bytes to seven, a stride of six stopped
+> being conformant, and the array validator now rejects the original (2857 B,
+> `658ead7c…`) — correctly. v1's writers were deleted in Phase 6, so nothing
+> but the generated layer can produce a corrected file.
+>
+> The replacement is written by `tests/ife_snapshot_writer.cpp` against a
+> **1.0-only** generated layer, derived from the committed spec by
+> `tests/fixtures/build_baseline_spec.py`. That indirection is load-bearing:
+> `store()` always lays out the newest version it knows, so a writer built from
+> the committed spec emits 1.1, and the oracle's substance is a 1.1 reader over
+> 1.0 bytes — `TILE_LENGTH` and `Z_PLANES` reading back absent, the layer
+> extent stride at the 1.0 entry size. A 1.1 fixture proves none of that.
+>
+> The result is 2858 B — one byte larger than v1's, and that byte is its single
+> attribute's `KIND`. Every other block sits at the offset v1 put it at,
+> `ATTRIBUTE_SIZES` included, at byte 907 in both.
+>
+> **What is kept:** the digest pin, so a schema edit that moves a shipped field
+> breaks reading a file nobody regenerated. **What is lost:** the cross-check,
+> until a second implementation exists to write a fixture. One assertion died
+> outright rather than moving — v1 stored `METADATA_FREE_TEXT` as an alias of
+> `METADATA_I2S`, and demonstrating that errata needs bytes a v1 encoder
+> actually wrote.
 
 Files are **hosted, not committed**: `iris.exampleslides.org` (Cloudflare R2)
 serves them, `manifest.json` pins each by SHA-256, and CMake fetches into the

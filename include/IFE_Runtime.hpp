@@ -255,6 +255,32 @@ struct IFE_EXPORT Annotations : public std::unordered_map<Annotation::Identifier
     Groups groups;
 };
 
+struct AttributeNode;
+/// A complete attribute structure: what one ATTRIBUTES block carries.
+using AttributeSet = std::vector<AttributeNode>;
+
+/// One attribute, with the value's structure preserved.
+///
+/// IrisCodec::Metadata::attributes is a flat map of string to string, so a
+/// value that is a sequence of nested attribute sets has nowhere to go in it.
+/// The alternative to carrying the tree here would be flattening it back into
+/// path-shaped keys — which is the convention the nested wire format exists to
+/// replace, so reintroducing it at the abstraction boundary would give the
+/// change away for nothing.
+struct IFE_EXPORT AttributeNode {
+    /// The attribute key. ASCII, or a four-byte DICOM tag.
+    std::string   key;
+    /// The value's text, when this is not a sequence.
+    std::u8string value;
+    /// One entry per sequence item, each item a complete attribute set — the
+    /// shape of a DICOM sequence, whose items are each a data set.
+    std::vector<AttributeSet> items;
+    /// Whether the value is a sequence. Stated rather than inferred from
+    /// `items` being empty: a sequence of no items is legal and is not the
+    /// same thing as a text value of length zero.
+    bool          nested = false;
+};
+
 /// In-memory abstraction of the Iris file structure.
 struct IFE_EXPORT File {
     Header           header;
@@ -262,6 +288,17 @@ struct IFE_EXPORT File {
     AssociatedImages images;
     Annotations      annotations;
     Metadata         metadata;
+    /// The attribute structure as the file carries it, nesting included.
+    ///
+    /// The complete picture; Metadata::attributes carries the top-level text
+    /// values as well, flat, for callers that want the map they always had.
+    /// Empty when the file encodes no attributes at all.
+    ///
+    /// Held on File rather than on Metadata beside the flat map for the same
+    /// reason clinicalOffset is: IrisCodec::Metadata is defined in
+    /// Iris-Headers rather than in this repository. Move it there when that
+    /// header gains the field.
+    AttributeSet     attributeTree;
     /// Byte range of the clinical metadata stream, NULL_OFFSET when absent.
     ///
     /// A range rather than a copy, unlike Metadata::ICC_profile. A colour

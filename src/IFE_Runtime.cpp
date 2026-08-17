@@ -67,6 +67,11 @@ Result to_result(const b::Status& __status) noexcept try {
         case b::Check::CYCLE:
             return {IRIS_FAILURE, where + " is reached by an offset chain that returns to a block "
                                   "already on the path"};
+        case b::Check::BAD_NESTED_VALUE:
+            return {IRIS_FAILURE, where + " is a nested attribute value of " +
+                                  std::to_string(__status.found) + " bytes, which is not a whole "
+                                  "number of " + std::to_string(__status.expected) +
+                                  "-byte offsets"};
         case b::Check::CONFORMANCE:
             return {IRIS_FAILURE, where + " violates a normative requirement of the specification"};
         case b::Check::OK: break;
@@ -99,6 +104,218 @@ b::FILE_HEADER versioned_root(const BYTE* __base, size_t __size) noexcept {
     return b::FILE_HEADER{__base, 0, __size, version_of(bootstrap)};
 }
 
+// MARK: - Attribute slicing
+//
+// One attribute, as it sits on disk: a key, and a value that is either text or
+// a run of offsets to nested structures. The slicing lives here, once, because
+// the sizes array and the packed byte run have to agree exactly and a second
+// copy of that agreement is a second place for it to drift -- the same reason
+// the generated writer derives both from one payload.
+
+struct AttributeSlice {
+    const BYTE*       key        = nullptr;
+    Size              key_size   = 0;
+    const BYTE*       value      = nullptr;
+    Size              value_size = 0;
+    k::AttributeKinds kind       = k::AttributeKinds::ATTRIBUTE_STRING;
+
+    /// How many nested structures the value locates. Meaningful only when the
+    /// kind is nested; zero is a legal empty sequence.
+    [[nodiscard]] Size item_count() const noexcept {
+        return kind == k::AttributeKinds::ATTRIBUTE_NESTED
+             ? b::nested_count(value_size) : 0;
+    }
+    /// The offset of nested structure `i`: an ordinary absolute file offset.
+    [[nodiscard]] Offset item(Size __i) const noexcept {
+        return b::nested_offset(value, __i);
+    }
+};
+
+/// Why a slice failed. Three causes, reported apart rather than as one bool,
+/// because the diagnostic a caller prints is the whole value of noticing.
+enum class SliceError {
+    NONE,
+    UNREADABLE,       ///< the sizes or bytes block does not validate
+    OVERRUN,          ///< an attribute extends past the end of the byte array
+    NESTED_PARTIAL,   ///< a nested value is not a whole number of offsets
+};
+
+/// Cut one attributes structure into its slices.
+///
+/// Where the deserialization-side checks live. Both blocks can validate
+/// structurally and still disagree with each other, because neither block
+/// describes the other; this is where that is caught. `__at` receives the
+/// index of the offending entry, so a message can name it.
+SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
+                            std::vector<AttributeSlice>& __out,
+                            std::uint32_t* __at = nullptr) {
+    __out.clear();
+    if (__at) *__at = 0;
+    const auto sizes = __attrs.sizes_offset();
+    const auto bytes = __attrs.bytes_offset();
+    if (!sizes || !bytes) return SliceError::UNREADABLE;
+
+    const ::IFE::ByteSpan blob = bytes.bytes();
+    Size cursor = 0;
+    for (uint32_t i = 0; i < sizes.count(); ++i) {
+        if (__at) *__at = i;
+        const auto entry = sizes.entry(i);
+        AttributeSlice slice;
+        slice.key_size   = entry.key_size();
+        slice.value_size = entry.value_size();
+        slice.kind       = entry.kind();
+
+        if (slice.key_size > blob.size - cursor) return SliceError::OVERRUN;
+        slice.key = blob.data + cursor;
+        cursor += slice.key_size;
+        if (slice.value_size > blob.size - cursor) return SliceError::OVERRUN;
+        slice.value = blob.data + cursor;
+        cursor += slice.value_size;
+
+        // A nested value is a whole number of offsets or it is malformed: the
+        // one rule about these bytes that the capped schema vocabulary cannot
+        // state, so it is stated in the specification prose and enforced here.
+        // Rejected outright rather than rounded down -- a partial offset is a
+        // corrupted file, and reading the whole ones would be inventing a
+        // structure the encoder never wrote.
+        if (slice.kind == k::AttributeKinds::ATTRIBUTE_NESTED &&
+            !b::nested_size_is_whole(slice.value_size))
+            return SliceError::NESTED_PARTIAL;
+
+        __out.push_back(slice);
+    }
+    return SliceError::NONE;
+}
+
+/// How deep a chain of nested attribute structures may go.
+///
+/// The generated block graph is bounded by MAX_BLOCK_DEPTH; nesting is the one
+/// place a file chooses its own depth, so it needs its own bound. Reaching the
+/// root's attributes already spends three levels (file header, metadata,
+/// attributes), and real DICOM nesting is two or three deep -- a sequence of
+/// items, occasionally holding a sequence of its own.
+///
+/// One constant, used by all three walks. Validation has to reject exactly
+/// what the other two cannot handle: a bound enforced only where the tree is
+/// lifted would let a file validate and then throw on abstraction, which is
+/// the one thing validating first is supposed to prevent.
+constexpr Size MAX_ATTRIBUTE_DEPTH = b::MAX_BLOCK_DEPTH - 3;
+
+/// Deep-validate the nested attribute structures the generated walk cannot
+/// reach.
+///
+/// `points_to` describes a *field*, and these edges live inside an opaque byte
+/// run whose length is data — so no schema linkage can express them and the
+/// generated validator does not follow them. This is the escape valve the
+/// specification names: a rule that will not fit the capped vocabulary is
+/// prose in the document and hand-written here.
+///
+/// The path carries the chain of attributes blocks rather than every block
+/// visited, so a structure nested twice from different keys is two legitimate
+/// visits while one that reaches itself is a cycle.
+b::Status validate_nested_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath& __path,
+                                     Size __depth) {
+    if (__depth > MAX_ATTRIBUTE_DEPTH)
+        return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __depth,
+                MAX_ATTRIBUTE_DEPTH, __attrs.__offset};
+    if (__path.contains(__attrs.__offset))
+        return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __attrs.__offset, 0,
+                __attrs.__offset};
+    if (!__path.push(__attrs.__offset))
+        return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __path.depth,
+                b::MAX_BLOCK_DEPTH, __attrs.__offset};
+
+    std::vector<AttributeSlice> slices;
+    std::uint32_t at = 0;
+    switch (slice_attributes(__attrs, slices, &at)) {
+        case SliceError::NONE: break;
+        case SliceError::UNREADABLE:
+            return {b::Check::NOT_CONSTRUCTED, b::ATTRIBUTES::type, "SIZES_OFFSET",
+                    __attrs.__offset, 0, __attrs.__offset};
+        case SliceError::OVERRUN:
+            return {b::Check::ARRAY_OVERRUN, b::ATTRIBUTE_BYTES::type, "COUNT", at,
+                    __attrs.bytes_offset().bytes().size,
+                    __attrs.bytes_offset().__offset};
+        case SliceError::NESTED_PARTIAL:
+            // Reported against the entry that is wrong, with the size it
+            // carries: a message naming "entry 3, 20 bytes" is actionable
+            // where "the attributes are malformed" is not.
+            return {b::Check::BAD_NESTED_VALUE, b::ATTRIBUTE_SIZES::type, "VALUE_SIZE",
+                    __attrs.sizes_offset().entry(at).value_size(),
+                    b::NESTED_OFFSET_SIZE, __attrs.sizes_offset().__offset};
+    }
+
+    for (const auto& slice : slices) {
+        if (slice.kind != k::AttributeKinds::ATTRIBUTE_NESTED) continue;
+        for (Size i = 0, n = slice.item_count(); i < n; ++i) {
+            const b::ATTRIBUTES child{__attrs.__base, slice.item(i), __attrs.__size,
+                                      __attrs.__version};
+            // The child's own subtree -- its sizes and byte arrays -- is
+            // ordinary generated territory, and cannot recurse.
+            if (const b::Status s = child.validate_deep(); !s) return s;
+            if (const b::Status s = validate_nested_attributes(child, __path, __depth + 1);
+                !s) return s;
+        }
+    }
+    __path.pop();
+    return {};
+}
+
+/// Lift one attributes structure, and everything it nests, into the
+/// abstraction. Throws, as the rest of abstract_file_structure does, because a
+/// file that reaches here has already been validated.
+Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, Size __depth) {
+    if (__depth > MAX_ATTRIBUTE_DEPTH)
+        throw std::runtime_error(
+            "Attribute nesting exceeds the maximum depth of " +
+            std::to_string(MAX_ATTRIBUTE_DEPTH));
+
+    std::vector<AttributeSlice> slices;
+    std::uint32_t at = 0;
+    switch (slice_attributes(__attrs, slices, &at)) {
+        case SliceError::NONE: break;
+        case SliceError::UNREADABLE:
+            throw std::runtime_error(
+                "The attributes block at " + std::to_string(__attrs.__offset) +
+                " does not have a readable sizes or byte array");
+        case SliceError::OVERRUN:
+            throw std::runtime_error(
+                "Attribute " + std::to_string(at) + " of the attributes block at " +
+                std::to_string(__attrs.__offset) +
+                " extends past the attribute byte array");
+        case SliceError::NESTED_PARTIAL:
+            throw std::runtime_error(
+                "Attribute " + std::to_string(at) + " of the attributes block at " +
+                std::to_string(__attrs.__offset) + " is a nested value of " +
+                std::to_string(__attrs.sizes_offset().entry(at).value_size()) +
+                " bytes, which is not a whole number of " +
+                std::to_string(b::NESTED_OFFSET_SIZE) + "-byte offsets");
+    }
+
+    Abstraction::AttributeSet set;
+    set.reserve(slices.size());
+    for (const auto& slice : slices) {
+        Abstraction::AttributeNode node;
+        node.key.assign(reinterpret_cast<const char*>(slice.key), slice.key_size);
+        node.nested = slice.kind == k::AttributeKinds::ATTRIBUTE_NESTED;
+        if (!node.nested) {
+            node.value.assign(reinterpret_cast<const char8_t*>(slice.value),
+                              slice.value_size);
+        } else {
+            const Size items = slice.item_count();
+            node.items.reserve(items);
+            for (Size i = 0; i < items; ++i) {
+                const b::ATTRIBUTES child{__attrs.__base, slice.item(i),
+                                          __attrs.__size, __attrs.__version};
+                if (!child) fail(child.validate());
+                node.items.push_back(lift_attributes(child, __depth + 1));
+            }
+        }
+        set.push_back(std::move(node));
+    }
+    return set;
+}
+
 }  // namespace
 
 // MARK: - Entry points
@@ -118,7 +335,21 @@ Result IFE_EXPORT validate_file_structure(BYTE* const __base, size_t __size) noe
     // with validate_full, early-returning on failure. validate_deep does the
     // same walk plus cycle detection, and follows edges leaving array entries
     // as well as block headers -- which v1's chain did not.
-    return to_result(header.validate_deep());
+    if (const b::Status status = header.validate_deep(); !status) return to_result(status);
+
+    // Then the one part of the graph the generated walk cannot see: the
+    // structures nested inside attribute values.
+    try {
+        const auto metadata = header.metadata_offset();
+        if (!metadata) return to_result(metadata.validate());
+        if (const auto attributes = metadata.attributes_offset()) {
+            b::VisitPath path;
+            return to_result(validate_nested_attributes(attributes, path, 0));
+        }
+    } catch (const std::bad_alloc&) {
+        return {IRIS_FAILURE, "validation failed (out of memory walking nested attributes)"};
+    }
+    return to_result(b::Status{});
 }
 
 Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t __size) {
@@ -209,6 +440,9 @@ Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t 
         meta.attributes.type    = static_cast<MetadataType>(attributes.format());
         meta.attributes.version = attributes.version();
 
+        // Checked here rather than left to slice_attributes, which reports one
+        // failure for two causes: an unreadable block and a readable pair that
+        // disagree. Naming the block that is actually broken is worth two lines.
         const auto sizes = attributes.sizes_offset();
         const auto bytes = attributes.bytes_offset();
         if (!sizes) fail(sizes.validate());
@@ -216,22 +450,12 @@ Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t 
 
         // Keys and values are one byte run sliced by a parallel size array --
         // there is no string type in IFE, by design.
-        const ::IFE::ByteSpan blob = bytes.bytes();
-        Size cursor = 0;
-        for (uint32_t i = 0; i < sizes.count(); ++i) {
-            const auto entry     = sizes.entry(i);
-            const Size key_size  = entry.key_size();
-            const Size value_size = entry.value_size();
-            if (cursor + key_size + value_size > blob.size)
-                throw std::runtime_error(
-                    "Attribute " + std::to_string(i) + " extends past the attribute byte array");
+        abstraction.attributeTree = lift_attributes(attributes, 0);
 
-            const char* key = reinterpret_cast<const char*>(blob.data + cursor);
-            cursor += key_size;
-            const char8_t* value = reinterpret_cast<const char8_t*>(blob.data + cursor);
-            cursor += value_size;
-            meta.attributes[std::string(key, key_size)] = std::u8string(value, value_size);
-        }
+        // The flat map keeps carrying the top-level text values, unchanged: a
+        // caller that never encodes a sequence sees exactly what it always saw.
+        for (const auto& node : abstraction.attributeTree)
+            if (!node.nested) meta.attributes[node.key] = node.value;
     }
 
     if (const auto images = metadata.images_offset()) {
@@ -353,6 +577,39 @@ Size blob_span(const Block& __b) noexcept {
     return Block::header_size + __b.count();
 }
 
+/// Record one attributes structure and every structure nested inside it.
+///
+/// The nested blocks have to appear in the map or the map is unsafe for what
+/// it exists for: a caller looks up what lies after a write location so it
+/// does not overwrite live data, and a block the map never mentions is a block
+/// it will happily let you land on.
+void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
+                     Size __depth) {
+    if (__depth > MAX_ATTRIBUTE_DEPTH) return;
+    note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES, __attrs.__offset,
+         b::ATTRIBUTES::header_size);
+
+    const auto sizes = __attrs.sizes_offset();
+    const auto bytes = __attrs.bytes_offset();
+    if (sizes) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES, sizes.__offset,
+                    array_span(sizes));
+    if (bytes) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES_BYTES, bytes.__offset,
+                    blob_span(bytes));
+
+    std::vector<AttributeSlice> slices;
+    // Best-effort: the map is built over files that may already be damaged, so
+    // an unreadable value stops the descent rather than failing the map.
+    if (slice_attributes(__attrs, slices) != SliceError::NONE) return;
+    for (const auto& slice : slices) {
+        if (slice.kind != k::AttributeKinds::ATTRIBUTE_NESTED) continue;
+        for (Size i = 0, n = slice.item_count(); i < n; ++i) {
+            const b::ATTRIBUTES child{__attrs.__base, slice.item(i), __attrs.__size,
+                                      __attrs.__version};
+            if (child) note_attributes(__map, child, __depth + 1);
+        }
+    }
+}
+
 }  // namespace
 
 Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __base, size_t __size) {
@@ -389,13 +646,8 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __base, size_t __s
     if (!metadata) fail(metadata.validate());
     note(map, MAP_ENTRY_METADATA, metadata.__offset, b::METADATA::header_size);
 
-    if (const auto attributes = metadata.attributes_offset()) {
-        note(map, MAP_ENTRY_ATTRIBUTES, attributes.__offset, b::ATTRIBUTES::header_size);
-        if (const auto sizes = attributes.sizes_offset())
-            note(map, MAP_ENTRY_ATTRIBUTE_SIZES, sizes.__offset, array_span(sizes));
-        if (const auto bytes = attributes.bytes_offset())
-            note(map, MAP_ENTRY_ATTRIBUTES_BYTES, bytes.__offset, blob_span(bytes));
-    }
+    if (const auto attributes = metadata.attributes_offset())
+        note_attributes(map, attributes, 0);
 
     if (const auto images = metadata.images_offset()) {
         note(map, MAP_ENTRY_ASSOCIATED_IMAGES, images.__offset, array_span(images));

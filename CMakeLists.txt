@@ -585,6 +585,51 @@ if(IFE_BUILD_TESTS)
     )
     add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests ${IFE_CORPUS_DIR})
 
+    # Produces the corpus snapshot the tests above read. Not a test, and
+    # deliberately not run by the build: the snapshot is hosted and pinned by
+    # digest, so regenerating it is an explicit act with an upload attached.
+    #
+    # Built against a *1.0-only* generated layer, derived from the committed
+    # spec by build_baseline_spec.py. The reason is the oracle's substance: it
+    # proves a 1.1 reader reads a 1.0 file, gating the newer fields off, and a
+    # writer built from the committed spec can only emit 1.1 because store()
+    # always lays out the newest version. The same derive-don't-copy
+    # arrangement as the 200.0 fixture above, in the other direction.
+    set(IFE_BASELINE_FIXTURE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/baseline_versioning)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/build_baseline_spec.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/spec
+                ${IFE_BASELINE_FIXTURE_DIR}
+        RESULT_VARIABLE IFE_BASELINE_RESULT
+    )
+    if(NOT IFE_BASELINE_RESULT EQUAL 0)
+        message(FATAL_ERROR "IFE baseline fixture spec builder failed — see output above")
+    endif()
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -m generator
+                --schema-dir ${IFE_BASELINE_FIXTURE_DIR}
+                --out-dir ${IFE_BASELINE_FIXTURE_DIR}/generated
+                --docs-dir ${IFE_BASELINE_FIXTURE_DIR}/generated_docs
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE IFE_BASELINE_GEN_RESULT
+    )
+    if(NOT IFE_BASELINE_GEN_RESULT EQUAL 0)
+        message(FATAL_ERROR "IFE baseline fixture generation failed — see output above")
+    endif()
+
+    add_executable(
+        ife_snapshot_writer
+        ${PROJECT_SOURCE_DIR}/tests/ife_snapshot_writer.cpp
+    )
+    target_include_directories(
+        ife_snapshot_writer PRIVATE ${IFE_INCLUDE_DIR}
+        ${IFE_BASELINE_FIXTURE_DIR}/generated
+        ${PROJECT_SOURCE_DIR}/tests
+    )
+    target_compile_features(ife_snapshot_writer PRIVATE cxx_std_20)
+    target_link_libraries(ife_snapshot_writer PRIVATE ${IFE_Dependencies})
+
     # A whole slide larger than 4 GiB, so the tile offsets a reader follows
     # need their fifth byte.  Sparse: over 4 GiB long, tens of kilobytes on
     # disk.

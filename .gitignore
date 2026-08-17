@@ -38,3 +38,4 @@ tests/fixtures/future_versioning/
 # generated_docs/README.md is documentation, kept committed.
 generated_docs/*
 !generated_docs/README.md
+tests/fixtures/baseline_versioning/

@@ -1,9 +1,12 @@
 {
   "v1_snapshot.test_slide": {
     "url": "https://iris.exampleslides.org/spec-validation/v1_snapshot.test_slide",
-    "size": 2857,
-    "sha256": "658ead7c395c62c9eec8d3251a720b4e00553b9bf218aed9d4134791edd76fa0",
+    "size": 3087,
+    "sha256": "1cf03729f9497b501c42c3b7fce62f5f10f0e10f15e89224b38968c7aecd41da",
     "version": "1.0",
+    "written_by": "generated, 1.0 layout (tests/ife_snapshot_writer.cpp)",
+    "covers": "Nested attribute values: three ATTRIBUTES structures, the root carrying a text value, a two-item sequence, and an empty sequence. The nesting is on disk rather than only in memory, so the corpus exercises the KIND byte, the offset run, and the zero-item case against pinned bytes.",
+    "note": "Regenerated when the 1.0 correction took ATTRIBUTE_SIZE from six bytes to seven: a stride of six is no longer conformant, so the v1-written original (2857 B, sha256 658ead7c...) is rejected by the array validator. v1's writers were deleted in Phase 6, so this is written by the generated layer instead -- built against a 1.0-only schema derived by tests/fixtures/build_baseline_spec.py, because store() otherwise emits the newest version and the oracle's substance is a 1.1 reader over 1.0 bytes. It is one byte larger than the original, and that byte is the KIND field of its single attribute; every other block is laid out exactly as v1 laid it. What is lost relative to the original is the independent witness -- these bytes are now this implementation's own -- and what is kept is the pin: a schema edit that moves a shipped field breaks reading a file nobody regenerated.",
     "blocks": [
       "FILE_HEADER",
       "TILE_TABLE",

@@ -499,7 +499,18 @@
               {
                 "name": "VALUE_SIZE",
                 "type": "u32",
-                "description": "Byte length of the UTF-8 value string corresponding to the key."
+                "description": "Byte length of the value slice corresponding to the key. Its meaning does not vary with KIND -- it is always how many bytes of the attribute byte array this value occupies, which is what lets a reader walk the packed run without interpreting any value. A string value is that many bytes of UTF-8; a nested value is that many bytes of 64-bit file offsets, eight per nested structure."
+              },
+              {
+                "name": "KIND",
+                "enum": "attribute_kinds",
+                "description": "Whether the value slice holds text or offsets to nested attribute structures. A value is tagged rather than inferred so a tree is representable natively: without this byte a nesting convention has to be encoded in the key text, which makes every consumer agree on a grammar the format does not state.",
+                "conformance": {
+                  "level": "shall",
+                  "clause": "ife-attribute-sizes",
+                  "enum_member": true,
+                  "requirement": "name an attribute kind defined by this specification"
+                }
               }
             ]
           }

@@ -613,8 +613,43 @@ include::{generated}/layout/ATTRIBUTE_SIZES_entry.adoc[]
 * KEY_SIZE *shall* contain the size, in bytes, of the attribute key
   string; if encoded according to the DICOM standard this value *shall*
   be 4.
-* VALUE_SIZE *shall* contain the size, in bytes, of the UTF-8 value string
-  corresponding to the key or tag.
+* VALUE_SIZE *shall* contain the size, in bytes, of the value slice in the
+  attribute byte array, whatever KIND states. It is a byte count and never a
+  count of anything the slice contains. A decoder can therefore walk the packed
+  run — key, then value, then the next key — without interpreting a single
+  value or consulting KIND at all.
+* KIND *shall* be one of the attribute kind values below.
++
+include::{generated}/constants/attribute_kinds.adoc[]
+* Where KIND is `ATTRIBUTE_NESTED`, the slice *shall* consist of 64-bit
+  unsigned file offsets laid end to end, each locating an attributes block.
+  VALUE_SIZE *shall* therefore be an exact multiple of eight. An encoder
+  *shall not* write a nested value of any other size, and a decoder *shall*
+  reject one as malformed rather than round it or read a partial offset. The
+  number of nested structures is that size divided by eight, derived on
+  reading and never stored.
+* A nested value of size zero is a sequence of no items: legal, and distinct
+  from a text value of size zero. KIND is what tells the two apart.
+
+.Why the item count is stored as a byte count
+****
+The attribute byte array is exactly what its name says — an opaque run of
+bytes with no structure of its own. Everything about how it divides comes from
+the sizes array, and the only unit that array can speak in is the byte. So the
+number of nested structures a value carries is expressed the way every other
+length in this format is: as the number of bytes those offsets occupy. An
+offset is eight bytes, so a nested value's size is always a multiple of eight,
+and the item count is that size divided by eight.
+
+Storing the item count directly was considered and rejected. It would make the
+*length* of a value depend on its KIND, and a decoder meeting a KIND it did not
+recognise could then no longer tell where that value ends — so it could not
+find the next attribute either, and the remainder of the array would be
+unreadable. Because the size is always a byte count, a decoder walks the packed
+run correctly whatever kinds it encounters, and needs to understand only the
+kinds it acts on. That is what keeps a future KIND value an addition rather
+than a break, which is why KIND is a byte with room to grow.
+****
 
 [[ife-attribute-bytes]]
 ==== Attribute Byte Array
@@ -624,8 +659,48 @@ include::{generated}/layout/ATTRIBUTE_BYTES.adoc[]
 * The count *shall* encode the total byte size of the attribute byte
   array.
 * Key byte sequences *shall* contain ASCII strings (or 4-byte DICOM tag
-  values); value byte sequences *shall* contain UTF-8 strings corresponding
-  to the immediately preceding key or tag.
+  values). A value byte sequence corresponds to the immediately preceding key
+  or tag and *shall* contain a UTF-8 string where the entry's KIND is
+  `ATTRIBUTE_STRING`, or file offsets where it is `ATTRIBUTE_NESTED`.
+* A nested offset *shall* be non-zero — byte zero is the file header — and
+  *shall* locate a valid attributes block within the file. It is an absolute
+  64-bit file offset, the same form every offset field in the format takes, so
+  it resolves without reference to the block that carries it.
+* The structures reached this way form a tree, and a decoder *shall* bound the
+  depth to which it will follow one. An attributes block reached from itself,
+  directly or through any chain, *shall* be rejected as a cycle.
+* The sum of every key and value size *shall* equal the count. This is the one
+  agreement the two attribute blocks must keep and neither one states: each
+  block validates on its own terms and they can still disagree with each other.
+
+NOTE: An attribute value is the only place in the format where an offset is
+not a field. That is why the linkage carries no `points_to` in the machine-readable
+specification and why a validator has to be told about it: the schema
+describes fields, and the number of offsets here is data rather than layout.
+
+.Nested structures and corruption recovery
+****
+A nested attributes block is an ordinary block: it carries the universal
+header, stores its own offset in VALIDATION, and holds the same
+`RECOVER_ATTRIBUTES` tag as any other. A recovery scan therefore finds every
+one of them without following a single value, which is the property that makes
+the tree recoverable at all.
+
+What a scan cannot tell is which of the blocks it found is the *root* — the one
+the metadata block points at — because nesting makes several structurally
+identical. They are told apart by reference rather than by content: an item is
+named by some recovered attribute byte array, and the root is named by none. A
+tool reconstructing a damaged file *should* resolve them that way rather than
+assuming the first or lowest-addressed block is the root.
+
+The offsets a value carries do not disturb the scan. Both signatures a scan
+looks for are self-references — a block stores its own offset in 64 bits, a
+tile frame stores its own in 40 — and a nested offset names a different block,
+so it satisfies neither unless a structure sits exactly where its own pointer
+is stored, which no valid file does. Being 64-bit, a nested offset is not even
+of the width the frame test reads. The tile offsets array has held file
+offsets in bulk since 1.0 on the same reasoning.
+****
 
 [[ife-images]]
 ==== Images Array

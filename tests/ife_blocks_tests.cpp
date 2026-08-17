@@ -523,7 +523,7 @@ void test_generated_writers_round_trip() {
         {.OFFSET = 0xFFFFFFFFFFull,   .SIZE = 0x00FFFFFFu},   // u40 / u24 maxima
         {.OFFSET = 1,                 .SIZE = 2},
     };
-    const std::vector<std::pair<std::string, std::string>> attr_pairs = {{"SCANNER", "TestCo"}};
+    const std::vector<b::AttributeSizeEntry> attr_pairs = {{"SCANNER", "TestCo"}};
     const std::vector<b::AnnotationGroupSizeEntry> groups = {
         {.TITLE_SIZE = 3, .MEMBER_COUNT = 1},
         {.TITLE_SIZE = 4, .MEMBER_COUNT = 2},
@@ -752,7 +752,7 @@ void test_writers_stay_within_size_of() {
         {.IDENTIFIER = 0xFFFFFF, .FORMAT = k::AnnotationTypes::ANNOTATION_PNG,
          .PARENT_ID = 0xFFFFFF},
     };
-    const std::vector<std::pair<std::string, std::string>> attr_pairs = {{"key1", "value1"}};
+    const std::vector<b::AttributeSizeEntry> attr_pairs = {{"key1", "value1"}};
     const std::vector<b::AnnotationGroupSizeEntry> groups = {{.TITLE_SIZE = 3, .MEMBER_COUNT = 1},
                                                    {.TITLE_SIZE = 4, .MEMBER_COUNT = 2}};
     const std::vector<b::ImageEntry> image_entries = {{.WIDTH = 256, .HEIGHT = 512, .ORIENTATION = 90.0f}};
@@ -775,6 +775,179 @@ void test_writers_stay_within_size_of() {
     check_writes_exactly("ANNOTATION_BYTES",       b::AnnotationBytesCreateInfo{.bytes = payload, .count = sizeof(payload)});
     check_writes_exactly("ANNOTATION_GROUP_SIZES", b::AnnotationGroupSizesCreateInfo{.entries = groups});
     check_writes_exactly("ANNOTATION_GROUP_BYTES", b::AnnotationGroupBytesCreateInfo{.bytes = payload, .count = sizeof(payload)});
+}
+
+// A nested attribute value, written and read back through the offset it holds.
+//
+// The shape is a DICOM sequence: one attribute whose value is not text but a
+// run of file offsets, each locating a complete attributes structure that is
+// itself a data set. Two items, because a one-item sequence would not prove
+// the run is walked, and DICOM sequences are routinely multi-item.
+//
+// The items are placed BEFORE the byte array that cites them -- leaves-first,
+// the ordinary way to write a file whose parents cite their children. An
+// absolute offset makes that free, which is half the reason it is absolute.
+void test_nested_attribute_values_round_trip() {
+    // ---- the two sequence items, each a complete attributes structure ----- //
+    const std::vector<b::AttributeSizeEntry> item0 = {{"0008,0100", "SM"}};
+    const std::vector<b::AttributeSizeEntry> item1 = {{"0008,0100", "BF"}};
+
+    std::vector<BYTE> f(1024, 0);
+    Offset at = 0;
+    auto place = [&at](::IFE::Size bytes) { const Offset here = at; at += bytes; return here; };
+
+    b::AttributeSizesCreateInfo i0_sizes{.entries = item0};
+    b::AttributeBytesCreateInfo i0_blob{.entries = item0};
+    b::AttributeSizesCreateInfo i1_sizes{.entries = item1};
+    b::AttributeBytesCreateInfo i1_blob{.entries = item1};
+
+    const Offset i0_sizes_at = place(b::size_of(i0_sizes));
+    const Offset i0_blob_at  = place(b::size_of(i0_blob));
+    const Offset i0_at       = place(b::size_of(b::AttributesCreateInfo{}));
+    const Offset i1_sizes_at = place(b::size_of(i1_sizes));
+    const Offset i1_blob_at  = place(b::size_of(i1_blob));
+    const Offset i1_at       = place(b::size_of(b::AttributesCreateInfo{}));
+
+    // ---- the root: one string value, one sequence, one empty sequence ----- //
+    std::vector<b::AttributeSizeEntry> root(3);
+    root[0] = {.key = "SCANNER", .value = "TestCo"};
+    root[1] = {.key = "0048,0105", .nested = {i0_at, i1_at},
+               .KIND = k::AttributeKinds::ATTRIBUTE_NESTED};
+    // A sequence of no items: legal, and distinct from an empty string.
+    root[2] = {.key = "0040,0610", .KIND = k::AttributeKinds::ATTRIBUTE_NESTED};
+
+    b::AttributeSizesCreateInfo root_sizes{.entries = root};
+    b::AttributeBytesCreateInfo root_blob{.entries = root};
+    const Offset root_sizes_at = place(b::size_of(root_sizes));
+    const Offset root_blob_at  = place(b::size_of(root_blob));
+    const Offset root_at       = place(b::size_of(b::AttributesCreateInfo{}));
+
+    BYTE* p = f.data();
+    IFE_CHECK(static_cast<bool>(b::store(p, i0_sizes_at, i0_sizes)));
+    IFE_CHECK(static_cast<bool>(b::store(p, i0_blob_at,  i0_blob)));
+    IFE_CHECK(static_cast<bool>(b::store(p, i0_at, b::AttributesCreateInfo{
+        .FORMAT = k::MetadataFormats::METADATA_DICOM, .VERSION = 2024,
+        .SIZES_OFFSET = i0_sizes_at, .BYTES_OFFSET = i0_blob_at})));
+    IFE_CHECK(static_cast<bool>(b::store(p, i1_sizes_at, i1_sizes)));
+    IFE_CHECK(static_cast<bool>(b::store(p, i1_blob_at,  i1_blob)));
+    IFE_CHECK(static_cast<bool>(b::store(p, i1_at, b::AttributesCreateInfo{
+        .FORMAT = k::MetadataFormats::METADATA_DICOM, .VERSION = 2024,
+        .SIZES_OFFSET = i1_sizes_at, .BYTES_OFFSET = i1_blob_at})));
+    IFE_CHECK(static_cast<bool>(b::store(p, root_sizes_at, root_sizes)));
+    IFE_CHECK(static_cast<bool>(b::store(p, root_blob_at,  root_blob)));
+    IFE_CHECK(static_cast<bool>(b::store(p, root_at, b::AttributesCreateInfo{
+        .FORMAT = k::MetadataFormats::METADATA_DICOM, .VERSION = 2024,
+        .SIZES_OFFSET = root_sizes_at, .BYTES_OFFSET = root_blob_at})));
+
+    // ---- read it back ------------------------------------------------------ //
+    const b::ATTRIBUTES     root_h{p, root_at, f.size(), b::VERSION_WRITTEN};
+    const b::ATTRIBUTE_SIZES sizes_h = root_h.sizes_offset();
+    const b::ATTRIBUTE_BYTES blob_h  = root_h.bytes_offset();
+    IFE_CHECK(static_cast<bool>(root_h.validate_deep()));
+    IFE_CHECK(sizes_h.count() == 3);
+
+    const ::IFE::ByteSpan blob = blob_h.bytes();
+    ::IFE::Size cursor = 0;
+    std::vector<Offset> resolved;
+    for (std::uint32_t i = 0; i < sizes_h.count(); ++i) {
+        const auto entry = sizes_h.entry(i);
+        const ::IFE::Size key_size   = entry.key_size();
+        const ::IFE::Size value_size = entry.value_size();
+        const std::string key(reinterpret_cast<const char*>(blob.data + cursor), key_size);
+        cursor += key_size;
+
+        if (entry.kind() == k::AttributeKinds::ATTRIBUTE_NESTED) {
+            // VALUE_SIZE is the slice length at every kind, so the item count
+            // is what the slice holds rather than a separate field.
+            IFE_CHECK(b::nested_size_is_whole(value_size));
+            for (::IFE::Size n = 0; n < b::nested_count(value_size); ++n)
+                resolved.push_back(b::nested_offset(blob.data + cursor, n));
+        } else {
+            IFE_CHECK(key == "SCANNER");
+            IFE_CHECK(std::string(reinterpret_cast<const char*>(blob.data + cursor),
+                                  value_size) == "TestCo");
+        }
+        cursor += value_size;
+    }
+    IFE_CHECK(cursor == blob.size);          // the walk consumed exactly the run
+    IFE_CHECK(resolved.size() == 2);         // two items, the empty sequence none
+
+    // The offsets resolve to the blocks that were written, and each is a
+    // complete attributes structure in its own right.
+    if (resolved.size() == 2) {
+        IFE_CHECK(resolved[0] == i0_at);
+        IFE_CHECK(resolved[1] == i1_at);
+        const char* expected[2] = {"SM", "BF"};
+        for (int i = 0; i < 2; ++i) {
+            const b::ATTRIBUTES item{p, resolved[i], f.size(), b::VERSION_WRITTEN};
+            IFE_CHECK(static_cast<bool>(item.validate_deep()));
+            const auto item_sizes = item.sizes_offset();
+            const auto item_blob  = item.bytes_offset();
+            IFE_CHECK(item_sizes.count() == 1);
+            const auto e = item_sizes.entry(0);
+            IFE_CHECK(e.kind() == k::AttributeKinds::ATTRIBUTE_STRING);
+            const ::IFE::ByteSpan span = item_blob.bytes();
+            IFE_CHECK(std::string(reinterpret_cast<const char*>(span.data), e.key_size())
+                      == "0008,0100");
+            IFE_CHECK(std::string(reinterpret_cast<const char*>(span.data + e.key_size()),
+                                  e.value_size()) == expected[i]);
+        }
+    }
+}
+
+// The encode-time half of the nested-value rules.
+//
+// Divisibility cannot fail on this side and that is worth asserting rather
+// than assuming: a nested value's size is derived as items * 8, so the writer
+// physically cannot emit a partial offset. What it can do is silently drop a
+// payload that disagrees with its own KIND, which is the failure store()
+// refuses.
+void test_nested_payload_must_agree_with_its_kind() {
+    std::vector<BYTE> f(512, 0);
+
+    // Nested, but the caller filled the text field: the offsets are empty, so
+    // a permissive writer would emit a well-formed empty sequence and throw
+    // the text away. store() must refuse instead.
+    const std::vector<b::AttributeSizeEntry> text_in_nested = {
+        {.key = "0048,0105", .value = "should not be here",
+         .KIND = k::AttributeKinds::ATTRIBUTE_NESTED}};
+    const auto sizes_bad = b::store(f.data(), 0,
+        b::AttributeSizesCreateInfo{.entries = text_in_nested});
+    IFE_CHECK(!sizes_bad);
+    IFE_CHECK(sizes_bad.code == b::Check::BAD_NESTED_VALUE);
+    const auto bytes_bad = b::store(f.data(), 0,
+        b::AttributeBytesCreateInfo{.entries = text_in_nested});
+    IFE_CHECK(!bytes_bad);
+    IFE_CHECK(bytes_bad.code == b::Check::BAD_NESTED_VALUE);
+
+    // And the reverse: a text value carrying offsets nobody will read.
+    const std::vector<b::AttributeSizeEntry> nested_in_text = {
+        {.key = "SCANNER", .value = "TestCo", .nested = {128},
+         .KIND = k::AttributeKinds::ATTRIBUTE_STRING}};
+    const auto reversed = b::store(f.data(), 0,
+        b::AttributeSizesCreateInfo{.entries = nested_in_text});
+    IFE_CHECK(!reversed);
+    IFE_CHECK(reversed.code == b::Check::BAD_NESTED_VALUE);
+
+    // Both agreeing forms write. The empty sequence is the one that would be
+    // indistinguishable from the rejected case if KIND were inferred from the
+    // payload rather than stated -- which is why it is stated.
+    const std::vector<b::AttributeSizeEntry> good = {
+        {.key = "SCANNER", .value = "TestCo"},
+        {.key = "0040,0610", .KIND = k::AttributeKinds::ATTRIBUTE_NESTED}};
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0,
+        b::AttributeSizesCreateInfo{.entries = good})));
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 64,
+        b::AttributeBytesCreateInfo{.entries = good})));
+
+    // The size a nested value occupies is always a whole number of offsets,
+    // because it is derived from the count rather than supplied.
+    const std::vector<b::AttributeSizeEntry> three = {
+        {.key = "k", .nested = {8, 16, 24},
+         .KIND = k::AttributeKinds::ATTRIBUTE_NESTED}};
+    IFE_CHECK(b::attribute_value_bytes(three[0]) == 3 * b::NESTED_OFFSET_SIZE);
+    IFE_CHECK(b::nested_size_is_whole(b::attribute_value_bytes(three[0])));
+    IFE_CHECK(b::nested_count(b::attribute_value_bytes(three[0])) == 3);
 }
 
 // The validation hook: absent, store() costs one null check;
@@ -942,7 +1115,7 @@ void test_no_arg_validate_deep_on_every_block() {
     BYTE attr_bytes[KEY_LEN + VALUE_LEN];
     std::memcpy(attr_bytes, "SCANNER", KEY_LEN);
     std::memcpy(attr_bytes + KEY_LEN, "TestCo", VALUE_LEN);
-    const std::vector<std::pair<std::string, std::string>> attr_pairs = {{"SCANNER", "TestCo"}};
+    const std::vector<b::AttributeSizeEntry> attr_pairs = {{"SCANNER", "TestCo"}};
 
     b::CipherCreateInfo cipher{};
     b::AttributeSizesCreateInfo attr_sizes{.entries = attr_pairs};
@@ -1063,6 +1236,8 @@ int main() {
     test_no_arg_validate_deep_on_every_block();
     test_tile_encoding_avif_round_trips();
     test_writers_stay_within_size_of();
+    test_nested_attribute_values_round_trip();
+    test_nested_payload_must_agree_with_its_kind();
     test_validation_hook_is_dispatched();
 
     if (g_failures) {

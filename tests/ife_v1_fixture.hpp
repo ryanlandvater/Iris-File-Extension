@@ -43,6 +43,16 @@ struct AnnotationSpec {
 /// spelling of Annotation::NULL_ID compiles against both.
 inline constexpr std::uint32_t NULL_ANNOTATION_ID = 16777215U;
 
+/// One attribute whose value is a sequence of nested structures.
+///
+/// `items` is a sequence in the DICOM sense: each item is a complete set of
+/// key/value pairs, carried on disk by its own attributes block. Plain types
+/// only, for the reason the file header gives.
+struct NestedAttributeSpec {
+    std::string key;
+    std::vector<std::vector<std::pair<std::string, std::string>>> items;
+};
+
 /// The values the fixture encodes, so a reader can assert against the inputs
 /// rather than against another reader.
 struct Expected {
@@ -60,6 +70,7 @@ struct Expected {
     std::uint32_t image_height   = 0;
     std::string   attribute_key;
     std::string   attribute_value;
+    std::vector<NestedAttributeSpec> nested_attributes;
     std::vector<AnnotationSpec> annotations;
 };
 
@@ -81,6 +92,20 @@ inline Expected expectations() {
     e.image_height    = 256;
     e.attribute_key   = "SCANNER";
     e.attribute_value = "TestCo";
+    // Nested values, as DICOM actually shapes them: a sequence attribute whose
+    // value is zero or more items, each item a data set of its own. Two items
+    // in the first, because a single-item sequence does not prove the offset
+    // run is walked at all; two pairs in the first item, because an item with
+    // one pair does not prove its own slicing. The second sequence is empty --
+    // legal in DICOM, and the case that distinguishes "a sequence of no items"
+    // from "a text value of length zero", which is why KIND is a byte and not
+    // an inference from the value's size.
+    e.nested_attributes = {
+        {.key   = "0048,0105",          // Optical Path Sequence
+         .items = {{{"0008,0100", "SM"}, {"0008,0104", "Brightfield"}},
+                   {{"0008,0100", "BF"}}}},
+        {.key = "0040,0610", .items = {}},   // Specimen Preparation Sequence
+    };
     // One annotation per annotation_types value, so every format the
     // specification defines appears in a slide the shipped encoder wrote.
     // They differ in every field on purpose: reading an entry through the

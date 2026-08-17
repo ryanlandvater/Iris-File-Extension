@@ -2498,6 +2498,16 @@ cmake . -B build && cmake --build build --config Release -j && ctest --test-dir 
   most recently on 2026-08-12.
 * **After changing `spec/*.json` or an emitter, run `cmake .`, not just
   `cmake --build`.** The 200.0 gating fixture is generated at configure time.
+* **`python3 -m generator` followed by a build in the same second leaves a
+  stale binary, silently.** Make compares mtimes at one-second resolution, so a
+  regenerated `IFE_Blocks.hpp` whose timestamp equals the last link time is not
+  seen as newer and the translation unit is not recompiled — no error, no
+  warning, and tests that report the *previous* generator's behaviour. Observed
+  2026-08-17 during a red-green pass: the header on disk had the guard, the
+  binary did not, and two tests failed against source that was already correct.
+  This is the same class as the stale-binary trap above and has the same fix:
+  `touch generated_source/*.hpp` after regenerating, or verify anything
+  surprising in a fresh build directory before believing it.
 * **Never construct a block handle over v1-written bytes with
   `b::VERSION_WRITTEN`.** It claims 1.1 for a file v1 stamps 1.0. Read
   major/minor from the file and construct with those, as

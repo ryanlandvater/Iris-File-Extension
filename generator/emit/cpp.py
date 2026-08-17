@@ -562,6 +562,7 @@ enum class Check : std::uint8_t {
     BAD_STRIDE,        ///< STRIDE is zero, or narrower than the entry it must hold
     ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
     CYCLE,             ///< an offset chain returns to a block already on the path
+    BAD_NESTED_VALUE,  ///< a nested attribute value is not a whole number of offsets
     CONFORMANCE,       ///< a normative clause was violated; only the conformance layer raises this
 };
 
@@ -790,22 +791,130 @@ def _caller_fields(block: Any, layout: LayoutResult) -> tuple[FieldLayout, ...]:
     return tuple(f for f in own if f.kind != "constant")
 
 
+def _pairs_entry_struct(layout: LayoutResult) -> str:
+    """The C++ name of the payload the `from_pairs` blocks share.
+
+    Taken from whichever of them declares the entry, because that is what
+    `from_pairs` means: several blocks, one semantic payload. Deriving it
+    rather than naming a block keeps the pairing in the schema, where it was
+    put deliberately.
+    """
+    for name, block in layout.blocks.items():
+        if block.from_pairs and block.entry_fields:
+            return _entry_struct(block.entry_name or f"{name}_ENTRY")
+    raise SpecError(
+        "a block declares from_pairs but none of the from_pairs blocks declares an "
+        "entry; the shared payload type has nothing to take its shape from"
+    )
+
+
 def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, Any]) -> None:
     """Entry PODs and CreateInfo structs, in block order."""
+    pairs_entry = (
+        _pairs_entry_struct(layout)
+        if any(b.from_pairs for b in layout.blocks.values())
+        else None
+    )
     for name, block in layout.blocks.items():
         if block.from_pairs:
-            # The attribute blocks share one semantic payload: the key/value
-            # pairs. store() derives both the sizes array and the packed byte
-            # run from it, so the slicing cannot drift from the bytes it
+            # The attribute blocks share one semantic payload: the attributes
+            # themselves. store() derives both the sizes array and the packed
+            # byte run from it, so the slicing cannot drift from the bytes it
             # describes (the retired layer took the same semantic payload).
+            if block.entry_fields:
+                out += [
+                    "",
+                    "/// One attribute: a key, and a value that is either text or a",
+                    "/// sequence of nested attribute structures.",
+                    "///",
+                    "/// Which of the two it is, is stated by KIND rather than inferred",
+                    "/// from `nested` being empty: an empty sequence and an empty string",
+                    "/// are both legal values and are not the same thing.",
+                    f"struct {pairs_entry} {{",
+                    "    /// The attribute key. ASCII, or a four-byte DICOM tag.",
+                    "    std::string key;",
+                    "    /// The value's bytes, when KIND is ATTRIBUTE_STRING. UTF-8 by",
+                    "    /// the specification, uninterpreted here.",
+                    "    std::string value;",
+                    "    /// File offsets of the nested attributes blocks -- the items of a",
+                    "    /// DICOM sequence -- when KIND is ATTRIBUTE_NESTED. Where those",
+                    "    /// blocks sit stays the caller's decision, as it is for every",
+                    "    /// other offset in this layer.",
+                    "    std::vector<::IFE::Offset> nested;",
+                    "    /// Which of the two the value is.",
+                    "    ::IFE::constants::AttributeKinds KIND =",
+                    "        ::IFE::constants::AttributeKinds::ATTRIBUTE_STRING;",
+                    "};",
+                    "",
+                    "/// Wire width of one nested-structure offset: a plain 64-bit absolute",
+                    "/// file offset, the same thing every other offset in the format is.",
+                    "/// A relative displacement would buy no relocatability, since every",
+                    "/// block stores its own absolute offset in VALIDATION regardless, and",
+                    "/// a packed width would buy three bytes per item at the cost of being",
+                    "/// the one offset in IFE that is not shaped like the others.",
+                    "inline constexpr ::IFE::Size NESTED_OFFSET_SIZE = 8;",
+                    "",
+                    "/// How many bytes of the attribute byte array one value occupies.",
+                    "///",
+                    "/// VALUE_SIZE does not change meaning with KIND -- it is always the",
+                    "/// length of the value's slice -- which is what lets a reader walk the",
+                    "/// packed run without interpreting a single value. A string value is",
+                    "/// its own length; a nested one is five bytes per item it locates, so",
+                    "/// a sequence of no items is a legal value of length zero.",
+                    "[[nodiscard]] inline ::IFE::Size attribute_value_bytes(",
+                    f"        const {pairs_entry}& __e) noexcept {{",
+                    "    return __e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED",
+                    "         ? __e.nested.size() * NESTED_OFFSET_SIZE",
+                    "         : __e.value.size();",
+                    "}",
+                    "",
+                    "/// How many nested structures a value slice of `__value_size` bytes",
+                    "/// locates. Read a nested value through this and nested_offset() rather",
+                    "/// than dividing: the wire stores a length because that is what lets a",
+                    "/// decoder walk the packed run without interpreting any value, but a",
+                    "/// caller thinks in items and should never see the eight.",
+                    "[[nodiscard]] inline ::IFE::Size nested_count(::IFE::Size __value_size) noexcept {",
+                    "    return __value_size / NESTED_OFFSET_SIZE;",
+                    "}",
+                    "",
+                    "/// The offset of nested structure `__i` within a value slice.",
+                    "[[nodiscard]] inline ::IFE::Offset nested_offset(",
+                    "        const ::IFE::BYTE* __value, ::IFE::Size __i) noexcept {",
+                    "    return ::IFE::load<std::uint64_t>(__value + __i * NESTED_OFFSET_SIZE);",
+                    "}",
+                    "",
+                    "/// Whether a value slice of `__value_size` bytes is a whole number of",
+                    "/// offsets. The one rule about these bytes the schema's capped predicate",
+                    "/// vocabulary cannot state, so it is stated in the specification prose",
+                    "/// and checked here.",
+                    "[[nodiscard]] inline bool nested_size_is_whole(::IFE::Size __value_size) noexcept {",
+                    "    return __value_size % NESTED_OFFSET_SIZE == 0;",
+                    "}",
+                    "",
+                    "/// Encode-time check on one attribute payload, run by store() before it",
+                    "/// writes anything.",
+                    "///",
+                    "/// Divisibility cannot fail here -- a nested value's size is derived as",
+                    "/// `nested.size() * NESTED_OFFSET_SIZE`, so the writer cannot produce a",
+                    "/// partial offset even if asked to. What can fail is the payload",
+                    "/// disagreeing with its own KIND, and that is worth catching because the",
+                    "/// failure is silent otherwise: a caller who sets ATTRIBUTE_NESTED and",
+                    "/// then fills `value` would have their text dropped and a well-formed",
+                    "/// empty sequence written in its place.",
+                    f"[[nodiscard]] inline bool attribute_payload_agrees(const {pairs_entry}& __e) noexcept {{",
+                    "    return __e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED",
+                    "         ? __e.value.empty()",
+                    "         : __e.nested.empty();",
+                    "}",
+                ]
             out.append("")
             out.extend(_comment(block.description))
             out.append(f"struct {_create_info(name)} {{")
             out += [
-                "    /// The attribute pairs. store() derives both the sizes array",
-                "    /// and the packed byte run from these -- the slicing cannot",
-                "    /// drift because it is derived here, not supplied.",
-                "    const std::vector<std::pair<std::string, std::string>>& entries;",
+                "    /// The attributes. store() derives both the sizes array and the",
+                "    /// packed byte run from these -- the slicing cannot drift because",
+                "    /// it is derived here, not supplied.",
+                f"    const std::vector<{pairs_entry}>& entries;",
             ]
             out.append("};")
             continue
@@ -942,6 +1051,19 @@ def _emit_pairs_writer(
     entry = block.entry_name or f"{name}_ENTRY"
     size_of, store = _writer_signature(name, declaration=False)
 
+    # Run before a byte is written, by both writers: the two blocks share one
+    # payload, so a payload that disagrees with itself is wrong in both.
+    guard = [
+        "    // The payload must agree with its own KIND before anything is",
+        "    // written. Dropping a caller's data silently is the failure this",
+        "    // prevents; see attribute_payload_agrees.",
+        "    for (const auto& __e : __info.entries)",
+        "        if (!attribute_payload_agrees(__e))",
+        f"            return {{Check::BAD_NESTED_VALUE, {name}::type, \"KIND\",",
+        "                    static_cast<std::uint64_t>(__e.KIND), 0, __offset};",
+        "",
+    ]
+
     out.append("")
     out.append(f"// ---- {name} ----")
     out.append("")
@@ -953,6 +1075,7 @@ def _emit_pairs_writer(
             "}",
             "",
             f"inline {store} {{",
+        ] + guard + [
             "    // The machine-written prefix, in wire order.",
             f"    ::IFE::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
             "                               __offset);",
@@ -963,29 +1086,32 @@ def _emit_pairs_writer(
             f"    ::IFE::store<std::uint32_t>(__base + __offset + {vt}::offset::COUNT,",
             "                               static_cast<std::uint32_t>(__info.entries.size()));",
             "",
-            "    // One entry per pair: the sizes that slice the packed run below.",
+            "    // One entry per attribute: the sizes that slice the packed run below.",
             f"    ::IFE::BYTE* __entry = __base + __offset + {vt}::header_size;",
             "    for (std::size_t __i = 0; __i < __info.entries.size();",
             f"         ++__i, __entry += {vt}::{entry}::entry_size) {{",
-            "        const auto& __p = __info.entries[__i];",
+            "        const auto& __e = __info.entries[__i];",
             f"        ::IFE::store<std::uint16_t>(__entry + {vt}::{entry}::offset::KEY_SIZE,",
-            "                                   static_cast<std::uint16_t>(__p.first.size()));",
+            "                                   static_cast<std::uint16_t>(__e.key.size()));",
             f"        ::IFE::store<std::uint32_t>(__entry + {vt}::{entry}::offset::VALUE_SIZE,",
-            "                                   static_cast<std::uint32_t>(__p.second.size()));",
+            "                                   static_cast<std::uint32_t>(attribute_value_bytes(__e)));",
+            f"        ::IFE::store<std::uint8_t>(__entry + {vt}::{entry}::offset::KIND,",
+            "                                   static_cast<std::uint8_t>(__e.KIND));",
             "    }",
         ]
     else:  # ATTRIBUTE_BYTES: key bytes then value bytes, no separators
         out += [
             "    ::IFE::Size __total = 0;",
-            "    for (auto&& [__k, __v] : __info.entries)",
-            "        __total += __k.size() + __v.size();",
+            "    for (const auto& __e : __info.entries)",
+            "        __total += __e.key.size() + attribute_value_bytes(__e);",
             f"    return {vt}::header_size + __total;",
             "}",
             "",
             f"inline {store} {{",
+        ] + guard + [
             "    ::IFE::Size __total = 0;",
-            "    for (auto&& [__k, __v] : __info.entries)",
-            "        __total += __k.size() + __v.size();",
+            "    for (const auto& __e : __info.entries)",
+            "        __total += __e.key.size() + attribute_value_bytes(__e);",
             "    // The machine-written prefix, in wire order.",
             f"    ::IFE::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
             "                               __offset);",
@@ -996,9 +1122,23 @@ def _emit_pairs_writer(
             "",
             "    // Key then value, no separators: the sizes array is the slicing.",
             f"    ::IFE::BYTE* __p = __base + __offset + {vt}::header_size;",
-            "    for (auto&& [__k, __v] : __info.entries) {",
-            "        std::memcpy(__p, __k.data(), __k.size()); __p += __k.size();",
-            "        std::memcpy(__p, __v.data(), __v.size()); __p += __v.size();",
+            "    for (const auto& __e : __info.entries) {",
+            "        std::memcpy(__p, __e.key.data(), __e.key.size());",
+            "        __p += __e.key.size();",
+            "        if (__e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED) {",
+            "            // File offsets, not text: an edge the schema cannot describe,",
+            "            // because a points_to lives on a field and these live in an",
+            "            // opaque run whose length is data. They are written in the",
+            "            // format's ordinary form -- absolute, 64-bit -- so nothing",
+            "            // here needs a base to resolve one.",
+            "            for (const ::IFE::Offset __n : __e.nested) {",
+            "                ::IFE::store<std::uint64_t>(__p, __n);",
+            "                __p += NESTED_OFFSET_SIZE;",
+            "            }",
+            "        } else {",
+            "            std::memcpy(__p, __e.value.data(), __e.value.size());",
+            "            __p += __e.value.size();",
+            "        }",
             "    }",
         ]
     out += [
@@ -1181,7 +1321,6 @@ def emit_blocks_header(
         "#include <cstring>  // byte-array writers copy the payload wholesale",
         "#include <optional>",
         "#include <string>",
-        "#include <utility>  // std::pair, for the from_pairs attribute payloads",
         "#include <vector>",
         "",
         '#include "IFE_Bytes.hpp"',
