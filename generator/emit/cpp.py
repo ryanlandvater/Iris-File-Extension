@@ -1843,11 +1843,27 @@ def _emit_serialization_body(
     for name, block in layout.blocks.items():
         out.append(f"using ::IFE::blocks::{name};")
         out.append(f"using ::IFE::blocks::{_create_info(name)};")
-        if block.entry_fields and not block.from_pairs:
+        # from_pairs blocks are included: their payload used to be a
+        # std::pair, which needed no re-export, and is now a generated type.
+        # Leaving them out published a CreateInfo whose payload type the
+        # consumer namespace did not name -- the write API for attributes was
+        # unusable through Serialization:: without reaching into IFE::blocks.
+        if block.entry_fields:
             entry = _entry_struct(block.entry_name or f"{name}_ENTRY")
             out.append(f"using ::IFE::blocks::{entry};")
 
     out += [
+        "",
+        "",
+        "// Reading and writing a nested attribute value in items rather than",
+        "// bytes. The wire stores a byte length -- that is what lets a decoder",
+        "// walk the packed run without interpreting any value -- and these are",
+        "// how a caller works in the unit it actually thinks in.",
+        "using ::IFE::blocks::NESTED_OFFSET_SIZE;",
+        "using ::IFE::blocks::nested_count;",
+        "using ::IFE::blocks::nested_offset;",
+        "using ::IFE::blocks::nested_size_is_whole;",
+        "using ::IFE::blocks::attribute_value_bytes;",
         "",
         "// The write entry points, one overload set per kind of work:",
         "//     size_of(payload)   -> bytes the block will occupy",
