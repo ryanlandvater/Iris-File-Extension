@@ -22,9 +22,15 @@ from the same schema it was generated from.
 > 1.0 bytes — `TILE_LENGTH` and `Z_PLANES` reading back absent, the layer
 > extent stride at the 1.0 entry size. A 1.1 fixture proves none of that.
 >
-> The result is 2858 B — one byte larger than v1's, and that byte is its single
-> attribute's `KIND`. Every other block sits at the offset v1 put it at,
-> `ATTRIBUTE_SIZES` included, at byte 907 in both.
+> The result is 3087 B against v1's 2857. One of those bytes is the `KIND`
+> field of the original text attribute; the other 229 are nested content, which
+> the fixture carries deliberately so that nesting is exercised against pinned
+> bytes rather than only in memory. The root attributes structure now holds
+> three entries — a text value, a two-item sequence, and an empty sequence —
+> and the file holds **three** `ATTRIBUTES` structures with their sizes and
+> byte arrays, twenty-one self-validating blocks in all. The sequence items are
+> written before the byte run that names them, so blocks after the attribute
+> region no longer sit at the offsets v1 gave them.
 >
 > **What is kept:** the digest pin, so a schema edit that moves a shipped field
 > breaks reading a file nobody regenerated. **What is lost:** the cross-check,

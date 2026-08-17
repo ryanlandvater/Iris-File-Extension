@@ -67,6 +67,10 @@ Result to_result(const b::Status& __status) noexcept try {
         case b::Check::CYCLE:
             return {IRIS_FAILURE, where + " is reached by an offset chain that returns to a block "
                                   "already on the path"};
+        case b::Check::TOO_DEEP:
+            return {IRIS_FAILURE, where + " is nested " + std::to_string(__status.found) +
+                                  " deep, past the limit of " + std::to_string(__status.expected) +
+                                  " this reader will follow"};
         case b::Check::BAD_NESTED_VALUE:
             return {IRIS_FAILURE, where + " is a nested attribute value of " +
                                   std::to_string(__status.found) + " bytes, which is not a whole "
@@ -215,14 +219,21 @@ constexpr Size MAX_ATTRIBUTE_DEPTH = b::MAX_BLOCK_DEPTH - 3;
 /// visits while one that reaches itself is a cycle.
 b::Status validate_nested_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath& __path,
                                      Size __depth) {
+    // Three distinct failures, reported apart. They were once one code, and a
+    // file that was merely too deep reported a cycle -- sending a reader to
+    // hunt for a loop that was not there, and making a test unable to say
+    // which guard had fired.
     if (__depth > MAX_ATTRIBUTE_DEPTH)
-        return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __depth,
+        return {b::Check::TOO_DEEP, b::ATTRIBUTES::type, "", __depth,
                 MAX_ATTRIBUTE_DEPTH, __attrs.__offset};
     if (__path.contains(__attrs.__offset))
         return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __attrs.__offset, 0,
                 __attrs.__offset};
+    // Unreachable while MAX_ATTRIBUTE_DEPTH stays below MAX_BLOCK_DEPTH, which
+    // it is by construction -- kept because the path is shared machinery and
+    // the bound above it is not this function's to guarantee.
     if (!__path.push(__attrs.__offset))
-        return {b::Check::CYCLE, b::ATTRIBUTES::type, "", __path.depth,
+        return {b::Check::TOO_DEEP, b::ATTRIBUTES::type, "", __path.depth,
                 b::MAX_BLOCK_DEPTH, __attrs.__offset};
 
     std::vector<AttributeSlice> slices;

@@ -263,6 +263,131 @@ void test_partial_nested_offset_is_rejected() {
     IFE_CHECK(threw);
 }
 
+// The root attributes structure of a loaded snapshot, at the version the file
+// declares. Constructing at VERSION_WRITTEN instead would claim a version the
+// file does not have -- the trap MIGRATION records.
+::IFE::blocks::ATTRIBUTES root_attributes(std::vector<BYTE>& __f) {
+    namespace b = ::IFE::blocks;
+    const b::FILE_HEADER boot{__f.data(), 0, __f.size(), UINT32_MAX};
+    const std::uint32_t declared =
+        (static_cast<std::uint32_t>(boot.extension_major()) << 16) | boot.extension_minor();
+    const b::FILE_HEADER root{__f.data(), 0, __f.size(), declared};
+    return root.metadata_offset().attributes_offset();
+}
+
+/// Address of the first non-empty nested value slice in an attributes
+/// structure, so a test can repoint where it leads. Null when there is none.
+BYTE* first_nested_value(std::vector<BYTE>& __f, const ::IFE::blocks::ATTRIBUTES& __a) {
+    namespace b = ::IFE::blocks;
+    namespace k = ::IFE::constants;
+    const auto sizes = __a.sizes_offset();
+    const auto bytes = __a.bytes_offset();
+    ::IFE::Size cursor = 0;
+    for (std::uint32_t i = 0; i < sizes.count(); ++i) {
+        const auto e = sizes.entry(i);
+        cursor += e.key_size();
+        if (e.kind() == k::AttributeKinds::ATTRIBUTE_NESTED && e.value_size() > 0)
+            return __f.data() + bytes.__offset + b::ATTRIBUTE_BYTES::header_size + cursor;
+        cursor += e.value_size();
+    }
+    return nullptr;
+}
+
+// A nested value that leads back to the structure carrying it.
+//
+// Reachable because the writer takes caller-supplied offsets: nothing stops an
+// encoder naming an ancestor, and a validator that followed it would recurse
+// until the stack ran out. The guard is what makes a hostile file a rejection
+// rather than a crash, so it is worth an actual cycle rather than an argument.
+void test_attribute_cycle_is_rejected() {
+    v1_fixture::Expected expected;
+    auto f = v1_slide(expected);
+    IFE_CHECK(static_cast<bool>(IrisCodec::validate_file_structure(f.data(), f.size())));
+
+    const auto attrs = root_attributes(f);
+    BYTE* value = first_nested_value(f, attrs);
+    IFE_CHECK(value != nullptr);
+    if (!value) return;
+
+    // Point the first sequence item at the structure that names it.
+    ::IFE::store<std::uint64_t>(value, attrs.__offset);
+
+    const auto result = IrisCodec::validate_file_structure(f.data(), f.size());
+    IFE_CHECK(result != Iris::IRIS_SUCCESS);
+    IFE_CHECK(std::string(result.message).find("returns to a block") != std::string::npos);
+
+    bool threw = false;
+    try { (void)IrisCodec::abstract_file_structure(f.data(), f.size()); }
+    catch (const std::runtime_error&) { threw = true; }
+    IFE_CHECK(threw);
+}
+
+// A nesting chain deeper than the runtime will follow.
+//
+// Distinct from the cycle above: every block here is different, so nothing
+// repeats on the path and only the depth bound stops the descent. The chain is
+// built with the generated writers and appended to a real file, because the
+// bound is a property of the runtime rather than of any fixture.
+void test_attribute_nesting_depth_is_bounded() {
+    namespace b = ::IFE::blocks;
+    namespace k = ::IFE::constants;
+    v1_fixture::Expected expected;
+    auto f = v1_slide(expected);
+
+    // Longer than the runtime's own bound, which is derived from the block
+    // graph's limit -- so this cannot drift from the constant it tests.
+    const std::size_t chain = b::MAX_BLOCK_DEPTH;
+    const ::IFE::Offset base = f.size();
+    f.resize(base + chain * 128);
+
+    ::IFE::Offset cursor = base, child = 0;
+    for (std::size_t i = 0; i < chain; ++i) {
+        std::vector<b::AttributeSizeEntry> e(1);
+        if (i == 0) e[0] = {.key = "k", .value = "leaf"};
+        else        e[0] = {.key = "k", .nested = {child},
+                            .KIND = k::AttributeKinds::ATTRIBUTE_NESTED};
+        const b::AttributeSizesCreateInfo si{.entries = e};
+        const b::AttributeBytesCreateInfo bi{.entries = e};
+        const ::IFE::Offset s_at = cursor; cursor += b::size_of(si);
+        const ::IFE::Offset b_at = cursor; cursor += b::size_of(bi);
+        const ::IFE::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
+        IFE_CHECK(static_cast<bool>(b::store(f.data(), s_at, si)));
+        IFE_CHECK(static_cast<bool>(b::store(f.data(), b_at, bi)));
+        IFE_CHECK(static_cast<bool>(b::store(f.data(), a_at, b::AttributesCreateInfo{
+            .FORMAT = k::MetadataFormats::METADATA_DICOM, .VERSION = 2024,
+            .SIZES_OFFSET = s_at, .BYTES_OFFSET = b_at})));
+        child = a_at;
+    }
+    f.resize(cursor);
+    ::IFE::store<std::uint64_t>(f.data() + b::FILE_HEADER::offset::FILE_SIZE, f.size());
+
+    // Hang the chain off the root, replacing the fixture's own first item.
+    const auto attrs = root_attributes(f);
+    BYTE* value = first_nested_value(f, attrs);
+    IFE_CHECK(value != nullptr);
+    if (!value) return;
+    ::IFE::store<std::uint64_t>(value, child);
+
+    const auto result = IrisCodec::validate_file_structure(f.data(), f.size());
+    IFE_CHECK(result != Iris::IRIS_SUCCESS);
+    // Named specifically, on both axes. Nothing here repeats on the path, so
+    // reporting a cycle would be wrong; and the attribute bound must be what
+    // stopped the descent, not VisitPath running out of room behind it. The
+    // two are told apart by the limit each reports -- the attribute bound is
+    // below MAX_BLOCK_DEPTH by construction, so a message naming
+    // MAX_BLOCK_DEPTH means the wrong guard fired.
+    const std::string message(result.message);
+    IFE_CHECK(message.find("nested") != std::string::npos);
+    IFE_CHECK(message.find("returns to a block") == std::string::npos);
+    IFE_CHECK(message.find("past the limit of " + std::to_string(b::MAX_BLOCK_DEPTH))
+              == std::string::npos);
+
+    bool threw = false;
+    try { (void)IrisCodec::abstract_file_structure(f.data(), f.size()); }
+    catch (const std::runtime_error&) { threw = true; }
+    IFE_CHECK(threw);
+}
+
 void test_file_map_finds_every_block() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
@@ -485,6 +610,8 @@ int main(int argc, char** argv) {
     test_validate_accepts_a_v1_file();
     test_abstraction_matches_what_was_encoded();
     test_partial_nested_offset_is_rejected();
+    test_attribute_cycle_is_rejected();
+    test_attribute_nesting_depth_is_bounded();
     test_file_map_finds_every_block();
     test_recovery_finds_blocks_without_the_offset_graph();
 

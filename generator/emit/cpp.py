@@ -562,6 +562,7 @@ enum class Check : std::uint8_t {
     BAD_STRIDE,        ///< STRIDE is zero, or narrower than the entry it must hold
     ARRAY_OVERRUN,     ///< the entry run extends past the end of the file
     CYCLE,             ///< an offset chain returns to a block already on the path
+    TOO_DEEP,          ///< a chain is longer than a reader will follow, without repeating
     BAD_NESTED_VALUE,  ///< a nested attribute value is not a whole number of offsets
     CONFORMANCE,       ///< a normative clause was violated; only the conformance layer raises this
 };
