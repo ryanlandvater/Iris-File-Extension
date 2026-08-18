@@ -41,6 +41,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21773
     },
@@ -67,6 +68,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BYTE_ARRAY",
       "recovery_tag": 21774
     },
@@ -93,6 +95,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BYTE_ARRAY",
       "recovery_tag": 21776
     },
@@ -125,6 +128,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21775
     },
@@ -169,6 +173,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BLOCK",
       "recovery_tag": 21765
     },
@@ -195,6 +200,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BYTE_ARRAY",
       "recovery_tag": 21769
     },
@@ -227,6 +233,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21768
     },
@@ -247,6 +254,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BLOCK",
       "recovery_tag": 21763
     },
@@ -281,6 +289,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BYTE_ARRAY",
       "recovery_tag": 21777
     },
@@ -337,6 +346,7 @@
           ]
         ]
       },
+      "from_sof": 38,
       "primitive": "FILE_HEADER",
       "recovery_tag": 21761
     },
@@ -363,6 +373,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BYTE_ARRAY",
       "recovery_tag": 21772
     },
@@ -395,6 +406,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21770
     },
@@ -427,6 +439,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BLOCK",
       "recovery_tag": 21771
     },
@@ -459,6 +472,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21766
     },
@@ -547,6 +561,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BLOCK",
       "recovery_tag": 21764
     },
@@ -579,6 +594,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "ARRAY",
       "recovery_tag": 21767
     },
@@ -605,6 +621,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "TILE_FRAME",
       "recovery_tag": null
     },
@@ -675,6 +692,7 @@
           ]
         ]
       },
+      "from_sof": null,
       "primitive": "BLOCK",
       "recovery_tag": 21762
     }

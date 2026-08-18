@@ -4,9 +4,9 @@ THE GATE is wire stability, not C++ source text identity. The emitted headers
 may be reformatted at will; this witness ignores C++ text entirely and captures
 only what a conformant encoder writes into an .iris stream:
 
-  * blocks     — recovery tag value, primitive, and every field's
-                 (name, type-or-enum-group, width, offset), grouped by the
-                 version that introduced it. Offsets come from
+  * blocks     — recovery tag value, primitive, fixed file position, and
+                 every field's (name, type-or-enum-group, width, offset),
+                 grouped by the version that introduced it. Offsets come from
                  generator.model.layout.derive_layout — the same derivation
                  the emitters and the reader use — never re-computed here.
   * entries    — the same for every array block's entry, plus the entry size
@@ -73,6 +73,14 @@ def witness(
             # prefix included); None where the block carries no tag.
             "recovery_tag": block.recovery_value,
             "primitive": block.primitive,
+            # Whether the block is pinned to a byte position in the file
+            # rather than reached through an offset field, and how much of the
+            # file it claims. Recorded for every block, None included: field
+            # offsets are block-relative and identical either way, so a root
+            # that stopped being fixed at byte 0 -- or an ordinary block that
+            # started being pinned -- would move real bytes while every other
+            # fact in this witness stayed the same.
+            "from_sof": block.from_sof,
             "fields": _fields_by_version(block.header_fields),
         }
         if block.entry_fields:
