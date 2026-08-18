@@ -27,10 +27,10 @@ This is not a JSON Schema, deliberately: checks 1-4 are inexpressible in one
 remainder duplicates SpecError paths the model already raises.
 """
 # ---------------------------------------------------------------------------
-# ROLE: checking only. Returns a list of human-readable problems; an empty
-# list means consistent. Nothing here raises on a bad spec — the caller
-# decides what a problem means, which is why the same function serves both
-# `--validate` and the check that runs before every generation.
+# ROLE: checking only. Returns (problems, warnings); both empty means
+# consistent. Nothing here raises on a bad spec — the caller decides what a
+# problem means, which is why the same function serves both `--validate` and
+# the check that runs before every generation.
 #
 # Pure: reads the parsed documents, compares, appends strings. Modifies
 # nothing and touches no files.
@@ -234,7 +234,7 @@ def _check_field_list(label: str, shipped: list[Any], current: list[Any]) -> lis
     return errors
 
 
-def _check_permanence(
+def check_permanence(
     current: dict[str, Any],
     baseline: dict[str, Any],
     label: str,
@@ -259,7 +259,7 @@ def _check_permanence(
         new = current[key]
         if isinstance(old, dict):
             errors.extend(
-                _check_permanence(
+                check_permanence(
                     new, old, f"{label}.{key}", monotonic=(key == "entry_size")
                 )
             )
@@ -279,14 +279,45 @@ def _check_permanence(
     return errors
 
 
+def _unrecorded(current: dict[str, Any], baseline: dict[str, Any], prefix: str = "") -> list[str]:
+    """Facts present in ``current`` but not in the baseline, as paths.
+
+    These are the legal additions the gate passed but the evidence has not
+    recorded yet — the baseline only grows by deliberate refresh. Stops at
+    the granularity that names a fact: a new block names the block, a new
+    version group names the group, a new field names the field — never every
+    descendant.
+    """
+    out: list[str] = []
+    for key, value in current.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if key not in baseline:
+            out.append(path)
+            continue
+        old = baseline[key]
+        if isinstance(value, dict) and isinstance(old, dict):
+            out.extend(_unrecorded(value, old, path))
+        elif isinstance(value, list) and isinstance(old, list):
+            old_names = {field[0] for field in old}
+            for field in value:
+                if field[0] not in old_names:
+                    out.append(f"{path}.{field[0]}")
+    return out
+
+
 def validate(
     fields_doc: dict[str, Any],
     constants_doc: dict[str, Any],
     document: dict[str, Any],
     narrative: str | None = None,
     baseline_witness: dict[str, Any] | None = None,
-) -> list[str]:
-    """Return a list of problems; empty means the documents are consistent.
+) -> tuple[list[str], list[str]]:
+    """Return (problems, warnings); both empty means the documents are consistent.
+
+    Problems fail the run — --validate exits 1 on any. Warnings are notes the
+    gate passes: legal additions the committed baseline has not recorded yet.
+    They are printed on --validate and promoted to a failure by --check, so
+    the evidence cannot silently lag the spec.
 
     ``baseline_witness`` is the committed wire witness (tests/wire/witness.json,
     loaded by the pipeline, which owns all file I/O). When supplied, the
@@ -668,18 +699,34 @@ def validate(
     # reaches the wire, so emitter reformatting can never trip it. The
     # baseline is loaded by the pipeline; a schema with no baseline beside it
     # — the derived versioning fixtures — is not gated.
+    warnings: list[str] = []
     if baseline_witness is not None:
         current_witness = witness(fields_doc, constants_doc, document)
         for section in ("blocks", "entries", "enums", "constants"):
             problems.extend(
-                _check_permanence(
+                check_permanence(
                     current_witness[section],
                     baseline_witness.get(section, {}),
                     section,
                 )
             )
+        # Staleness: legal additions the baseline does not yet record. The
+        # gate passes them (that is append-only), but evidence that lags
+        # cannot witness the new facts' later mutation — the baseline only
+        # grows by deliberate refresh (tools/refresh_witness.py). Non-fatal
+        # here; --check promotes it to failure so the refresh lands in the
+        # same change as the addition.
+        unrecorded = _unrecorded(current_witness, baseline_witness)
+        if unrecorded:
+            shown = ", ".join(unrecorded[:3])
+            more = f" (+{len(unrecorded) - 3} more)" if len(unrecorded) > 3 else ""
+            warnings.append(
+                f"{len(unrecorded)} wire fact(s) not yet recorded in "
+                f"tests/wire/witness.json ({shown}{more}) — refresh deliberately: "
+                "python3 tools/refresh_witness.py"
+            )
 
-    return problems
+    return problems, warnings
 
 
 def _every_versioned(

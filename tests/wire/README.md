@@ -17,17 +17,15 @@ that diff visible at `--validate` time. Refresh it deliberately — and only
 after a reviewed wire change — with:
 
 ```bash
-python3 - <<'EOF'
-import json
-from pathlib import Path
-import generator.witness as w
-docs = {name: json.loads(Path(f"spec/ife_{name}.json").read_text())
-        for name in ("fields", "constants", "header")}
-Path("tests/wire/witness.json").write_text(
-    json.dumps(w.witness(docs["fields"], docs["constants"], docs["header"]),
-               indent=2, sort_keys=True) + "\n")
-EOF
+python3 tools/refresh_witness.py
 ```
+
+The tool refuses to record a wire break (a shipped fact changed or
+disappeared) and prints the diff of what it is recording, so growing the
+evidence is a visible act rather than a silent overwrite. When the spec
+grows and the baseline has not been refreshed, `--validate` prints a
+non-fatal note about the unrecorded facts and `--check` fails until the
+refresh lands — the refresh is part of the change that grows the spec.
 
 One caveat: this baseline records today's tree, which already contains the
 deliberate 1.0 `ATTRIBUTE_SIZE` correction — KIND added, entry six to seven

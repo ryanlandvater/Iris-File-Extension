@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from .emit.cpp import (
     emit_validation_header,
@@ -40,7 +41,7 @@ _DOCS_ROOT = "generated_docs"
 
 
 def _render(
-    fields_doc: dict, constants_doc: dict, header: dict
+    fields_doc: dict[str, Any], constants_doc: dict[str, Any], header: dict[str, Any]
 ) -> tuple[dict[str, str], LayoutResult]:
     """Render every output: relative path -> content (byte-stable)."""
     layout = derive_layout(fields_doc, constants_doc)
@@ -144,7 +145,7 @@ def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> int:
     return 0
 
 
-def _baseline_witness(schema_dir: Path) -> dict | None:
+def _baseline_witness(schema_dir: Path) -> dict[str, Any] | None:
     """The committed permanence baseline for this schema, if it has one.
 
     The append-only gate compares the current tree's witness against evidence
@@ -186,7 +187,7 @@ def run(
     # generating C++ from a checkout without it still works.
     narrative_path = schema_dir / "ife_spec.adoc"
     narrative = narrative_path.read_text() if narrative_path.exists() else None
-    problems = validate(
+    problems, warnings = validate(
         fields_doc, constants_doc, header, narrative, baseline_witness=baseline
     )
     for problem in problems:
@@ -194,6 +195,8 @@ def run(
     if problems:
         print(f"generator: {len(problems)} consistency problem(s)", file=sys.stderr)
         return 1
+    for warning in warnings:
+        print(f"generator: note: {warning}", file=sys.stderr)
     if validate_only:
         print("generator: spec documents are consistent")
         return 0
@@ -205,6 +208,17 @@ def run(
         return 2
 
     if check:
+        if warnings:
+            # The drift gate also owns the evidence: outputs may be current,
+            # but a witness that lags the spec cannot witness the new facts'
+            # later mutation — the deliberate refresh must land in the same
+            # change as the addition.
+            print(
+                "generator: --check failed: tests/wire/witness.json is stale — "
+                "refresh it deliberately (python3 tools/refresh_witness.py)",
+                file=sys.stderr,
+            )
+            return 1
         return _run_check(outputs, out_dir, docs_dir)
 
     written = 0

@@ -59,7 +59,10 @@ neither replaces the other.
 2. `python3 -m generator --validate` stays green (the gate permits additions).
 3. Refresh `tests/wire/witness.json` deliberately, in the same change. A
    baseline that does not record a new field cannot catch that field's later
-   mutation — the refresh is what keeps the gate growing with the spec.
+   mutation — the refresh is what keeps the gate growing with the spec. CI
+   enforces this: `--check` fails until the refresh lands (`--validate`
+   prints a non-fatal note), so the discipline is mechanical, not just
+   documented.
 4. Corpus bytes change only when coverage deliberately grows, as a manifest
    entry plus an upload in the same change. A rule-1-compliant edit never
    breaks a pinned file, so it never *requires* a corpus change.
@@ -75,6 +78,9 @@ cmake . -B build -DIFE_BUILD_TESTS=ON && cmake --build build --config Release -j
 
 Traps that have already cost this project time:
 
+- A spec addition without a refreshed `tests/wire/witness.json` makes
+  `--check` fail (`--validate` only notes it). Refresh deliberately with
+  `python3 tools/refresh_witness.py`, in the same change as the spec edit.
 - `-DIFE_BUILD_TESTS=ON` is required; without it ctest reports "No tests were
   found" and that reads as success.
 - Chain build and test with `&&` — ctest reports PASS from stale binaries

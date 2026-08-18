@@ -17,7 +17,10 @@ python3 -m generator --check            # CI: exit 1 if outputs drifted
 `--validate` runs automatically before every generation, so a broken spec
 never reaches the emitters. It also recomputes the wire witness and fails on
 drift against the committed baseline in `tests/wire/witness.json` — the
-append-only gate (see below).
+append-only gate (see below) — and prints a non-fatal note when the spec has
+grown facts the baseline has not recorded yet. `--check` turns that note into
+a failure: the committed evidence must be current for the drift gate to mean
+anything.
 
 ## Output contract
 
@@ -42,8 +45,8 @@ the JSON is versioned append-only.
 | `--schema-dir` | `spec/` | Directory holding `ife_header.json` + `ife_fields.json` + `ife_constants.json` |
 | `--out-dir` | `generated_source/` | Where generated C++ is written |
 | `--docs-dir` | `generated_docs/` | Where generated documentation is written |
-| `--validate` | — | Check the documents for conflicts, dangling references, and drift against the committed wire witness (`tests/wire/witness.json`), emit nothing (exit 1 on any) |
-| `--check` | — | Regenerate in memory and fail (exit 1) if outputs drifted |
+| `--validate` | — | Check the documents for conflicts, dangling references, and drift against the committed wire witness (`tests/wire/witness.json`), emit nothing (exit 1 on any). Warns — non-fatally — when the spec has unrecorded additions |
+| `--check` | — | Regenerate in memory and fail (exit 1) if outputs drifted or the committed witness is stale |
 
 CMakeLists.txt invokes exactly this interface at configure time; changing
 flags requires updating CMakeLists.txt in the same change.
@@ -73,7 +76,7 @@ flowchart LR
 |--------|------|
 | `__main__.py` | CLI entry point (`python -m generator`); contract above. |
 | `pipeline.py` | Stage orchestration: load JSON → validate → derive → emit → write or `--check`. The only module that touches the filesystem; no code generation lives here. |
-| `validate.py` | Consistency checks across the documents, including the append-only gate: the current tree's witness against the committed baseline. Returns problems, raises nothing, reads no files. |
+| `validate.py` | Consistency checks across the documents, including the append-only gate: the current tree's witness against the committed baseline. Returns (problems, warnings); raises nothing; reads no files. Warnings are a stale witness baseline — `--check` promotes them to a failure. |
 | `witness.py` | The wire witness: captures only what reaches the stream (block tags, per-version field tuples, enum values, named constants), derived through `model/layout.py`. Reads no files. |
 | `model/layout.py` | Layout derivation — the single implementation of the offset/size rules; offsets are never read from the JSON. |
 | `emit/cpp.py` | C++ emission: `IFE_Constants.hpp` (enums + sentinels), `IFE_VTables.hpp` (vtables), `IFE_Blocks.hpp`/`.cpp` (handles, readers, validators). |
