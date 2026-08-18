@@ -388,6 +388,25 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_blocks_header_only_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_blocks_header_only_tests COMMAND ife_blocks_header_only_tests)
 
+    # IFE_HEADER_ONLY across TWO translation units, linked together.
+    #
+    # The single-TU test above cannot see the failure that matters: if the
+    # folded definitions lose their `inline`, one TU still links perfectly.
+    # Two do not. This target is therefore mostly a link test, and it also
+    # covers the circular include -- the header folds in the .cpp, the .cpp
+    # opens by including the header -- from both directions.
+    add_executable(
+        ife_header_only_odr_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_header_only_odr_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/ife_header_only_odr_second.cpp
+    )
+    target_include_directories(
+        ife_header_only_odr_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_header_only_odr_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_header_only_odr_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_header_only_odr_tests COMMAND ife_header_only_odr_tests)
+
     # Residency.  The remote mode exists for the browser; its transport is a
     # function pointer precisely so the cache and bounds logic can be driven
     # here, natively, with a stub.
@@ -490,9 +509,14 @@ if(IFE_BUILD_TESTS)
     # Forward direction: the 200.0 build reads 1.0 and 200.0 files. The
     # fixture's block layer is header-only like the production one — nothing
     # to compile.
+    # The fixture's own block source: the generated layer declares in the
+    # header and defines in a translation unit, so a target consuming the
+    # fixture header has to compile the fixture's .cpp (or define
+    # IFE_HEADER_ONLY, which the sibling target below covers).
     add_executable(
         ife_version_gating_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_version_gating_tests.cpp
+        ${IFE_FUTURE_FIXTURE_DIR}/generated/IFE_Blocks.cpp
     )
     target_include_directories(
         ife_version_gating_tests PRIVATE

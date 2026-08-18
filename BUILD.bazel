@@ -47,6 +47,7 @@ genrule(
     srcs = glob(["spec/ife_*.json"]) + glob(["generator/**/*.py"]),
     outs = [
         "generated_source/IFE_Blocks.hpp",
+        "generated_source/IFE_Blocks.cpp",
         "generated_source/IFE_Validation.hpp",
         "generated_source/IFE_Validation.cpp",
     ],
@@ -75,6 +76,10 @@ filegroup(
     name = "generated_headers",
     srcs = [
         "generated_source/IFE_Blocks.hpp",
+        # An input, not a compiled source: IFE_Blocks.hpp textually includes
+        # it under IFE_HEADER_ONLY, and a genrule output the sandbox does not
+        # carry is "file not found" at that #include.
+        "generated_source/IFE_Blocks.cpp",
     ],
 )
 
@@ -82,6 +87,22 @@ filegroup(
 # The static equivalent of CMake's IrisFileExtensionLib: IFE_Runtime.cpp,
 # IFE_Window.cpp, the generated block layer, and exactly the two Iris-Headers
 # sources IFE consumes. IFE_Validation.cpp stays out — see :ife_validation.
+# The generated block layer's definitions, compiled once and shared.
+#
+# It exists because two libraries need them and neither should depend on the
+# other: :ife is the runtime, :ife_validation is a development tool that ships
+# separately and must not drag the runtime in. Before the definitions moved
+# out of the header this was moot -- everything was inline, so every target
+# got its own copy and nothing had to be shared.
+cc_library(
+    name = "ife_blocks",
+    srcs = ["generated_source/IFE_Blocks.cpp"],
+    hdrs = [":src_headers", ":generated_headers"],
+    copts = _COPTS,
+    includes = ["include", "generated_source"],
+    deps = ["@iris_headers//:iris_headers"],
+)
+
 cc_library(
     name = "ife",
     srcs = [
@@ -93,6 +114,7 @@ cc_library(
     defines = _EXPORT_DEFINES,
     includes = ["include", "generated_source"],
     deps = [
+        ":ife_blocks",
         "@iris_headers//:iris_headers",
         "@iris_headers//:iris_buffer",
         "@iris_headers//:iris_memory",
@@ -116,7 +138,7 @@ cc_library(
     ],
     copts = _COPTS,
     includes = ["include", "generated_source"],
-    deps = ["@iris_headers//:iris_headers"],
+    deps = [":ife_blocks", "@iris_headers//:iris_headers"],
 )
 
 # ── Conformance corpus ──────────────────────────────────────────────────────
@@ -156,6 +178,7 @@ genrule(
     srcs = [":future_spec"] + glob(["generator/**/*.py"]),
     outs = [
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
         "tests/fixtures/future_versioning/generated/IFE_Validation.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Validation.cpp",
     ],
@@ -207,17 +230,43 @@ cc_test(
     deps = [":ife"],
 )
 
-# The same test compiled without linking :ife: the block layer is
-# header-only by design, so every definition is inline in IFE_Blocks.hpp and
-# the test must pass without the compiled library's symbols. IFE_HEADER_ONLY
-# is accepted for compatibility but is now a no-op — there is no .cpp to
-# fold in.
+# The same test compiled without linking :ife. IFE_HEADER_ONLY makes
+# IFE_Blocks.hpp include IFE_Blocks.cpp at the bottom of itself and marks the
+# definitions inline, so the test gets the whole layer from an include and
+# needs none of the library's symbols. The other consumption path -- header
+# declares, .cpp compiled once -- is what ife_blocks_tests above exercises,
+# which is why both exist.
 cc_test(
     name = "ife_blocks_header_only_tests",
     srcs = ["tests/ife_blocks_tests.cpp"],
     copts = _COPTS,
     size = "small",
     local_defines = ["IFE_HEADER_ONLY"],
+    includes = ["include", "generated_source"],
+    deps = [
+        ":ife_header_only_inputs",
+        "@iris_headers//:iris_headers",
+    ],
+)
+
+# IFE_HEADER_ONLY across TWO translation units in one binary.
+#
+# The single-TU test above cannot catch the failure that matters: without
+# `inline` on the folded definitions one TU still links. Two do not. Also
+# covers the circular include from both ends -- the header folds in the .cpp
+# and the .cpp opens by including the header -- so a lost guard is a compile
+# error here rather than a surprise in a consumer's tree.
+cc_test(
+    name = "ife_header_only_odr_tests",
+    srcs = [
+        "tests/ife_header_only_odr_tests.cpp",
+        "tests/ife_header_only_odr_second.cpp",
+    ],
+    copts = _COPTS,
+    size = "small",
+    # IFE_HEADER_ONLY is defined by the sources themselves, not here: the
+    # circular-include cases they exercise are about what the *file* does, so
+    # a reader of the test should not have to check the build for the define.
     includes = ["include", "generated_source"],
     deps = [
         ":ife_header_only_inputs",
@@ -330,6 +379,7 @@ cc_test(
         ":src_headers",
         "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
         "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
+        "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
     ],
     copts = _COPTS,
     size = "small",

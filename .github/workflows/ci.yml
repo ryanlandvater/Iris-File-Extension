@@ -259,12 +259,16 @@ jobs:
             apk add --no-cache g++ >/dev/null
             echo "arch: $(uname -m)"
             INC="-I include -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
-            g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
-            g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
+            # The generated layer declares in IFE_Blocks.hpp and defines in
+            # IFE_Blocks.cpp, so anything using a handle compiles both. The
+            # header-only fold is the other consumption path and CMake's
+            # ife_blocks_header_only_tests covers it.
+            BLK="generated_source/IFE_Blocks.cpp"
+            g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp $BLK
+            g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp $BLK
             g++ -std=c++20 -O2 $INC -o /tmp/window tests/ife_window_tests.cpp src/IFE_Window.cpp
             g++ -std=c++20 -O2 $INC -I tests -o /tmp/oracle \
-                tests/ife_v1_oracle_tests.cpp tests/ife_v1_fixture.cpp \
-                generated_source/IFE_Blocks.cpp
+                tests/ife_v1_oracle_tests.cpp tests/ife_v1_fixture.cpp $BLK
             /tmp/bytes
             /tmp/blocks
             /tmp/window

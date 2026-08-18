@@ -1025,7 +1025,8 @@ def _writer_signature(name: str, declaration: bool) -> tuple[str, str]:
     info = _create_info(name)
     attrs = "[[nodiscard]] " if declaration else ""
     default = " = nullptr" if declaration else ""
-    indent = " " * len("Status store(") if declaration else " " * len("inline Status store(")
+    indent = (" " * len("Status store(") if declaration
+              else " " * len("IFE_BLOCKS_LINKAGE Status store("))
     return (
         f"{attrs}::IFE::Size size_of(const {info}& __info) noexcept",
         f"Status store(::IFE::BYTE* __base, ::IFE::Offset __offset, const {info}& __info,\n"
@@ -1083,14 +1084,14 @@ def _emit_pairs_writer(
     out.append("")
     out.append(f"// ---- {name} ----")
     out.append("")
-    out.append(f"inline {size_of} {{")
+    out.append(f"IFE_BLOCKS_LINKAGE {size_of} {{")
     if block.entry_fields:  # ATTRIBUTE_SIZES: n entries of the fixed stride
         out += [
             f"    return {vt}::header_size",
             f"         + __info.entries.size() * {vt}::{entry}::entry_size;",
             "}",
             "",
-            f"inline {store} {{",
+            f"IFE_BLOCKS_LINKAGE {store} {{",
         ] + guard + [
             "    // The machine-written prefix, in wire order.",
             f"    ::IFE::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
@@ -1123,7 +1124,7 @@ def _emit_pairs_writer(
             f"    return {vt}::header_size + __total;",
             "}",
             "",
-            f"inline {store} {{",
+            f"IFE_BLOCKS_LINKAGE {store} {{",
         ] + guard + [
             "    ::IFE::Size __total = 0;",
             "    for (const auto& __e : __info.entries)",
@@ -1188,7 +1189,7 @@ def _emit_writer_defs(
         out.append("")
         out.append(f"// ---- {name} ----")
         out.append("")
-        out.append(f"inline {size_of} {{")
+        out.append(f"IFE_BLOCKS_LINKAGE {size_of} {{")
         if block.entry_fields:
             out.append(f"    return {vt}::header_size")
             out.append(
@@ -1202,7 +1203,7 @@ def _emit_writer_defs(
         out.append("}")
 
         out.append("")
-        out.append(f"inline {store} {{")
+        out.append(f"IFE_BLOCKS_LINKAGE {store} {{")
         out.append("    // The machine-written prefix, in wire order.")
         for field in primitive.fields:
             if field.name not in _PRIMITIVE_FIELDS:
@@ -1343,8 +1344,28 @@ def emit_blocks_header(
         '#include "IFE_Bytes.hpp"',
         "",
         "// The whole generated layer in one header: constants, derived",
-        "// vtables, block handles with inline definitions, and the",
-        "// IrisCodec::Serialization consumer namespace at the end.",
+        "// vtables, the block handles, and the IrisCodec::Serialization",
+        "// consumer namespace at the end. Three headers were consolidated into",
+        "// this one; the *definitions* are a separate translation unit,",
+        "// IFE_Blocks.cpp, which is a different question and answered below.",
+        "",
+        "// Where the definitions come from.",
+        "//",
+        "// By default they are compiled once, in IFE_Blocks.cpp, and this header",
+        "// declares them -- so a translation unit including it pays for the",
+        "// declarations alone. Define IFE_HEADER_ONLY before including it and",
+        "// that translation unit is folded in at the bottom of this file",
+        "// instead, for a consumer that would rather link nothing.",
+        "//",
+        "// The linkage differs between the two: folded into many translation",
+        "// units the definitions must be inline or the link sees each of them",
+        "// several times; compiled once they must not be, or the object file",
+        "// provides nothing to link against.",
+        "#ifdef IFE_HEADER_ONLY",
+        "#define IFE_BLOCKS_LINKAGE inline",
+        "#else",
+        "#define IFE_BLOCKS_LINKAGE",
+        "#endif",
         "",
         "namespace IFE {",
         f"inline constexpr unsigned IFE_SCHEMA_VERSION_MAJOR = {version.get('major', 0)};",
@@ -1468,13 +1489,6 @@ def emit_blocks_header(
         out.append("};")
         out.append("}  // namespace blocks")
 
-    # The definitions, inline, in the header's order. See the file docstring
-    # for why they live here rather than in a translation unit.
-    out.append("")
-    out.append("namespace blocks {")
-    _emit_inline_definitions(out, layout, types)
-    out.append("}  // namespace blocks")
-
     out += [
         "",
         "}  // namespace IFE",
@@ -1484,9 +1498,59 @@ def emit_blocks_header(
     # ---- the consumer namespace, after the layer it re-exports ----
     _emit_serialization_body(out, layout, document)
 
+    # The definitions, folded in only when the consumer asked for it. Last in
+    # the file so everything it defines has been declared, and inside the
+    # include guard so the nested include is a no-op on the way back.
     out += [
         "",
+        "#ifdef IFE_HEADER_ONLY",
+        '#include "IFE_Blocks.cpp"',
+        "#endif",
+        "",
         "#endif  // IFE_Blocks_hpp",
+        "",
+    ]
+    return "\n".join(out)
+
+
+def emit_blocks_source(
+    layout: LayoutResult,
+    types: dict[str, Any],
+    header: dict[str, Any],
+) -> str:
+    """IFE_Blocks.cpp -- the block layer's definitions, compiled once.
+
+    Compiled as its own translation unit by default; included by
+    IFE_Blocks.hpp when a consumer defines IFE_HEADER_ONLY. The guard below
+    makes the second case safe, and IFE_BLOCKS_LINKAGE (declared in the
+    header) is what makes the definitions inline in that case and not in this
+    one.
+
+    Not exported either way. The library builds with hidden visibility, and
+    tests/exported_symbols.cmake fails the build if an IFE:: symbol reaches
+    the dynamic table -- so moving these out of the header changes what is
+    compiled, never what is in the ABI.
+    """
+    out: list[str] = [
+        _banner(header),
+        "#ifndef IFE_Blocks_cpp",
+        "#define IFE_Blocks_cpp",
+        "",
+        "// A no-op when this file was reached from the header's IFE_HEADER_ONLY",
+        "// fold, which is the point: the same source serves both ways of",
+        "// consuming the layer.",
+        '#include "IFE_Blocks.hpp"',
+        "",
+        "namespace IFE {",
+        "namespace blocks {",
+    ]
+    _emit_inline_definitions(out, layout, types)
+    out += [
+        "",
+        "}  // namespace blocks",
+        "}  // namespace IFE",
+        "",
+        "#endif  // IFE_Blocks_cpp",
         "",
     ]
     return "\n".join(out)
@@ -1514,7 +1578,7 @@ def _emit_inline_definitions(
             for member in _field_members(introduced, types):
                 out.append("")
                 out.append(
-                    f"inline {member.ret} {name}::{member.name}"
+                    f"IFE_BLOCKS_LINKAGE {member.ret} {name}::{member.name}"
                     f"({member.params}) {member.quals} {{"
                 )
                 out.extend(member.body)
@@ -1525,18 +1589,18 @@ def _emit_inline_definitions(
             for member in _entry_members(name, block, types):
                 out.append("")
                 out.append(
-                    f"inline {member.ret} {name}::{entry}::{member.name}"
+                    f"IFE_BLOCKS_LINKAGE {member.ret} {name}::{entry}::{member.name}"
                     f"({member.params}) {member.quals} {{"
                 )
                 out.extend(member.body)
                 out.append("}")
             out.append("")
-            out.append(f"inline ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::Offset {name}::entries_begin() const noexcept {{")
             out.append("    return entries_at(header_size);")
             out.append("}")
             out.append("")
             out.append(
-                f"inline {name}::{entry} {name}::entry(std::uint32_t __i) const noexcept {{"
+                f"IFE_BLOCKS_LINKAGE {name}::{entry} {name}::entry(std::uint32_t __i) const noexcept {{"
             )
             out.append(f"    return {entry}{{__base,")
             out.append("                 entries_begin() + static_cast<::IFE::Offset>(__i) * stride(),")
@@ -1544,25 +1608,25 @@ def _emit_inline_definitions(
             out.append("}")
         elif _is_blob(block, layout):
             out.append("")
-            out.append(f"inline ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::Offset {name}::entries_begin() const noexcept {{")
             out.append("    return entries_at(header_size);")
             out.append("}")
             out.append("")
-            out.append(f"inline ::IFE::ByteSpan {name}::bytes() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::ByteSpan {name}::bytes() const noexcept {{")
             out.append("    return {__base + entries_begin(), count()};")
             out.append("}")
 
         for member in _block_members(name, block, layout, types):
             out.append("")
             out.append(
-                f"inline {member.ret} {name}::{member.name}"
+                f"IFE_BLOCKS_LINKAGE {member.ret} {name}::{member.name}"
                 f"({member.params}) {member.quals} {{"
             )
             out.extend(member.body)
             out.append("}")
 
         out.append("")
-        out.append(f"inline Status {name}::validate_deep() const noexcept {{")
+        out.append(f"IFE_BLOCKS_LINKAGE Status {name}::validate_deep() const noexcept {{")
         out.append("    VisitPath __path;")
         out.append("    return validate_deep(__path);")
         out.append("}")

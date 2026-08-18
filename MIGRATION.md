@@ -2140,17 +2140,35 @@ cannot exist. Two deliberate scoping calls:
   here), and exporting both would make identical-looking names mean
   different things.
 
-**The block layer is header-only — the owner's ruling.** `store()` and
-`size_of()` were originally inline in the header; the cutover split them
-into `IFE_Blocks.cpp` with an `IFE_HEADER_ONLY` fold, and that split is
-gone. The emitter now puts every definition inline in `IFE_Blocks.hpp`
-(handles, accessors, validation, writers), the `.cpp` is no longer emitted,
-and `IFE_HEADER_ONLY` is a compatibility no-op. A consumer reaches the
-whole write API with an include alone — no translation unit to compile,
-nothing to link, nothing to install beyond headers. The export decision is
-untouched: inline definitions create no symbols, and the library's
-`VISIBILITY_INLINES_HIDDEN` keeps them out of the dynamic table (verified:
-zero `IFE::` symbols exported, and the exported-symbols test still passes).
+**The block layer declares in the header and defines in a translation unit —
+corrected 2026-08-18.** The consolidation commit (`5f29b20`) did two separable
+things and only one was wanted: merging three headers into one
+`IFE_Blocks.hpp` (wanted), and inlining every definition into it so the `.cpp`
+stopped being emitted (not wanted). The second is reversed. The emitter emits
+`IFE_Blocks.hpp` (constants, derived vtables, handles, declarations, the
+`IrisCodec::Serialization` re-export) and `IFE_Blocks.cpp` (the definitions),
+and `IFE_HEADER_ONLY` is load-bearing again: defining it makes the header
+`#include "IFE_Blocks.cpp"` at the bottom of itself, and an
+`IFE_BLOCKS_LINKAGE` macro marks the definitions `inline` in that mode and
+nothing in the other — folded into many translation units they must be inline,
+compiled once they must not be. A consumer therefore chooses: link the
+compiled layer, or take it whole from an include.
+
+The export decision is untouched and was re-verified after the split: zero
+`IFE::` symbols in the shared library's dynamic table, and
+`tests/exported_symbols.cmake` still passes. Reversing it also restored what
+`ife_blocks_header_only_tests` is for — while everything was inline, that
+target compiled the identical translation unit as `ife_blocks_tests` with a
+define that did nothing, so two of the eleven ctest entries were the same
+build.
+
+Two things the split surfaced that inlining had hidden. Bazel's
+`:ife_validation` deliberately does not depend on `:ife` — the conformance
+layer ships separately and must not drag the runtime in — so with the
+definitions no longer in the header it had nothing to link; both now depend on
+a shared `:ife_blocks`. And the big-endian job's hand-written `g++` lines
+compile the `.cpp` again. CMake needed no change: it globs
+`generated_source/*.cpp`.
 
 **One generated header — the owner's ruling, applied.** The generated
 C++ layer is now a single `IFE_Blocks.hpp`: constants, derived vtables,
