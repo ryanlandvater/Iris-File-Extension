@@ -78,6 +78,19 @@ cmake . -B build -DIFE_BUILD_TESTS=ON && cmake --build build --config Release -j
 
 Traps that have already cost this project time:
 
+- The generator's determinism is tested, not assumed:
+  `tests/generator/test_determinism.py` runs it twice into temp trees and
+  compares every emitted file (ctest `ife_generator_determinism`; CI adds
+  `PYTHONHASHSEED=0/1`, where dict/set iteration order is where
+  non-determinism would enter).
+
+- A green `tests` job says nothing about whether the corpus host is up. The
+  cache key is the manifest digest, so an unchanged manifest means a cache hit
+  and no fetch at all. That is intended — nothing in that run needs the host —
+  but do not read it as evidence the fixtures are reachable. To check that
+  directly: `python3 tools/fetch_corpus.py --manifest tests/corpus/manifest.json
+  --dest "$(mktemp -d)"`, which forces a real fetch and verifies every digest.
+
 - A spec addition without a refreshed `tests/wire/witness.json` makes
   `--check` fail (`--validate` only notes it). Refresh deliberately with
   `python3 tools/refresh_witness.py`, in the same change as the spec edit.

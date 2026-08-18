@@ -4,6 +4,7 @@
     "size": 3087,
     "sha256": "1cf03729f9497b501c42c3b7fce62f5f10f0e10f15e89224b38968c7aecd41da",
     "version": "1.0",
+    "kind": "slide",
     "written_by": "generated, 1.0 layout (tests/ife_snapshot_writer.cpp)",
     "covers": "Nested attribute values: three ATTRIBUTES structures, the root carrying a text value, a two-item sequence, and an empty sequence. The nesting is on disk rather than only in memory, so the corpus exercises the KIND byte, the offset run, and the zero-item case against pinned bytes.",
     "note": "Regenerated when the 1.0 correction took ATTRIBUTE_SIZE from six bytes to seven: a stride of six is no longer conformant, so the v1-written original (2857 B, sha256 658ead7c...) is rejected by the array validator. v1's writers were deleted in Phase 6, so this is written by the generated layer instead -- built against a 1.0-only schema derived by tests/fixtures/build_baseline_spec.py, because store() otherwise emits the newest version and the oracle's substance is a 1.1 reader over 1.0 bytes. It is 230 bytes larger than the original: one for the KIND field of the text attribute, and the rest for the nested content, which adds two attributes to the root and six blocks (three per sequence item, each item being a complete attributes structure). Those items are laid down before the byte run that names them, so the blocks after the attribute region no longer sit where v1 put them. What is lost relative to the original is the independent witness -- these bytes are now this implementation's own -- and what is kept is the pin: a schema edit that moves a shipped field breaks reading a file nobody regenerated.",
@@ -20,7 +21,8 @@
       "IMAGE_BYTES",
       "ICC_PROFILE",
       "ANNOTATIONS",
-      "ANNOTATION_BYTES"
+      "ANNOTATION_BYTES",
+      "TILE_PIXEL_DATA"
     ]
   },
   "v1_tile_offsets_full_width.bin": {
@@ -28,6 +30,7 @@
     "size": 32,
     "sha256": "b21ed7691f56b7ba4778f9472290b469b189a2e6c9b8145f7012f745376491aa",
     "version": "1.0",
+    "kind": "fragment",
     "blocks": [
       "TILE_OFFSETS"
     ]

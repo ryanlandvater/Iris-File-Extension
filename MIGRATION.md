@@ -1,6 +1,241 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
-# ▶ CROSS-POLLINATION WORK ORDERS — start here
+# ▶ RELEASE WORK ORDERS — start here
+
+Written 2026-08-18, after the Phase 6 audit corrected this document (three
+items were done and marked open; the "Phase 6 is DONE" label belonged to the
+generated-layer milestone inside it). These are what remain between here and
+a released 1.1.
+
+**Decisions taken with the owner, 2026-08-18** — do not re-litigate:
+
+* The release is gated on the corpus **harness**, not on full 18-block
+  coverage. Coverage keeps growing after the tag, with the gaps recorded.
+* Bindings follow the tag: Python first, then JS/WASM.
+* The 1.1 revision errata (the `ATTRIBUTE_SIZE` 6→7 correction) **stays out**
+  of the published document. `tests/wire/README.md` is its record.
+
+**Rules: the same ones as the cross-pollination orders below** — one task ID
+per session, run *Locate* first and STOP on a mismatch, do not commit, never
+hand-edit `generated_source/` or `generated_docs/`, append-only is inviolable,
+and ⚠ marks a decision a flash model must not take alone.
+
+## Priority summary
+
+| ID | Priority | Task | Why | Status |
+|---|---|---|---|---|
+| R-1 | **P0** | Build the corpus harness | Four tests eat the corpus; nothing checks it still contains what it claims | **done (2026-08-18)** |
+| R-2 | P1 | Close the reachable corpus gaps | All five missing blocks are writable today — the blocker was v1, now deleted | open |
+| R-3 | P1 | Release 1.1 | No tag has ever been cut on this repository | open |
+| R-4 | P2 | Python bindings (pybind11) | Already specified in Phase 6; unblocked by the tag | open |
+| R-5 | P3 | JS/WASM binding surface | Transport exists; only the binding is missing | open |
+
+---
+
+## R-1 — Build the corpus harness (P0) — ✅ DONE
+
+**Why.** `tests/corpus/manifest.json` declares, per fixture, which block types
+it covers. Nothing reads that claim. Four tests consume the fetched bytes as a
+fixture, so a fixture that quietly stopped containing annotations would keep
+every one of them green — which is exactly how `ANNOTATION_JPEG` was lost
+before. §Conformance corpus → Harness calls its step 4 the step that keeps
+this honest, and step 4 is the part that does not exist.
+
+**Read first**
+- §Conformance corpus → Harness — the five steps, which are the spec for this.
+- `tests/ife_runtime_tests.cpp` — the walk it already does over one fixture.
+- `tests/tests.cmake` — the corpus fetch, and how corpus-consuming targets are
+  declared.
+
+### Locate
+
+```bash
+cd /Users/ryanlandvater/GitHub/Iris-File-Extension
+ls tests/ife_corpus_tests.cpp 2>/dev/null || echo "no harness yet (expected)"
+grep -n "option(IFE_CORPUS" CMakeLists.txt tests/tests.cmake || echo "no opt-out yet (expected)"
+python3 -c "import json;print(list(json.load(open('tests/corpus/manifest.json'))))"
+```
+
+**Expect:** no harness, no `IFE_CORPUS` option, and two fixtures listed.
+
+### R-1.1 — Read the manifest from C++
+
+The harness must iterate the manifest, and this repository has no JSON library
+and wants none. Follow the precedent already in the tree: generate it.
+`tests/fixtures/build_future_spec.py` is generated at configure and gitignored;
+do the same here with a small script emitting a header of fixture names, sizes,
+digests and declared block types.
+
+**Done when:** a configure-time header lists both fixtures and their `blocks`
+arrays, and is gitignored rather than committed.
+
+### R-1.2 — The walk
+
+`tests/ife_corpus_tests.cpp`, one target, per fixture: map it with
+`IFE::Window::resident`; `validate_file_structure` must succeed; walk every
+`points_to` edge, confirming each block's recovery tag and that its
+`VALIDATION` word equals its own offset; record which of the 18 block types
+were reached.
+
+**Done when:** it passes over both fixtures and prints the block types observed.
+
+### R-1.3 — The honesty gate
+
+Compare observed against declared. A block the manifest **claims** and the walk
+does not reach is an **error** naming the fixture and the block. A block
+reached but not declared is also an error — the manifest is the record, so it
+must be updated rather than drift.
+
+**Done when:** deleting one entry from a fixture's `blocks` array turns the
+test red, and adding a bogus one turns it red the other way. Red-green both.
+
+### R-1.4 — Wire it
+
+CMake target + ctest, a Bazel `cc_test`, and the `-DIFE_CORPUS=OFF` opt-out the
+plan promises and nobody built. **The opt-out disables only this test target,
+never the fetch** — the oracle and the >4 GiB test depend on the snapshot.
+
+**Done when:** `ctest` is 15/15, `bazel test //...` is 13/13, and
+`cmake -DIFE_CORPUS=OFF` drops exactly one test and still configures.
+
+> **Status (2026-08-18): R-1 is DONE — R-1.1 through R-1.4.**
+> `tools/corpus_manifest_header.py` projects the committed manifest into a
+> gitignored header at configure (CMake) and by genrule (Bazel);
+> `tests/ife_corpus_tests.cpp` validates each slide fixture and walks it with
+> `generate_file_map` — the traversal that already exists, rather than a
+> second one to be wrong — then compares reached against declared in both
+> directions. `manifest_name()` is a switch with no `default`, so a new
+> `MapEntryType` is a compile error here rather than a silent pass.
+> `-DIFE_CORPUS=OFF` drops the test target only; the fetch is untouched and
+> the other three corpus tests still get their bytes. ctest 15/15, bazel
+> 13/13, `--validate`/`--check`/portability lint clean.
+>
+> **It caught a real drift on its first run.** The snapshot fixture contains
+> `TILE_PIXEL_DATA` — `tests/ife_snapshot_writer.cpp` writes 16 B of pixel
+> data per tile across 84 tiles, and the tile-offsets entries address it —
+> and the manifest never declared it. The corpus therefore reaches **14 of
+> 18** block types, not the 13 recorded below, and the remaining gap is four
+> blocks rather than five. Manifest corrected in the same change. Red-greens
+> both ways: declaring a block the fixture lacks (`CLINICAL_METADATA`) errors
+> with "manifest declares … the walk never reached it"; undeclaring a real
+> one (`ICC_PROFILE`) errors with "the walk reached … which the manifest does
+> not declare".
+>
+> One manifest schema addition was needed: `kind` (`"slide"` or
+> `"fragment"`, defaulting to slide). `v1_tile_offsets_full_width.bin` is a
+> bare 32-byte `TILE_OFFSETS` block, not a file — it has no file header to
+> walk from, so it is size-checked and **excluded from coverage accounting**
+> rather than silently credited. The plan above assumed every fixture was a
+> whole slide; it is not.
+
+---
+
+## R-2 — Close the reachable corpus gaps (P1)
+
+**The blocker recorded below is stale.** §Conformance corpus says the
+annotation-group blocks are "still blocked: no group writer". That was v1's
+writer, deleted in Phase 6. Verified 2026-08-18: `CipherCreateInfo`,
+`AnnotationGroupSizesCreateInfo`, `AnnotationGroupBytesCreateInfo`,
+`TilePixelDataCreateInfo` and `ClinicalMetadataCreateInfo` all exist in
+`generated_source/IFE_Blocks.hpp` and are used by `IFE_Blocks.cpp`. Every one
+of the five missing blocks is writable today. What is missing is a fixture
+generator, not a capability.
+
+### R-2.1 — A second fixture
+
+Extend `tests/ife_snapshot_writer.cpp` to emit a fixture carrying the four
+straightforward gaps: both annotation-group blocks, a framed
+`TILE_PIXEL_DATA`, and `CLINICAL_METADATA` (1.1, one per
+`clinical_encodings` value worth covering). Host it, add it to the manifest
+with size, digest and its `blocks` array.
+
+**Done when:** the R-1.3 gate observes all four in the new fixture, and the
+corpus reaches 17 of 18 block types — from 14, not the 13 the section below
+recorded before R-1's harness corrected it.
+
+### R-2.2 ⚠ — CIPHER needs a decision
+
+`CIPHER_OFFSET` **shall** be `NULL_OFFSET` unless the tile encoding is
+`TILE_ENCODING_IRIS`, and that encoding is "reserved, unused". A `CIPHER`
+fixture therefore has to claim an encoding no encoder produces — a
+conformant file that no real pipeline could have written. Either that is
+acceptable evidence, or `CIPHER` is recorded as permanently uncovered by real
+bytes and covered by the generated round-trip alone.
+
+**Produce the analysis and STOP.** This is a judgement about what the corpus
+is for, not a coding task.
+
+---
+
+## R-3 — Release 1.1 (P1)
+
+No tag has ever been cut on this repository, and no GitHub release exists on
+either remote. Everything below is release mechanics; none of it is blocked
+by R-2.
+
+### R-3.1 — Ratify the revision
+
+`spec/ife_header.json` carries 1.1 as `"status": "draft"` with no date. Set it
+ratified with an ISO date — `generator/validate.py` requires a date on a
+ratified revision, so the gate enforces this. The cover page and the revision
+history are generated from that entry.
+
+**Done when:** `python3 -m generator --validate` exits 0 and the rendered
+document's cover no longer says draft.
+
+### R-3.2 — Refresh the wire witness
+
+If the spec moved at all, `tools/refresh_witness.py` records the baseline in
+the same change. `--check` fails until it does.
+
+### R-3.3 — Publish the document
+
+`spec/build_document.sh` produces the PDF and HTML. Its three gates are the
+release gate for the document; the exit code is not enough, because
+Asciidoctor exits 0 on a missing include.
+
+### R-3.4 ⚠ — Release artifacts and a README claim
+
+The README states pre-compiled binaries are provided "for all major systems
+under the **releases tab**". No release exists, so that sentence is currently
+false. Either the release workflow builds those binaries or the README is
+corrected. **Decide before tagging** — shipping a first release that
+contradicts its own README is worse than shipping without binaries.
+
+**Exit:** a tag exists, the specification is published from the pipeline, and
+every claim the README makes about artifacts is true.
+
+---
+
+## R-4 — Python bindings (pybind11) (P2)
+
+Fully specified already in [§Phase 6](#phase-6--ecosystem-cutover--release) —
+bind the `Abstraction::` surface, ship behind its own CMake option, generate
+enum values and field keys from `spec/*.json` rather than restating them, and
+add a CI job, because a binding that is not built is a binding that is broken.
+Nothing about that analysis changed; it was waiting on the tag.
+
+---
+
+## R-5 — JS/WASM binding surface (P3)
+
+As R-4. The residency work is done — `IFE::Window`'s Emscripten branch fetches
+byte ranges on demand, and the `wasm` CI job compiles it — so what is missing
+is the binding, not the transport.
+
+---
+
+## Not blocking the release
+
+Carried forward so they are not lost, none of them gating: corruption tests;
+diagnostics generated from the JSON's normative clauses; TSan and fuzzing; a
+fixture with real AVIF tile bytes. The Windows arena branch and the
+`METADATA_FREE_TEXT` question, both previously listed here, are closed — see
+[§Phase 6](#phase-6--ecosystem-cutover--release).
+
+---
+
+# ▶ CROSS-POLLINATION WORK ORDERS — all closed 2026-08-18
 
 Written 2026-08-18 after a joint review of this repository and FastFHIR
 (`../FastFHIR`), which share an architecture — offset-addressed blocks in a
@@ -10,7 +245,8 @@ different orders. Each repo has something the other is missing. **These are
 the items FastFHIR already has and this repository does not.** The reciprocal
 list lives at the top of `../FastFHIR/TASKS.md`.
 
-**These override the phase plans below. Do them first, in priority order.**
+**All four are done (2026-08-18).** Kept for the rules block below, which
+the release orders above inherit, and for the record of what each bought.
 
 ## Rules (override anything else in this file)
 
@@ -35,8 +271,8 @@ list lives at the top of `../FastFHIR/TASKS.md`.
 |---|---|---|---|---|
 | XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced | **done (2026-08-18)** |
 | XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism | **done (2026-08-18)** |
-| XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today | open |
-| XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for | open |
+| XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today | **done (2026-08-18)** |
+| XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for | **done (2026-08-18)** |
 
 ---
 
@@ -75,7 +311,7 @@ python3 -m generator --validate | tail -1
 **Expect:** `--validate` prints `generator: spec documents are consistent`,
 and `tests/wire/` does not exist.
 
-### XP-1.1 — Emit the witness — ✅ DONE
+### XP-1.1 — Emit the witness — DONE
 
 Add `generator/witness.py` with one entry point:
 
@@ -99,7 +335,7 @@ second derivation is a second thing to be wrong.
 **Done when:** `python3 -c "import json,generator.witness as w, ..."` prints a
 dict containing `ATTRIBUTE_SIZES.entry.KIND` at offset 6, width 1.
 
-### XP-1.2 — Commit the baseline — ✅ DONE (file written; commit pending — see status below)
+### XP-1.2 — Commit the baseline — DONE (file written; commit pending — see status below)
 
 Write the witness for the current tree to `tests/wire/witness.json`,
 **committed** (unlike `generated_source/`, this is evidence, not output).
@@ -110,7 +346,7 @@ exact command to refresh it deliberately.
 **Done when:** `tests/wire/witness.json` is committed and
 `git diff --stat` is clean after regenerating it.
 
-### XP-1.3 — Gate on it — ✅ DONE
+### XP-1.3 — Gate on it — DONE
 
 Add check 6 to `generator/validate.py`, run by `--validate`: recompute the
 witness and compare against `tests/wire/witness.json`. Report, per finding:
@@ -132,13 +368,17 @@ exits 0, and each of these red-greens (revert after each):
 - widen `KEY_SIZE` u16→u32 → error names the width change
 - append a new field to a `1.1` group → **passes**
 
-⚠ **XP-1.4 — the baseline's own history — ✅ DONE.** `witness.json` records today's
+⚠ **XP-1.4 — the baseline's own history — DONE.** `witness.json` records today's
 tree, which already contains the deliberate 1.0 `ATTRIBUTE_SIZE` correction.
 The gate therefore starts from a state that itself broke append-only once.
 Record that in `tests/wire/README.md` in one sentence, with the commit hash,
 so a future reader does not conclude the invariant has held unbroken. Do not
 try to reconstruct a pre-correction baseline — the correction was deliberate
-and is documented in `spec/ife_header.json`'s revision errata.
+and its record is `tests/wire/README.md`. (It was also carried as an
+erratum on the 1.1 revision in `spec/ife_header.json`; that was removed
+2026-08-18 by decision — the correction belongs to 1.0, not to 1.1, and the
+witness README is where a reader looking for the one append-only break will
+be.)
 
 > **Status (2026-08-18): XP-1 is DONE — XP-1.1 through XP-1.4.**
 > `generator/witness.py` derives the wire witness (blocks, entries, enums,
@@ -195,7 +435,7 @@ turns it red. Both red-greened.
 
 ---
 
-## XP-3 — Port the determinism test (P2)
+## XP-3 — Port the determinism test (P2) — ✅ DONE
 
 FastFHIR has `tests/generator/test_determinism.py`; this repository asserts
 byte-stable regeneration in prose only. Add `tests/generator/test_determinism.py`
@@ -205,9 +445,18 @@ running the generator twice into two temp dirs and comparing.
 `PYTHONHASHSEED=1` — the seeds are the point, since dict ordering is where
 non-determinism enters.
 
+> **Status (2026-08-18): XP-3 is DONE.** `tests/generator/test_determinism.py`
+> runs the generator twice into separate trees and compares every emitted
+> file with `filecmp` — stdlib-only, like the generator, and collectable by
+> pytest should one join the toolchain. Wired into ctest as
+> `ife_generator_determinism` and into CI under `PYTHONHASHSEED=0` and `=1`
+> (the seeds propagate to the generator subprocess). Verified green under
+> all three environments — the emitters iterate insertion-ordered dicts,
+> never hash-ordered sets, so no non-determinism was found to fix.
+
 ---
 
-## XP-4 — Port the dangling-view test (P2)
+## XP-4 — Port the dangling-view test (P2) — ✅ DONE
 
 FastFHIR has `tests/generator/test_no_dangling_views.py`. This repository has
 the same hazard and no test: `IFE::ByteSpan` and every accessor returning one
@@ -215,35 +464,57 @@ point into a caller-owned mapping, and `Abstraction::AttributeNode::value`
 copies while `bytes()` does not.
 
 Add `tests/ife_lifetime_tests.cpp` asserting, under ASan, that no API returns a
-view outliving the buffer it was built from — in particular that
-`abstract_file_structure` copies everything it keeps.
+view outliving the buffer it was built from. **Contract correction
+(2026-08-18): the abstraction reads over a lens of the caller's mapping, as
+FastFHIR reads over its arena — the caller keeps the mapping (VMA) alive, and
+views into it are the design, not a hazard. The hazard the test guards is a
+view bound to a *temporary*, which dies before the tree is walked.**
 
 **Done when:** the test passes under `-fsanitize=address` and fails when a
 `std::string` copy in `IFE_Runtime.cpp` is deliberately changed to a view.
 
+> **Status (2026-08-18): XP-4 is DONE.** `tests/ife_lifetime_tests.cpp` builds
+> the abstraction over the corpus snapshot's heap mapping, keeps the mapping
+> alive (the lens contract), and walks every string the tree keeps with value
+> checks against `v1_fixture::expectations()`. Passes in the normal build and
+> under `-fsanitize=address,undefined` (14/14 ctest). Red-greens under the
+> corrected contract: changing `AttributeNode::value` to a view *into the
+> mapping* passes — views are the design; changing it to a view *bound to a
+> temporary* fails, via corrupted values caught by the value checks — exactly
+> the FastFHIR symptom class ("the store pass read freed memory… produced
+> non-UTF-8 bytes") — because the temporary's freed block is reused rather
+> than left poisoned. Both mutations reverted; the runtime files are pristine.
+
 ---
 
 
-> **Status (2026-08-12):** Phase 6 is DONE — the generated layer reads,
+> **Status (2026-08-18).** The **generated layer is complete**: it reads,
 > validates, maps, recovers and writes all 18 block types, round-tripped
 > through `IFE_Runtime`; function coverage is 100% in `IFE_Blocks.cpp` and
-> `IFE_Validation.cpp`; 12/12 ctest on macOS in Release and ASan+UBSan, on
-> both byte orders. Open items live in the Phase 6 sections below
-> (Iris-Codec encoder cutover, corruption tests, diagnostics from the JSON's
-> normative clauses, TSan/fuzzing, the hosted corpus's remaining five
-> blocks, real AVIF tile bytes).
-> Gates in force: `--validate`, `--check`, the exported-symbol check, the
-> corpus digest fetch, and the test binaries under ASan+UBSan, on both byte
-> orders.
+> `IFE_Validation.cpp`; 14/14 ctest on macOS in Release and ASan+UBSan, on
+> both byte orders. That milestone is the `src/IrisCodecExtension.*`
+> retirement — Phase 6 execution plan, tasks 6.1–6.7 — and an earlier
+> revision of this note called it "Phase 6 is DONE", which conflated it with
+> the phase that contains it.
+>
+> **Phase 6 itself is not done.** Its scope is the ecosystem, and four items
+> are open: the conformance corpus harness, Python bindings, the JS/WASM
+> binding surface, and the release. See
+> [§Phase 6](#phase-6--ecosystem-cutover--release), which is accurate as of
+> this date.
+>
+> Gates in force: `--validate`, `--check`, the wire witness, the
+> exported-symbol check, the corpus digest fetch, and the test binaries under
+> ASan+UBSan, on both byte orders.
 >
 > **Broad plan below.** Each phase below gets a granular checklist
 > (`plans/phase-N-*.md`) during a refinement pass **before** implementation
 > begins. Implementation tasks are then executed by directed (flash-class)
 > models working from those checklists; this document is the map, not the
 > task list. Phase 4's refinement pass was executed inline and is complete
-> (see "Phase 4 implementation plan"); the pending work lives in the work
-> orders at the top of this document (XP-2–XP-4) and the open Phase 6 items
-> listed above.
+> (see "Phase 4 implementation plan"). The cross-pollination work orders at
+> the top of this document (XP-1–XP-4) are all closed; the pending work is
+> the open Phase 6 items.
 
 ## Objective
 
@@ -1943,27 +2214,50 @@ custom preprocessor in the pipeline.
 
 ## Phase 6 — Ecosystem cutover & release
 
-- [ ] **Conformance corpus** — live plan in [§Conformance corpus](#conformance-corpus--live-plan) below.
+- [ ] **Conformance corpus — infrastructure done, harness not built.** Live
+      plan in [§Conformance corpus](#conformance-corpus--live-plan) below.
       The published
       [Iris-Example-Files](https://github.com/IrisDigitalPathology/Iris-Example-Files)
       do not serve: both are the same specimen with entirely empty metadata and
       reach 6 of 18 block types, so building on them would narrow real-byte
       coverage rather than replace it. Purpose-built `.test_slide` fixtures,
       hosted rather than committed, pinned by digest in a committed manifest.
-- [ ] **Iris-Codec coordinated update** consuming the generated API; boundary
-      unchanged (structure here, compression/API there). **Decision made and
-      encoder migrated — link pending.** The `downstream` CI job
-      (`.github/workflows/ci.yml`, uncommitted) clones Iris-Codec and
-      redirects its FetchContent fetch at this checkout via
-      `FETCHCONTENT_SOURCE_DIR_IRISFILEEXTENSION`; the job was validated
-      locally in a Docker container before being added. The consumer-facing
-      namespace question (below) resolved to a *generated*
-      `IrisCodec::Serialization`; Iris-Codec's encoder — the 24
-      `Serialization::` refs + 9 bare `NULL_OFFSET`, all write-side — is
-      migrated onto it in the scratch clone (one file, include fix at
-      `src/IrisCodecPriv.hpp:47`) and compiles clean against this branch.
-      Remaining: full link on the codec dependencies, commit the Iris-Codec
-      side, push the IFE side.
+
+      **Standing (audited 2026-08-18).** The delivery half is live:
+      `tests/corpus/manifest.json` pins two hosted fixtures by SHA-256,
+      `tools/fetch_corpus.py` fetches them at configure into `.deps/corpus/`,
+      and CI caches by manifest digest. What does not exist is
+      `tests/ife_corpus_tests.cpp`: there is no corpus *target*. Four tests
+      (`ife_runtime_tests`, `ife_lifetime_tests`, `ife_v1_oracle_tests`,
+      `ife_large_file_tests`) consume the fetched bytes as a fixture, which is
+      not the same thing — nothing walks the manifest and asserts that the
+      coverage a fixture *claims* was actually observed. That is step 4 of the
+      harness, and the section below calls it the step that keeps the corpus
+      honest. Five of 18 block types remain unreached.
+
+      **Remaining:** write the harness (5 steps, §Conformance corpus →
+      Harness); encode fixtures for the five ⚠ blocks.
+- [x] **Iris-Codec coordinated update — done (2026-08-18):** the primary
+      consumer builds against the generated API, boundary unchanged (structure
+      here, compression/API there). The consumer-facing namespace question
+      (below) resolved to a *generated* `IrisCodec::Serialization`, and
+      Iris-Codec's encoder is migrated onto it: `src/IrisCodecEncoder.cpp`
+      takes it with `using namespace Serialization`, reached through the
+      umbrella include at `src/IrisCodecPriv.hpp:47`. Committed and pushed on
+      Iris-Codec `main` (`2f2c158` "Update encoder for generated IFE headers",
+      `009858c` "Carry attributes as AttributeSizeEntry, and resolve IFE per
+      owner"); the tree is clean and in sync with its origin.
+
+      The `downstream` CI job is committed (`.github/workflows/ci.yml`): it
+      clones Iris-Codec and redirects its FetchContent fetch at this checkout
+      via `FETCHCONTENT_SOURCE_DIR_IRISFILEEXTENSION`, so a change here that
+      breaks the ecosystem fails on this repository's own CI. Green on `main`
+      at `c3ab440`.
+
+      One thing to know when auditing this: the encoder takes the namespace
+      wholesale, so its call sites are unqualified and a grep for
+      `Serialization::` in Iris-Codec returns **zero**. That reads like the
+      cutover never happened. It did — grep `using namespace Serialization`.
 - [ ] **Python bindings (pybind11) over the abstraction layer.** Not a scope
       question: modularity is decided by where the boundary is drawn, not by
       how many languages cross it. This repository owns the byte structure and
@@ -2010,8 +2304,14 @@ custom preprocessor in the pipeline.
 - [ ] **Release** with the generated spec document as the published
       standard; ratification per Iris Developers process.
 
-**Exit:** downstream builds green on the generated layer; v1 code no longer on `main`;
-spec document published from the pipeline.
+**Exit:** downstream builds green on the generated layer (**met**); v1 code no
+longer on `main` (**met**); spec document published from the pipeline
+(outstanding — no tag has been cut on this repository, and there are no
+GitHub releases on either remote).
+
+**Phase 6 in one line (2026-08-18):** the cutover is finished and the
+ecosystem is green; what is left is the corpus harness, two binding surfaces,
+and the release.
 
 ### High-priority lift — shared Virtual Memory Arena — DONE
 
@@ -2023,15 +2323,18 @@ only), and the `.deps` fetch is back on `origin/main`. Verified: 13/13 ctest,
 "4.00 GiB file, 28 KiB actually allocated". `IFE_Window` needed no migration
 (it never maps a file). Design record: Iris-Headers `NOTES_FROM_IFE.md` §7.
 
-**Remaining:** the Windows branch (arena + test shims) is written but
-uncompiled — needs a CI leg.
+**Windows branch — closed (audited 2026-08-18).** It is no longer uncompiled:
+`IrisMemory.cpp` is compiled into the library, the `tests` matrix carries a
+`windows-latest`/MSVC leg that builds it and runs the full `ctest`, and
+`ife_large_file_tests` is gated on pointer width rather than platform, so the
+sparse-file path executes there too. Green on `main`.
 
 **Record.** The topology rationale (Iris-Headers `priv/`, not Iris-Codec),
 the extract-don't-copy scope, and the MPL-2.0→MIT license note are preserved
 in Iris-Headers `NOTES_FROM_IFE.md` §7 and in the headers of
 `IrisMemory.{hpp,cpp}`.
 
-### Open question — `METADATA_FREE_TEXT` and the I2S claim
+### Resolved — `METADATA_FREE_TEXT` and the I2S claim
 
 v1 defines `METADATA_FREE_TEXT` as an alias of `METADATA_I2S`; both are 1. The
 schema assigns it 3, recorded as an errata on the member, because two
@@ -2039,8 +2342,9 @@ conformance claims sharing a value cannot be told apart — and `--validate`
 rejects aliases outright, so the schema could not have kept v1's spelling even
 if it wanted to.
 
-The consequence needs a decision before release. A v1 encoder that meant *free
-text* wrote 1, and a 1.1 reader reads 1 as `METADATA_I2S` — which since 1.1 is
+The consequence needed a decision before release, and has one (below). A v1
+encoder that meant *free text* wrote 1, and a 1.1 reader reads 1 as
+`METADATA_I2S` — which since 1.1 is
 a claim that the attributes contain nothing identifying. No file is misparsed,
 but a v1 file may now assert a conformance property nobody checked, and it is
 precisely the property the schema says cannot be inferred from the keys
@@ -2049,15 +2353,20 @@ about the corpus, not about the schema. `ife_wire_parity_tests` excludes this
 member with a pointer here; the exclusion is deliberate and should not be
 "fixed".
 
-#### Ryan's response
+#### Ryan's response — the resolution
 You can tell free-text from I2S because free text should have a version number
 of zero while I2S will carry a version number. It's in the original spec.
 The idea is that non-versioned I2S is by definition just free text as it
-has no specification to adhere to. 
+has no specification to adhere to.
+
+**Shipped.** The disambiguation is normative text in the published document
+(§2.3.5 Attributes, the paragraph beginning "IFE 1.0 gave METADATA_FREE_TEXT
+the same value") and an errata on the member in `spec/ife_constants.json`.
+Nothing further is owed before release.
 
 ---
 
-### Open question — the consumer-facing namespace: `Serialization::` vs the generated three-way split
+### Resolved — the consumer-facing namespace: `Serialization::` vs the generated three-way split
 
 The owner's concern (carried in the session handoff): the generated layer's
 three-way namespace split — `IFE::blocks` / `IFE::constants` / `IFE::vtables`
@@ -2267,20 +2576,21 @@ the header-only route's need for `IFE_Blocks.cpp` alongside the headers —
 the installed form of decision D, since the block layer is deliberately
 unexported and `IFE_HEADER_ONLY` folds that `.cpp` into the header.
 
-**Verified in a scratch workspace (both repos, uncommitted):** the
+**Verified first in a scratch workspace, then shipped.** The
 `IrisCodec::Serialization` namespace round-trips all 18 block kinds through
 the generated readers (417-byte synthetic slide, deep validation green), and
-Iris-Codec's encoder — 24 `Serialization::` refs + bare `NULL_OFFSET`
-migrated to the generated API in a /tmp clone, one file — compiles clean
-against this branch (`-fsyntax-only`, zero diagnostics). The migration is
-exactly the bounded one-file reshape the earlier analysis priced: the
-semantic payloads (`Layers`, `Attributes`, `Extent::layers`) flatten into
-the generated entry arrays at the call sites, the include fix is
-`IrisCodecPriv.hpp:47`, and `using namespace Serialization;` inside
-`namespace IrisCodec` restores the bare sentinels. Remaining before the
-`downstream` job can go green: install the codec dependencies (jpeg-turbo,
-AVIF, highway, libpng) for a full link, commit the Iris-Codec side, and
-push the IFE side.
+Iris-Codec's encoder — 24 `Serialization::` refs + bare `NULL_OFFSET` — moved
+to the generated API in one file. The migration was exactly the bounded
+one-file reshape the earlier analysis priced: the semantic payloads
+(`Layers`, `Attributes`, `Extent::layers`) flatten into the generated entry
+arrays at the call sites, the include fix is `IrisCodecPriv.hpp:47`, and
+`using namespace Serialization;` inside `namespace IrisCodec` restores the
+bare sentinels.
+
+**Landed (2026-08-18).** Both sides are committed and pushed, and the
+`downstream` job is green on `main` at `c3ab440` — the codec dependencies
+(jpeg-turbo, AVIF, highway, libpng) are installed by the job itself, copied
+from Iris-Codec's own CI recipe. See the Phase 6 checklist item above.
 
 ---
 
@@ -2608,7 +2918,7 @@ Annotations are unblocked (seven v1 writer/reader defects fixed in
 | `IMAGES`, `IMAGE_BYTES` ⚠ | ≥2 associated images differing in `ENCODING` and `ORIENTATION` |
 | `ICC_PROFILE` ⚠ | any embedded profile |
 | `ANNOTATIONS`, `ANNOTATION_BYTES` | ≥1 of each `annotation_types` value — PNG, JPEG, SVG, TEXT (unblocked) |
-| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` ⚠ | ≥1 named group — still blocked: no group writer; if it stays deferred, record both as covered by the generated writers alone |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` | ≥1 named group — **unblocked** (verified 2026-08-18): the "no group writer" note meant v1's writer, deleted in Phase 6. `AnnotationGroupSizesCreateInfo`/`AnnotationGroupBytesCreateInfo` exist and are used by `IFE_Blocks.cpp`. See R-2.1 |
 | `CIPHER` ⚠ | one encrypted fixture, if the encoder can write one; otherwise record as permanently uncovered |
 | `CLINICAL_METADATA` ⚠ | 1.1 only — one fixture per `clinical_encodings` value the encoder supports |
 
@@ -2648,6 +2958,22 @@ it disables only the corpus test target, never the snapshot fetch, which the
 oracle depends on. Cache by manifest digest in CI so the normal path never
 touches the host.
 
+**Loud-failure requirement — already satisfied (verified 2026-08-18).** Every
+path that needs a byte of the corpus fails hard when it cannot get one:
+`tools/fetch_corpus.py` exits non-zero on an unreachable URL, a byte-count
+disagreement, or a digest that has drifted; CMake turns that into
+`message(FATAL_ERROR)` at configure (`tests/tests.cmake`); and Bazel's
+`//tests/corpus:corpus` genrule fails the build. A manifest change busts the
+CI cache key, so CI does a real fetch exactly when the manifest names
+something new. Nothing skips, and no additional gate is needed.
+
+The residual — a cached CI run cannot observe the host — is by design and
+costs nothing, because that run needs no byte from it. A scheduled liveness
+check was built for this on 2026-08-18 and removed the same day: the incident
+that prompted it was local DNS interception on a developer machine, not an
+outage (the host served correctly throughout), so the check would have been
+green through the whole thing.
+
 **Cloudflare gotcha (2026-08-12):** the zone's bot protection (error 1010)
 blocks the default `Python-urllib` user agent; `tools/fetch_corpus.py` sends
 `ife-corpus-fetch/1.0` instead. If the host changes, keep that.
@@ -2670,13 +2996,16 @@ Step 4 keeps this honest: without it the corpus degrades silently, exactly as
 
 #### Where oracle coverage stands
 
-Counted from what the snapshot contains: **13 of the 18 block types**
+Counted from what the snapshot contains: **14 of the 18 block types**
+(corrected 2026-08-18 by R-1's harness, which found `TILE_PIXEL_DATA`
+present and undeclared — see the R-1 status block)
 (`FILE_HEADER`, `TILE_TABLE`, `LAYER_EXTENTS`, `TILE_OFFSETS`, `METADATA`,
 `ATTRIBUTES`, `ATTRIBUTE_SIZES`, `ATTRIBUTE_BYTES`, `IMAGES`, `IMAGE_BYTES`,
-`ICC_PROFILE`, `ANNOTATIONS`, `ANNOTATION_BYTES`), re-verified 2026-08-12
-(2,857 B, digest in MIGRATION 6.3). The remaining five — `CIPHER`,
-`ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES`, framed `TILE_PIXEL_DATA`,
-`CLINICAL_METADATA` — are the ⚠ rows above.
+`ICC_PROFILE`, `ANNOTATIONS`, `ANNOTATION_BYTES`, `TILE_PIXEL_DATA`). The
+remaining four — `CIPHER`, `ANNOTATION_GROUP_SIZES`,
+`ANNOTATION_GROUP_BYTES`, `CLINICAL_METADATA` — are the ⚠ rows above, plus
+the *framed* tile variant (`TILE_FRAME`), a prefix rather than one of the 18
+blocks, unreached either way.
 
 **Exit:** every block type reached by at least one fixture — full real-byte
 coverage. Deleting v1 was not blocked on this; the corpus is the path to the

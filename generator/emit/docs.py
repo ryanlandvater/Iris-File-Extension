@@ -12,7 +12,10 @@ Emitted into ``generated_docs/``:
     layout/<BLOCK>.adoc          one block's header table
     layout/<BLOCK>_entry.adoc    that block's entry table, where it has one
     layout/primitive_<NAME>.adoc a shared prefix (file_header, block, array…)
-    constants/<GROUP>.adoc       one enumeration, or the sentinel values
+    constants/<GROUP>.adoc       one enumeration, or the sentinel values;
+                                 every enumeration carries the id
+                                 `ife-const-<group>` (constants_anchor) that
+                                 the layout tables' enum columns link to
     provenance.adoc              schema and generator version of this build
 
 Every table is a two-column-plus AsciiDoc table with a title, so the published
@@ -22,7 +25,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..model.layout import BlockLayout, FieldLayout, LayoutResult, constants_groups, is_banner, is_enum_group, parse_int, version_key
+from ..model.layout import (
+    BlockLayout,
+    FieldLayout,
+    LayoutResult,
+    constants_anchor,
+    constants_groups,
+    is_banner,
+    is_enum_group,
+    parse_int,
+    version_key,
+)
 
 # Emitted paths are relative to the docs root; the narrative includes them by
 # these names, so they are part of the contract with spec/ife_spec.adoc.
@@ -46,13 +59,32 @@ def section_anchor(block_name: str) -> str:
     return "ife-" + block_name.lower().replace("_", "-")
 
 
+def constants_title(group_name: str) -> str:
+    """`recovery_codes` -> `recovery codes`: a constants table's caption text.
+
+    One string serves the caption and the cross-reference to it, because
+    xrefstyle: full makes an xref show the target's caption: a code-formatted
+    name plus underlying type would read twice in every layout table that
+    names a field's enumeration, as `enum recovery_codes -> Table 7.
+    recovery_codes — u16`.
+    """
+    return group_name.replace("_", " ")
+
+
 def _type_column(field: FieldLayout) -> str:
     if field.points_to:
         # A cross-reference, so the reader can follow the offset to the block
         # it addresses instead of hunting for it in the contents.
         return f"`{field.type_name}` -> <<{section_anchor(field.points_to)}>>"
     if field.kind == "enum":
-        return f"enum `{field.type_name}`"
+        # Same courtesy for an enumeration: the type names the table that
+        # defines the domain, so link to it rather than leave the reader
+        # hunting for the include in the narrative. The explicit text keeps
+        # the link from inheriting the caption (xrefstyle: full).
+        return (
+            f"enum `{field.type_name}` -> "
+            f"<<{constants_anchor(field.type_name)},{constants_title(field.type_name)}>>"
+        )
     if field.kind == "constant":
         return f"`{field.type_name}` = `{field.constant}`"
     return f"`{field.type_name}`"
@@ -126,11 +158,23 @@ def emit_primitive_layout(primitive: Any, witness_hash: str) -> str:
 def emit_constants_table(
     group_name: str, group: dict[str, Any], recovery_prefix: int, witness_hash: str
 ) -> str:
-    """One enumeration, or the statically defined values."""
+    """One enumeration, or the statically defined values.
+
+    The caption is the humanized group name (constants_title), not the code
+    name with its underlying type: xrefstyle: full makes an xref show the
+    target's caption, and `enum recovery_codes -> Table 7. recovery_codes —
+    u16` says the same thing twice in one cell. The underlying type is still
+    on the wire as the enum's width; it just is not repeated in the heading.
+
+    An enumeration carries the id the layout tables' type column links to
+    (constants_anchor). Value groups carry none: nothing references them, and
+    an id nothing points at is noise in the published document. The id sits
+    on the line before the title so it attaches to the table block itself.
+    """
     out = _banner(witness_hash)
-    title = f"`{group_name}`"
+    title = constants_title(group_name)
     if is_enum_group(group):
-        title += f" — `{group['underlying_type']}`"
+        out.append(f"[[{constants_anchor(group_name)}]]")
 
     out += [
         f".{title}",

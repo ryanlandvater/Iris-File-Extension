@@ -45,6 +45,7 @@ from .model.layout import (
     _TYPE_WIDTH,
     RECOVERY_PREFIX,
     SpecError,
+    constants_anchor,
     constants_groups,
     is_banner,
     is_enum_group,
@@ -636,6 +637,24 @@ def validate(
                 problems.append(
                     f"block {block_name!r} has no section anchored {expected!r} in the "
                     "narrative; its layout table's cross-references cannot resolve"
+                )
+
+    # ---- 6b. generated enum anchors stay disjoint from the narrative ----- #
+    # The constants tables emit an id of their own (constants_anchor in
+    # model/layout.py) so the layout tables can cross-reference them, and a
+    # narrative section that later claims the same id would leave the
+    # published document with one name on two anchors -- a duplicate-id
+    # warning, and an xref that may resolve to the wrong target. The
+    # narrative owns every `ife-<name>` id, so the collision is a hand-edit
+    # mistake caught here instead of a rendered-PDF surprise.
+    if anchors is not None:
+        for group_name in _enum_groups(constants_doc):
+            expected = constants_anchor(group_name)
+            if expected in anchors:
+                problems.append(
+                    f"enum group {group_name!r} generates anchor {expected!r}, which "
+                    "the narrative also declares; the generated table and the "
+                    "narrative section would share one id"
                 )
 
     # ---- 6. normative clauses point at a clause the document declares ---- #

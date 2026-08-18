@@ -39,3 +39,6 @@ tests/fixtures/future_versioning/
 generated_docs/*
 !generated_docs/README.md
 tests/fixtures/baseline_versioning/
+# tools/corpus_manifest_header.py projects the committed manifest into a
+# header at configure; the manifest is the record, this is a build artifact.
+tests/fixtures/corpus/

@@ -112,6 +112,19 @@ def is_enum_group(group: dict[str, Any]) -> bool:
     return "underlying_type" in group
 
 
+def constants_anchor(group_name: str) -> str:
+    """`tile_encodings` -> `ife-const-tile-encodings`, the id of its emitted table.
+
+    The narrative owns the plain `ife-<name>` ids for its sections, and a
+    generated table is usually included *inside* such a section — recovery
+    codes, say, sit under `[[ife-recovery-codes]]`. A generated table reusing
+    that name would be a duplicate id, so the tables live in a namespace of
+    their own. Defined here rather than in the emitter because validate.py
+    must compute the same ids to check them against the narrative's.
+    """
+    return "ife-const-" + group_name.lower().replace("_", "-")
+
+
 def value_groups(doc: dict[str, Any]) -> dict[str, Any]:
     """The non-enumeration constants groups, in document order."""
     return {

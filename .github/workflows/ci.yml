@@ -45,6 +45,14 @@ jobs:
       - run: python3 -m generator --validate
       - run: python3 -m generator
       - run: python3 -m generator --check
+      # Determinism (XP-3): two generator runs must be byte-identical. The
+      # seeds are the point — dict/set iteration order varies with
+      # PYTHONHASHSEED, which is where non-determinism enters. ctest covers
+      # the default environment; the seeds run here.
+      - name: Generator determinism (seed 0)
+        run: PYTHONHASHSEED=0 python3 tests/generator/test_determinism.py
+      - name: Generator determinism (seed 1)
+        run: PYTHONHASHSEED=1 python3 tests/generator/test_determinism.py
       # Runs here rather than in the MSVC job so a Windows-only defect fails
       # in twenty seconds on Linux instead of after a full matrix build. It
       # replaces none of that job; it just gets there first.

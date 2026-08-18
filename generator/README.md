@@ -106,6 +106,10 @@ missing or `-DIFE_RUN_GENERATOR=ON`.
 * Output must be byte-stable (stable ordering, no timestamps): the same
   layout always yields the same bytes, which is what makes regeneration
   deterministic and the banner witness hash meaningful. `--check` verifies
-  parity against that hash, not character equality.
+  parity against that hash, not character equality. The determinism is
+  tested, not assumed — `tests/generator/test_determinism.py` runs the
+  generator twice into separate trees and compares (ctest
+  `ife_generator_determinism`; CI adds `PYTHONHASHSEED=0/1`, where dict/set
+  iteration order is where non-determinism would enter).
 * Never hand-edit `generated_source/` or `generated_docs/`; fix the JSON
   and regenerate.

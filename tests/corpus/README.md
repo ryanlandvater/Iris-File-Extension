@@ -47,24 +47,40 @@ corpus reproducible.
 ## `manifest.json`
 
 Per fixture: `url`, `size`, `sha256`, the IFE `version` it was written under,
-and the `blocks` it covers. The coverage list is not documentation — the
-harness asserts it was actually observed, so a fixture that stops containing
-annotations fails loudly instead of quietly narrowing the gate.
+`kind`, and the `blocks` it covers.
+
+`kind` is `"slide"` (a whole file, walkable from its file header) or
+`"fragment"` (a bare block, e.g. `v1_tile_offsets_full_width.bin`). It
+defaults to `"slide"`. Only a slide can have its coverage checked
+structurally, so a fragment is size-checked and left out of the coverage
+count rather than credited on its word.
+
+The coverage list is not documentation. `ife_corpus_tests` walks each slide
+and compares what it reaches against what is declared, **in both
+directions** — a declared block the walk cannot find is a degraded fixture,
+and a block reached but undeclared is a manifest that has fallen behind its
+own evidence. Both fail. (The second is not hypothetical: the gate's first
+run found `TILE_PIXEL_DATA` present and undeclared.)
 
 Adding a fixture is a manifest entry plus an upload. The corpus is a living
 set: it grows with coverage and with each new IFE version.
 
 ## Coverage
 
-The two live fixtures reach **13 of the 18 block types**. Uncovered, each
-because no encoder can currently write it:
+The two live fixtures reach **14 of the 18 block types** — a number now
+produced by `ife_corpus_tests` rather than counted by hand.
 
-| Block | Blocked on |
+The remaining four are **not blocked on a missing capability**: the generated
+layer has a `CreateInfo` and a `store()` for every one of them (verified
+2026-08-18; the old "no group writer" note meant v1's writer, deleted in
+Phase 6). What is missing is a fixture that contains them.
+
+| Block | What it needs |
 |---|---|
-| `CIPHER` | no encryption in the encoder; may stay permanently uncovered |
-| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` | no group writer |
-| framed `TILE_PIXEL_DATA` | 1.1 frame not yet written by the encoder |
-| `CLINICAL_METADATA` | 1.1 block not yet written by the encoder |
+| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` | a fixture with ≥1 named group |
+| `CLINICAL_METADATA` | a 1.1 fixture carrying a clinical stream |
+| framed `TILE_PIXEL_DATA` (`TILE_FRAME`) | a fixture whose tiles carry the 1.1 frame prefix |
+| `CIPHER` | ⚠ a decision first — the spec requires `TILE_ENCODING_IRIS`, which is reserved and unused, so any fixture would claim an encoding no encoder produces |
 
 Worth encoding deliberately when fixtures are next produced: `NULL_TILE` slots
 (both published files are dense, so the sentinel is never exercised), a
