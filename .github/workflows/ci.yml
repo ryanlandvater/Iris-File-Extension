@@ -212,7 +212,7 @@ jobs:
       - name: Compile the Emscripten branch
         run: |
           emcc -std=c++20 -Werror -c src/IFE_Window.cpp \
-            -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv \
+            -I include -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv \
             -o /tmp/ife_window_wasm.o
 
   big-endian:
@@ -245,7 +245,7 @@ jobs:
             set -e
             apk add --no-cache g++ >/dev/null
             echo "arch: $(uname -m)"
-            INC="-I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
+            INC="-I include -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
             g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp
             g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp generated_source/IFE_Blocks.cpp
             g++ -std=c++20 -O2 $INC -o /tmp/window tests/ife_window_tests.cpp src/IFE_Window.cpp

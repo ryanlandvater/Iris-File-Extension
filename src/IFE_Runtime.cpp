@@ -151,9 +151,9 @@ enum class SliceError {
 /// describes the other; this is where that is caught. `__at` receives the
 /// index of the offending entry, so a message can name it.
 SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
-                            std::vector<AttributeSlice>& __out,
+                            std::vector<AttributeSlice>& __slices,
                             std::uint32_t* __at = nullptr) {
-    __out.clear();
+    __slices.clear();
     if (__at) *__at = 0;
     const auto sizes = __attrs.sizes_offset();
     const auto bytes = __attrs.bytes_offset();
@@ -186,7 +186,7 @@ SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
             !b::nested_size_is_whole(slice.value_size))
             return SliceError::NESTED_PARTIAL;
 
-        __out.push_back(slice);
+        __slices.push_back(slice);
     }
     return SliceError::NONE;
 }
