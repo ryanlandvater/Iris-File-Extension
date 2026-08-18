@@ -11,7 +11,7 @@ Run it with:
 python3 -m generator                    # writes generated_source/ + generated_docs/
 python3 -m generator --out-dir DIR      # write the C++ elsewhere
 python3 -m generator --validate         # conflicts, dangling references, wire-witness drift
-python3 -m generator --check            # CI: exit 1 if outputs drifted
+python3 -m generator --check            # CI: exit 1 on stale witness or banner-hash parity break
 ```
 
 `--validate` runs automatically before every generation, so a broken spec
@@ -32,8 +32,17 @@ anything.
 | `generated_docs/` | **Freely regenerable. Gitignored.** Doc tables: `layout_tables.md`. |
 
 The five outputs are registered in one place — `pipeline.py::_render` — and
-`--check` covers whatever that map contains, so adding an artifact never means
-remembering to extend the drift gate.
+`--check` verifies whatever that map contains, so adding an artifact never
+means remembering to extend the drift gate.
+
+`--check` is **parity, not byte-equality** (XP-2): every generated file's
+banner carries the wire-witness sha256, and `--check` compares that against a
+fresh computation. A comment edit in an emitter — a version bump, a copyright
+year — no longer flags as drift; only a file produced from a different spec
+does. Content beyond the banner is unwitnessed by design: the build and the
+corpus oracle own that ground. (`attributes.adoc` is the one banner-less
+file: it is the AsciiDoc document header, which cannot carry a comment
+block.)
 
 Nothing generated is permanent — but the *vtable layout* is, which is why
 the JSON is versioned append-only.
@@ -46,7 +55,7 @@ the JSON is versioned append-only.
 | `--out-dir` | `generated_source/` | Where generated C++ is written |
 | `--docs-dir` | `generated_docs/` | Where generated documentation is written |
 | `--validate` | — | Check the documents for conflicts, dangling references, and drift against the committed wire witness (`tests/wire/witness.json`), emit nothing (exit 1 on any). Warns — non-fatally — when the spec has unrecorded additions |
-| `--check` | — | Regenerate in memory and fail (exit 1) if outputs drifted or the committed witness is stale |
+| `--check` | — | Fail (exit 1) if any generated file's banner witness hash mismatches the current spec (parity, not byte-equality) or the committed witness is stale |
 
 CMakeLists.txt invokes exactly this interface at configure time; changing
 flags requires updating CMakeLists.txt in the same change.
@@ -94,7 +103,9 @@ missing or `-DIFE_RUN_GENERATOR=ON`.
 
 ## Contract
 
-* Output must be byte-stable (stable ordering, no timestamps) so CI can
-  diff-check regeneration with `--check`.
+* Output must be byte-stable (stable ordering, no timestamps): the same
+  layout always yields the same bytes, which is what makes regeneration
+  deterministic and the banner witness hash meaningful. `--check` verifies
+  parity against that hash, not character equality.
 * Never hand-edit `generated_source/` or `generated_docs/`; fix the JSON
   and regenerate.

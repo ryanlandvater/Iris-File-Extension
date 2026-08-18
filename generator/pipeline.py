@@ -18,6 +18,7 @@ emits the C++ layer and doc tables (generator/emit), and supports
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from .emit.cpp import (
 from .emit.docs import emit_documents
 from .model.layout import RECOVERY_PREFIX, LayoutResult, derive_layout
 from .validate import validate
+from .witness import witness_hash
 
 # The generator is part of the standard once it renders the document, so the
 # published artifact states which version produced it.
@@ -41,26 +43,31 @@ _DOCS_ROOT = "generated_docs"
 
 
 def _render(
-    fields_doc: dict[str, Any], constants_doc: dict[str, Any], header: dict[str, Any]
+    fields_doc: dict[str, Any],
+    constants_doc: dict[str, Any],
+    header: dict[str, Any],
+    witness_hash: str,
 ) -> tuple[dict[str, str], LayoutResult]:
     """Render every output: relative path -> content (byte-stable)."""
     layout = derive_layout(fields_doc, constants_doc)
     outputs = {
         f"{_CPP_ROOT}/IFE_Blocks.hpp": emit_blocks_header(
-            layout, fields_doc.get("types", {}), constants_doc, header
+            layout, fields_doc.get("types", {}), constants_doc, header, witness_hash
         ),
         f"{_CPP_ROOT}/IFE_Blocks.cpp": emit_blocks_source(
-            layout, fields_doc.get("types", {}), header
+            layout, fields_doc.get("types", {}), header, witness_hash
         ),
-        f"{_CPP_ROOT}/IFE_Validation.hpp": emit_validation_header(layout, header),
+        f"{_CPP_ROOT}/IFE_Validation.hpp": emit_validation_header(
+            layout, header, witness_hash
+        ),
         f"{_CPP_ROOT}/IFE_Validation.cpp": emit_validation_source(
-            layout, constants_doc, fields_doc.get("types", {}), header
+            layout, constants_doc, fields_doc.get("types", {}), header, witness_hash
         ),
     }
     # The specification document's generated half: one AsciiDoc file per item,
     # so the narrative includes exactly what it needs where it needs it.
     for rel, text in emit_documents(
-        layout, constants_doc, header, GENERATOR_VERSION, RECOVERY_PREFIX
+        layout, constants_doc, header, GENERATOR_VERSION, RECOVERY_PREFIX, witness_hash
     ).items():
         outputs[f"{_DOCS_ROOT}/{rel}"] = text
     return outputs, layout
@@ -123,19 +130,33 @@ def _orphans(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> list[Pat
     return sorted(found)
 
 
-def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> int:
+def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path, whash: str) -> int:
+    """Parity check: every generated file must carry the current witness hash.
+
+    Byte-equality was the old gate and flagged every legitimate change — a
+    version bump, a copyright year — as drift. The witness hash changes
+    exactly when a wire fact changes (XP-1), so a file produced from the
+    current spec passes however the emitting text was reformatted, and a
+    spec change that was not regenerated fails. Content beyond the banner is
+    unwitnessed by design: the build and the corpus oracle own that ground.
+    """
     drifted: list[str] = []
     missing: list[str] = []
-    for rel, text in outputs.items():
+    for rel in outputs:
         path = _dest_dir(rel, out_dir, docs_dir) / _relative(rel)
         if not path.exists():
             missing.append(rel)
-        elif path.read_text() != text:
+        elif rel in _NO_BANNER:
+            continue
+        elif _banner_witness_hash(path.read_text()) != whash:
             drifted.append(rel)
     for rel in missing:
         print(f"generator: missing {rel}", file=sys.stderr)
     for rel in drifted:
-        print(f"generator: drifted {rel}", file=sys.stderr)
+        print(
+            f"generator: drifted {rel} (banner witness hash != current spec)",
+            file=sys.stderr,
+        )
     orphans = _orphans(outputs, out_dir, docs_dir)
     for path in orphans:
         print(f"generator: orphaned {path}", file=sys.stderr)
@@ -143,6 +164,29 @@ def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> int:
         return 1
     print("generator: outputs are current (no drift)")
     return 0
+
+
+# The one generated file with no banner: attributes.adoc is the AsciiDoc
+# document header, which cannot carry a comment block without ending the
+# title-page header (see emit_attributes). Its content is still deterministic;
+# it is simply not a banner-carrying file, so parity is not witnessed there.
+_NO_BANNER = {f"{_DOCS_ROOT}/attributes.adoc"}
+
+_HASH_RE = re.compile(r"Wire witness: sha256 ([0-9a-f]{64})")
+
+
+def _banner_witness_hash(text: str) -> str | None:
+    """The witness hash a generated file's banner carries, if any.
+
+    Both banners (C++ `//` and AsciiDoc `////`) carry the same line, so one
+    pattern reads either. None means the file predates the parity contract
+    or was hand-edited — either way it cannot be verified.
+    """
+    for line in text.splitlines()[:12]:
+        match = _HASH_RE.search(line)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _baseline_witness(schema_dir: Path) -> dict[str, Any] | None:
@@ -202,7 +246,8 @@ def run(
         return 0
 
     try:
-        outputs, layout = _render(fields_doc, constants_doc, header)
+        whash = witness_hash(fields_doc, constants_doc, header)
+        outputs, layout = _render(fields_doc, constants_doc, header, whash)
     except (OSError, ValueError) as exc:
         print(f"generator: {exc}", file=sys.stderr)
         return 2
@@ -219,7 +264,7 @@ def run(
                 file=sys.stderr,
             )
             return 1
-        return _run_check(outputs, out_dir, docs_dir)
+        return _run_check(outputs, out_dir, docs_dir, whash)
 
     written = 0
     for rel, text in outputs.items():

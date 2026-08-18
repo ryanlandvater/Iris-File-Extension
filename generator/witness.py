@@ -18,10 +18,16 @@ only what a conformant encoder writes into an .iris stream:
 
 If the witness JSON is unchanged across a refactor, the wire format is
 preserved regardless of how the emitting Python was reorganised.
+
+``witness_hash`` fingerprints the whole witness for the generated banners:
+`--check` verifies a file was produced from the current spec by comparing
+its banner hash against a fresh computation (XP-2).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .model.layout import (
@@ -123,3 +129,22 @@ def witness(
     }
 
     return {"blocks": blocks, "entries": entries, "enums": enums, "constants": constants}
+
+
+def witness_hash(
+    fields_doc: dict[str, Any],
+    constants_doc: dict[str, Any],
+    header_doc: dict[str, Any],
+) -> str:
+    """sha256 of the canonical witness JSON — the wire contract's fingerprint.
+
+    Emitted into every generated file's banner so --check can answer "was
+    this produced from the current spec?" without comparing text (XP-2): the
+    hash changes exactly when a wire fact changes, and not when an emitter
+    comment does. The canonical form is the same (indent=2, sort_keys=True)
+    rendering the committed baseline is written in.
+    """
+    canonical = json.dumps(
+        witness(fields_doc, constants_doc, header_doc), indent=2, sort_keys=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

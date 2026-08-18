@@ -33,8 +33,8 @@ list lives at the top of `../FastFHIR/TASKS.md`.
 
 | ID | Priority | Task | Why | Status |
 |---|---|---|---|---|
-| XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced | ✅ **done (2026-08-18)** |
-| XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism | open |
+| XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced | **done (2026-08-18)** |
+| XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism | **done (2026-08-18)** |
 | XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today | open |
 | XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for | open |
 
@@ -166,17 +166,32 @@ the current spec?" XP-1 supplies the answer.
 
 **Depends on XP-1.**
 
-### XP-2.1
+### XP-2.1 — ✅ DONE
 Embed the witness hash in each generated file's banner
 (`generator/emit/cpp.py::_banner`, `generator/emit/docs.py::_banner`).
 
-### XP-2.2
+### XP-2.2 — ✅ DONE
 Change `--check` to compare the on-disk banner hash against a freshly computed
 witness hash, and drop the full-text diff.
 
 **Done when:** touching a comment in `generator/emit/cpp.py` and regenerating
 leaves `--check` green, while changing any field in `spec/ife_fields.json`
 turns it red. Both red-greened.
+
+> **Status (2026-08-18): XP-2 is DONE — XP-2.1 and XP-2.2.**
+> `witness_hash()` in `generator/witness.py` fingerprints the canonical
+> witness; every generated banner (C++ `//` and AsciiDoc `////`, both via
+> `_banner`) carries `Wire witness: sha256 <hex>`. `--check` is now parity,
+> not byte-equality: it extracts each on-disk banner's hash and compares it
+> against a fresh computation — a comment edit in an emitter no longer flags
+> as drift, a file produced from a different spec does. The full-text diff is
+> dropped; missing files, orphans, and the stale-evidence promotion from XP-1
+> remain. One banner-less file is exempt by design: `attributes.adoc` is the
+> AsciiDoc document header and cannot carry a comment block. Red-greens
+> verified: emitter comment change + regenerate → `--check` green with the
+> hash unchanged; spec field change → `--check` red (both via the stale
+> evidence promotion and, with the baseline refreshed, via banner-hash
+> mismatch naming every drifted file).
 
 ---
 
