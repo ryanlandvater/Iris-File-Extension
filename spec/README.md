@@ -3,7 +3,7 @@
 The Iris File Extension is specified by four documents that together are the
 **single source of truth** for the C++ serialization layer
 (`generator/` → `generated_source/`), the LaTeX specification document, and
-the HTML documentation (`generated_docs`):
+the HTML documentation (`generated_docs`) to generate .iris whole slide images:
 
 | File | Role |
 |------|------|

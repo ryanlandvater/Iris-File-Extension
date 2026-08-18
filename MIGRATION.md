@@ -1,5 +1,199 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
+# ▶ CROSS-POLLINATION WORK ORDERS — start here
+
+Written 2026-08-18 after a joint review of this repository and FastFHIR
+(`../FastFHIR`), which share an architecture — offset-addressed blocks in a
+mapped arena, recovery tags, a Python generator emitting a gitignored C++
+layer, append-only wire ledgers — and have solved overlapping problems in
+different orders. Each repo has something the other is missing. **These are
+the items FastFHIR already has and this repository does not.** The reciprocal
+list lives at the top of `../FastFHIR/TASKS.md`.
+
+**These override the phase plans below. Do them first, in priority order.**
+
+## Rules (override anything else in this file)
+
+1. **One task ID per session** (e.g. `XP-1.2`). Do not batch.
+2. **Run the *Locate* block first.** If its output does not match *Expect*,
+   **STOP** and report what you saw. A mismatch means the tree moved and the
+   task is stale — do not improvise.
+3. **Do not commit.** Leave changes in the working tree and report.
+4. **Never hand-edit `generated_source/` or `generated_docs/`.** Change the
+   emitter in `generator/emit/` and regenerate.
+5. **Never move, resize or retype a shipped field.** Append-only is the
+   invariant these tasks exist to *enforce*; a task that seems to require
+   breaking it is a task written wrong — stop and say so.
+6. A task is done only when every *Done when* criterion holds and the stated
+   command exits 0. Paste the output.
+7. ⚠ marks a decision a flash model must not make alone. Produce the analysis
+   and STOP.
+
+## Priority summary
+
+| ID | Priority | Task | Why |
+|---|---|---|---|
+| XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced |
+| XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism |
+| XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today |
+| XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for |
+
+---
+
+## XP-1 — Enforce append-only with a wire witness (P0)
+
+**Why first.** Phase 2 of this document says the append-only diff check is the
+one validator item never built, and calls it "the invariant every
+compatibility guarantee in this document rests on … still unenforced."
+FastFHIR built exactly this and it works. `--validate` currently checks only
+*within* one revision: it cannot see a 1.0 field being moved, resized or
+retyped, because that is a property of the **diff** between revisions.
+
+Today's session is the argument. The `ATTRIBUTE_SIZE` entry went from six
+bytes to seven deliberately, and nothing in the toolchain objected — the only
+thing that noticed was a hosted fixture failing to load, hours later. A
+witness would have said so at `--validate` time.
+
+**Read first**
+- `../FastFHIR/tests/generator/wire_witness.py` — the whole file. Its
+  docstring states the principle: the gate is wire stability, not C++ source
+  text identity.
+- `../FastFHIR/tests/generator/test_wire_format.py` — how `_check_permanence`
+  is used, and how a baseline is stored and refreshed.
+- `generator/validate.py` — where the new check joins the existing five.
+- This document's Phase 2, validator item 1.
+
+### Locate
+
+```bash
+cd /Users/ryanlandvater/GitHub/Iris-File-Extension
+grep -n "def validate" generator/validate.py | head
+ls tests/wire/ 2>/dev/null || echo "no tests/wire yet (expected)"
+python3 -m generator --validate | tail -1
+```
+
+**Expect:** `--validate` prints `generator: spec documents are consistent`,
+and `tests/wire/` does not exist.
+
+### XP-1.1 — Emit the witness
+
+Add `generator/witness.py` with one entry point:
+
+```python
+def witness(fields_doc, constants_doc, header_doc) -> dict
+```
+
+It returns **only what reaches the wire**, never C++ text:
+
+- `blocks` → for each block: `recovery_tag` value, `primitive`, and for each
+  version group the ordered list of `(field name, type or enum group, width,
+  offset)` derived through `generator.model.layout.derive_layout`.
+- `entries` → the same for every array block's entry, plus `entry_size` per
+  version group.
+- `enums` → every group's `underlying_type` and every member's name → value.
+- `constants` → every statically defined value's name → value.
+
+Derive offsets through `derive_layout`, never by re-deriving them here: a
+second derivation is a second thing to be wrong.
+
+**Done when:** `python3 -c "import json,generator.witness as w, ..."` prints a
+dict containing `ATTRIBUTE_SIZES.entry.KIND` at offset 6, width 1.
+
+### XP-1.2 — Commit the baseline
+
+Write the witness for the current tree to `tests/wire/witness.json`,
+**committed** (unlike `generated_source/`, this is evidence, not output).
+Add a one-paragraph `tests/wire/README.md` stating: what the file is, that it
+is append-only evidence rather than a snapshot to refresh casually, and the
+exact command to refresh it deliberately.
+
+**Done when:** `tests/wire/witness.json` is committed and
+`git diff --stat` is clean after regenerating it.
+
+### XP-1.3 — Gate on it
+
+Add check 6 to `generator/validate.py`, run by `--validate`: recompute the
+witness and compare against `tests/wire/witness.json`. Report, per finding:
+
+- a field that **moved, changed width, or changed type** → error
+- a field or block that **disappeared** → error
+- an enum member whose **value changed** → error
+- anything **added** → accepted silently (that is the whole point)
+
+Adopt FastFHIR's `_check_permanence` shape rather than writing a new
+comparator — same rule, same wording, one fewer thing to disagree.
+
+**Done when:**
+```bash
+python3 -m generator --validate && echo GATE-GREEN
+```
+exits 0, and each of these red-greens (revert after each):
+- move a 1.0 field within a block → error names the field and both offsets
+- widen `KEY_SIZE` u16→u32 → error names the width change
+- append a new field to a `1.1` group → **passes**
+
+⚠ **XP-1.4 — the baseline's own history.** `witness.json` records today's
+tree, which already contains the deliberate 1.0 `ATTRIBUTE_SIZE` correction.
+The gate therefore starts from a state that itself broke append-only once.
+Record that in `tests/wire/README.md` in one sentence, with the commit hash,
+so a future reader does not conclude the invariant has held unbroken. Do not
+try to reconstruct a pre-correction baseline — the correction was deliberate
+and is documented in `spec/ife_header.json`'s revision errata.
+
+---
+
+## XP-2 — Rebuild `--check` on parity, not byte-equality (P1)
+
+**Why.** Phase 3 already describes this: the current `--check` is exact
+character equivalence, so it flags every legitimate change — a version bump, a
+copyright year — as drift, and it still cannot answer "was this produced from
+the current spec?" XP-1 supplies the answer.
+
+**Depends on XP-1.**
+
+### XP-2.1
+Embed the witness hash in each generated file's banner
+(`generator/emit/cpp.py::_banner`, `generator/emit/docs.py::_banner`).
+
+### XP-2.2
+Change `--check` to compare the on-disk banner hash against a freshly computed
+witness hash, and drop the full-text diff.
+
+**Done when:** touching a comment in `generator/emit/cpp.py` and regenerating
+leaves `--check` green, while changing any field in `spec/ife_fields.json`
+turns it red. Both red-greened.
+
+---
+
+## XP-3 — Port the determinism test (P2)
+
+FastFHIR has `tests/generator/test_determinism.py`; this repository asserts
+byte-stable regeneration in prose only. Add `tests/generator/test_determinism.py`
+running the generator twice into two temp dirs and comparing.
+
+**Done when:** the test passes, and passes again with `PYTHONHASHSEED=0` and
+`PYTHONHASHSEED=1` — the seeds are the point, since dict ordering is where
+non-determinism enters.
+
+---
+
+## XP-4 — Port the dangling-view test (P2)
+
+FastFHIR has `tests/generator/test_no_dangling_views.py`. This repository has
+the same hazard and no test: `IFE::ByteSpan` and every accessor returning one
+point into a caller-owned mapping, and `Abstraction::AttributeNode::value`
+copies while `bytes()` does not.
+
+Add `tests/ife_lifetime_tests.cpp` asserting, under ASan, that no API returns a
+view outliving the buffer it was built from — in particular that
+`abstract_file_structure` copies everything it keeps.
+
+**Done when:** the test passes under `-fsanitize=address` and fails when a
+`std::string` copy in `IFE_Runtime.cpp` is deliberately changed to a view.
+
+---
+
+
 > **Status (2026-08-12):** Phase 6 is DONE. The hand-written layer
 > (`src/IrisCodecExtension.hpp/.cpp`) is deleted; the generated layer reads,
 > validates, maps, recovers **and writes** — `store()`/`size_of()` for all 18

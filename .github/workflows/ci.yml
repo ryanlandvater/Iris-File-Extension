@@ -258,17 +258,35 @@ jobs:
             set -e
             apk add --no-cache g++ >/dev/null
             echo "arch: $(uname -m)"
+            # Include resolution on this emulated host, established by the
+            # 31fbbf6 diagnostics: absolute -I /repo/... fails to open the same
+            # file that relative -I include opens (qemu-user path quirk), so
+            # the paths below are relative -- the container CWD is /repo by
+            # construction. Word-splitting of $INC is verified working.
+            echo "--- IFE_Bytes.hpp:"; ls -la /repo/include/IFE_Bytes.hpp 2>&1
             INC="-I include -I src -I .deps/irisheaders-src/include -I .deps/irisheaders-src/priv -I generated_source"
-            # The generated layer declares in IFE_Blocks.hpp and defines in
-            # IFE_Blocks.cpp, so anything using a handle compiles both. The
-            # header-only fold is the other consumption path and CMake's
-            # ife_blocks_header_only_tests covers it.
             BLK="generated_source/IFE_Blocks.cpp"
-            g++ -std=c++20 -O2 $INC -o /tmp/bytes tests/ife_bytes_tests.cpp $BLK
-            g++ -std=c++20 -O2 $INC -o /tmp/blocks tests/ife_blocks_tests.cpp $BLK
-            g++ -std=c++20 -O2 $INC -o /tmp/window tests/ife_window_tests.cpp src/IFE_Window.cpp
-            g++ -std=c++20 -O2 $INC -I tests -o /tmp/oracle \
-                tests/ife_v1_oracle_tests.cpp tests/ife_v1_fixture.cpp $BLK
+            # Bisect: the last compile that worked (8f2b46d) was a single-TU
+            # invocation; every failure since has had $BLK on the line. A vs B
+            # isolates whether the second TU is the trigger.
+            echo "--- A: one TU (8f2b46d shape):"
+            g++ -std=c++20 -O2 $INC -o /tmp/a tests/ife_bytes_tests.cpp && echo A_OK || echo A_FAIL
+            echo "--- B: two TUs (failing shape):"
+            g++ -std=c++20 -O2 $INC -o /tmp/b tests/ife_bytes_tests.cpp $BLK && echo B_OK || echo B_FAIL
+            # The real builds, one TU per compile then a link: multi-TU
+            # invocations have failed to resolve -I includes on this host, and
+            # -c + link does not depend on the mechanism.
+            g++ -std=c++20 -O2 $INC -c tests/ife_bytes_tests.cpp -o /tmp/bytes_tu.o
+            g++ -std=c++20 -O2 $INC -c $BLK -o /tmp/blk_tu.o
+            g++ -std=c++20 -O2 /tmp/bytes_tu.o /tmp/blk_tu.o -o /tmp/bytes
+            g++ -std=c++20 -O2 $INC -c tests/ife_blocks_tests.cpp -o /tmp/blocks_tu.o
+            g++ -std=c++20 -O2 /tmp/blocks_tu.o /tmp/blk_tu.o -o /tmp/blocks
+            g++ -std=c++20 -O2 $INC -c tests/ife_window_tests.cpp -o /tmp/window_tu.o
+            g++ -std=c++20 -O2 $INC -c src/IFE_Window.cpp -o /tmp/window_src.o
+            g++ -std=c++20 -O2 /tmp/window_tu.o /tmp/window_src.o -o /tmp/window
+            g++ -std=c++20 -O2 $INC -I tests -c tests/ife_v1_oracle_tests.cpp -o /tmp/oracle_tu.o
+            g++ -std=c++20 -O2 $INC -I tests -c tests/ife_v1_fixture.cpp -o /tmp/fixture_tu.o
+            g++ -std=c++20 -O2 /tmp/oracle_tu.o /tmp/fixture_tu.o /tmp/blk_tu.o -o /tmp/oracle
             /tmp/bytes
             /tmp/blocks
             /tmp/window
