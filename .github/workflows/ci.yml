@@ -130,11 +130,24 @@ jobs:
       # FETCHCONTENT_SOURCE_DIR override redirects that fetch to THIS
       # checkout — the exact state the PR would ship. Plain git, not
       # actions/checkout: checkout rejects paths outside the workspace.
+      # The clone prefers this owner's Iris-Codec fork, so a fork's CI tests
+      # the fork's codec against this IFE state; owners without a codec fork
+      # (the CMakeLists.txt probe catches missing and empty ones) fall back
+      # to the upstream org.
       # Build-only, matching Iris-Codec's own CI (which runs no ctest). The
       # apt + jpeg-turbo recipe is copied from that CI verbatim.
       - name: Check out Iris-Codec beside this repository
         shell: bash
-        run: git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-Codec.git ../Iris-Codec
+        run: |
+          if git clone --depth 1 "https://github.com/${{ github.repository_owner }}/Iris-Codec.git" ../Iris-Codec && \
+             [ -f ../Iris-Codec/CMakeLists.txt ]; then
+            echo "using ${{ github.repository_owner }}/Iris-Codec"
+          else
+            echo "no usable ${{ github.repository_owner }}/Iris-Codec" \
+                 "(any clone error above is expected) - falling back to IrisDigitalPathology"
+            rm -rf ../Iris-Codec
+            git clone --depth 1 "https://github.com/IrisDigitalPathology/Iris-Codec.git" ../Iris-Codec
+          fi
       - name: Configure Jpeg-Turbo PPA
         run: |
           sudo wget -q https://packagecloud.io/dcommander/libjpeg-turbo/gpgkey -O /etc/apt/trusted.gpg.d/libjpeg-turbo
