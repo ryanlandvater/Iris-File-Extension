@@ -69,6 +69,22 @@ def main() -> int:
         if name.startswith("//"):
             continue
         strip_block(block)
+
+    # Drop any field still pointing at a block that is gone. Today none
+    # survives -- the fields naming the 1.1 blocks are themselves 1.1 and were
+    # stripped above -- but that is a property of this schema, not of the
+    # derivation, and a dangling points_to fails --validate at configure time
+    # with an error pointing at a file nobody edited.
+    for name, block in fields["blocks"].items():
+        if name.startswith("//"):
+            continue
+        for owner in (block, block.get("entry")):
+            if not isinstance(owner, dict):
+                continue
+            groups = owner.get("fields", {}).get("ife_version", {})
+            for version, group in groups.items():
+                groups[version] = [f for f in group
+                                   if f.get("points_to") not in dropped]
     for primitive in fields["primitives"].values():
         strip_block(primitive)
     # A primitive left with no fields at all never existed at the baseline.

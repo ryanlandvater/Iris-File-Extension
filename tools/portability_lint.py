@@ -166,6 +166,18 @@ def check_sal_annotations() -> list[str]:
     for directory in SOURCE_DIRS + ("generated_source",):
         base = ROOT / directory
         if not base.is_dir():
+            # An absent generated_source is not a clean one. It is gitignored
+            # and written at configure time, so on a fresh clone this check
+            # would otherwise report the generated layer clean without having
+            # read a byte of it -- and the emitter writes the same identifiers
+            # the hand-written layer does, which is the whole reason it is
+            # scanned. Say so instead of passing.
+            if directory == "generated_source":
+                found.append(
+                    "generated_source/ does not exist, so the generated layer was not "
+                    "scanned for SAL collisions. Configure the project (or run "
+                    "`python3 -m generator`) and re-run this lint."
+                )
             continue
         for path in sorted(base.rglob("*")):
             if path.suffix not in SOURCE_SUFFIXES:
@@ -290,9 +302,19 @@ def check_workflow_include_paths() -> list[str]:
     compiler = re.compile(r"\b(?:emcc|g\+\+|clang\+\+|c\+\+)\b")
     for path in sorted(workflows.glob("*.y*ml")):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            # YAML comments describe; they do not compile.
+            if line.lstrip().startswith("#"):
+                continue
+            # A line that gets its include path from a shell variable is not
+            # inspectable here, and the assignment it came from is checked on
+            # its own line. Flagging it anyway is how a linter earns --quiet.
+            if re.search(r"\$\{?\w+\}?", line.replace("${{", " ")):
+                interpolated = True
+            else:
+                interpolated = False
             old_layout = bool(re.search(r"-I ?\bsrc\b", line)) and "-I include" not in line
             hand_compile = bool(compiler.search(line) and compiles_source.search(line)
-                                and "-I" in line)
+                                and "-I" in line and not interpolated)
             if old_layout or (hand_compile and "-I include" not in line):
                 found.append(
                     f"{path.relative_to(ROOT)}:{number}: compiles repository sources "

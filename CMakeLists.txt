@@ -446,6 +446,10 @@ if(IFE_BUILD_TESTS)
     # CTest passes an argument through verbatim.
     target_link_libraries(ife_runtime_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_runtime_tests COMMAND ife_runtime_tests ${IFE_CORPUS_DIR})
+    # A walk that forgets which nested attribute structures it has finished
+    # with does not fail on a shared subtree, it stops returning. The timeout
+    # is what turns that into a reported failure instead of a hung job.
+    set_tests_properties(ife_runtime_tests PROPERTIES TIMEOUT 120)
 
     # Version gating, executed. The real spec is 1.0-only, so the
     # since-mechanism — optional accessors gated by the file version and the
@@ -618,8 +622,12 @@ if(IFE_BUILD_TESTS)
         message(FATAL_ERROR "IFE baseline fixture generation failed — see output above")
     endif()
 
+    # EXCLUDE_FROM_ALL: nothing depends on it and it is run by hand a few
+    # times a year, so `cmake --build .` should not compile it. Build it
+    # explicitly when regenerating the snapshot:
+    #     cmake --build build --target ife_snapshot_writer
     add_executable(
-        ife_snapshot_writer
+        ife_snapshot_writer EXCLUDE_FROM_ALL
         ${PROJECT_SOURCE_DIR}/tests/ife_snapshot_writer.cpp
     )
     target_include_directories(

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace IrisCodec {
@@ -205,6 +206,22 @@ SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
 /// the one thing validating first is supposed to prevent.
 constexpr Size MAX_ATTRIBUTE_DEPTH = b::MAX_BLOCK_DEPTH - 3;
 
+/// Attribute-block offsets a walk has already finished with.
+///
+/// The depth bound alone does not bound the *work*. VisitPath carries the
+/// ancestry, deliberately, so a structure reached twice by different keys is
+/// two legitimate visits -- and nesting makes the fan-out attacker-controlled,
+/// since a single value names as many structures as its length allows. Thirteen
+/// blocks each naming forty offsets into the next is five kilobytes on disk,
+/// contains no cycle, exceeds no depth, and takes 40^13 visits.
+///
+/// A block's verdict does not depend on how it was reached, so finishing one
+/// and remembering it makes every later arrival free and the walk linear in
+/// the number of distinct blocks. Recorded on *completion*, never on entry:
+/// marking early would let a structure that reaches itself find its own entry
+/// and report success, which is the cycle the path exists to catch.
+using VisitedBlocks = std::unordered_set<Offset>;
+
 /// Deep-validate the nested attribute structures the generated walk cannot
 /// reach.
 ///
@@ -218,7 +235,7 @@ constexpr Size MAX_ATTRIBUTE_DEPTH = b::MAX_BLOCK_DEPTH - 3;
 /// visited, so a structure nested twice from different keys is two legitimate
 /// visits while one that reaches itself is a cycle.
 b::Status validate_nested_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath& __path,
-                                     Size __depth) {
+                                     VisitedBlocks& __seen, Size __depth) {
     // Three distinct failures, reported apart. They were once one code, and a
     // file that was merely too deep reported a cycle -- sending a reader to
     // hunt for a loop that was not there, and making a test unable to say
@@ -232,9 +249,22 @@ b::Status validate_nested_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath&
     // Unreachable while MAX_ATTRIBUTE_DEPTH stays below MAX_BLOCK_DEPTH, which
     // it is by construction -- kept because the path is shared machinery and
     // the bound above it is not this function's to guarantee.
+    // Already finished with, by another path. Not a cycle -- the path check
+    // above has ruled that out -- just the same structure named twice, which
+    // the format allows and which is what makes the fan-out worth bounding.
+    if (__seen.count(__attrs.__offset)) return {};
     if (!__path.push(__attrs.__offset))
         return {b::Check::TOO_DEEP, b::ATTRIBUTES::type, "", __path.depth,
                 b::MAX_BLOCK_DEPTH, __attrs.__offset};
+    // Popped on every exit, not only the successful one. Today each early
+    // return abandons the whole walk, so a dirty path is invisible -- but the
+    // SliceError vocabulary exists so a caller can report more than the first
+    // fault, and the day one resumes, stale ancestors would make an unrelated
+    // sibling report a cycle it does not have.
+    struct PathScope {
+        b::VisitPath& path;
+        ~PathScope() { path.pop(); }
+    } __scope{__path};
 
     std::vector<AttributeSlice> slices;
     std::uint32_t at = 0;
@@ -264,22 +294,55 @@ b::Status validate_nested_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath&
             // The child's own subtree -- its sizes and byte arrays -- is
             // ordinary generated territory, and cannot recurse.
             if (const b::Status s = child.validate_deep(); !s) return s;
-            if (const b::Status s = validate_nested_attributes(child, __path, __depth + 1);
+            if (const b::Status s =
+                    validate_nested_attributes(child, __path, __seen, __depth + 1);
                 !s) return s;
         }
     }
-    __path.pop();
+    // On completion, never on entry: see VisitedBlocks.
+    __seen.insert(__attrs.__offset);
     return {};
 }
 
+/// The most attribute nodes one file may lift into the abstraction.
+///
+/// Not a duplicate of the validator's bound, and it cannot be: validation
+/// memoises a structure reached twice, because it only has to answer a
+/// question about it. The abstraction has to *materialise* it, once per parent
+/// that names it -- so a file the validator accepts in linear time can still
+/// expand to more nodes than memory holds. A tree of forty-way sharing, twelve
+/// deep, is a few kilobytes on disk and 40^12 nodes in RAM.
+///
+/// A million nodes is far past any real slide's laboratory metadata and far
+/// short of exhausting a machine, so the file that trips this is malformed or
+/// hostile, and it gets an error naming the reason rather than the OOM killer.
+constexpr Size MAX_ATTRIBUTE_NODES = 1u << 20;
+
 /// Lift one attributes structure, and everything it nests, into the
-/// abstraction. Throws, as the rest of abstract_file_structure does, because a
-/// file that reaches here has already been validated.
-Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, Size __depth) {
+/// abstraction. Throws, as the rest of abstract_file_structure does.
+///
+/// Carries its own cycle check rather than relying on the caller having
+/// validated: abstract_file_structure is documented to require validation
+/// first, but a walk that recurses on file-supplied offsets should not turn a
+/// skipped precondition into an unbounded one.
+Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, b::VisitPath& __path,
+                                          Size& __budget, Size __depth) {
     if (__depth > MAX_ATTRIBUTE_DEPTH)
         throw std::runtime_error(
             "Attribute nesting exceeds the maximum depth of " +
             std::to_string(MAX_ATTRIBUTE_DEPTH));
+    if (__path.contains(__attrs.__offset))
+        throw std::runtime_error(
+            "The attributes block at " + std::to_string(__attrs.__offset) +
+            " is reached from itself; the nesting contains a cycle");
+    if (!__path.push(__attrs.__offset))
+        throw std::runtime_error("Attribute nesting exceeds the block-graph depth");
+    // Every failure below leaves by exception, so the pop has to survive
+    // unwinding rather than sit at the end of the body.
+    struct PathScope {
+        b::VisitPath& path;
+        ~PathScope() { path.pop(); }
+    } __scope{__path};
 
     std::vector<AttributeSlice> slices;
     std::uint32_t at = 0;
@@ -303,6 +366,15 @@ Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, Size __d
                 std::to_string(b::NESTED_OFFSET_SIZE) + "-byte offsets");
     }
 
+    // Charged per node rather than per block, because the cost this bounds is
+    // the materialised tree, not the file.
+    if (slices.size() > __budget)
+        throw std::runtime_error(
+            "The attribute structure expands to more than " +
+            std::to_string(MAX_ATTRIBUTE_NODES) +
+            " nodes; a structure shared by many parents is materialised once per parent");
+    __budget -= slices.size();
+
     Abstraction::AttributeSet set;
     set.reserve(slices.size());
     for (const auto& slice : slices) {
@@ -319,7 +391,7 @@ Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, Size __d
                 const b::ATTRIBUTES child{__attrs.__base, slice.item(i),
                                           __attrs.__size, __attrs.__version};
                 if (!child) fail(child.validate());
-                node.items.push_back(lift_attributes(child, __depth + 1));
+                node.items.push_back(lift_attributes(child, __path, __budget, __depth + 1));
             }
         }
         set.push_back(std::move(node));
@@ -354,8 +426,9 @@ Result IFE_EXPORT validate_file_structure(BYTE* const __base, size_t __size) noe
         const auto metadata = header.metadata_offset();
         if (!metadata) return to_result(metadata.validate());
         if (const auto attributes = metadata.attributes_offset()) {
-            b::VisitPath path;
-            return to_result(validate_nested_attributes(attributes, path, 0));
+            b::VisitPath   path;
+            VisitedBlocks  seen;
+            return to_result(validate_nested_attributes(attributes, path, seen, 0));
         }
     } catch (const std::bad_alloc&) {
         return {IRIS_FAILURE, "validation failed (out of memory walking nested attributes)"};
@@ -461,7 +534,9 @@ Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t 
 
         // Keys and values are one byte run sliced by a parallel size array --
         // there is no string type in IFE, by design.
-        abstraction.attributeTree = lift_attributes(attributes, 0);
+        b::VisitPath tree_path;
+        Size         budget = MAX_ATTRIBUTE_NODES;
+        abstraction.attributeTree = lift_attributes(attributes, tree_path, budget, 0);
 
         // The flat map keeps carrying the top-level text values, unchanged: a
         // caller that never encodes a sequence sees exactly what it always saw.
@@ -595,8 +670,14 @@ Size blob_span(const Block& __b) noexcept {
 /// does not overwrite live data, and a block the map never mentions is a block
 /// it will happily let you land on.
 void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
-                     Size __depth) {
+                     VisitedBlocks& __seen, Size __depth) {
     if (__depth > MAX_ATTRIBUTE_DEPTH) return;
+    // The map is built over files that may already be damaged, so this is the
+    // one walk with no validated graph behind it: a loop, or a value naming
+    // one structure many times, has nothing but this to stop it. note() keys
+    // by offset and is idempotent, so skipping a repeat changes no entry --
+    // only how long the map takes to build.
+    if (!__seen.insert(__attrs.__offset).second) return;
     note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES, __attrs.__offset,
          b::ATTRIBUTES::header_size);
 
@@ -616,7 +697,7 @@ void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
         for (Size i = 0, n = slice.item_count(); i < n; ++i) {
             const b::ATTRIBUTES child{__attrs.__base, slice.item(i), __attrs.__size,
                                       __attrs.__version};
-            if (child) note_attributes(__map, child, __depth + 1);
+            if (child) note_attributes(__map, child, __seen, __depth + 1);
         }
     }
 }
@@ -657,8 +738,10 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __base, size_t __s
     if (!metadata) fail(metadata.validate());
     note(map, MAP_ENTRY_METADATA, metadata.__offset, b::METADATA::header_size);
 
-    if (const auto attributes = metadata.attributes_offset())
-        note_attributes(map, attributes, 0);
+    if (const auto attributes = metadata.attributes_offset()) {
+        VisitedBlocks seen;
+        note_attributes(map, attributes, seen, 0);
+    }
 
     if (const auto images = metadata.images_offset()) {
         note(map, MAP_ENTRY_ASSOCIATED_IMAGES, images.__offset, array_span(images));

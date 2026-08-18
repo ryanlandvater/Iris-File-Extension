@@ -328,6 +328,80 @@ void test_attribute_cycle_is_rejected() {
 // repeats on the path and only the depth bound stops the descent. The chain is
 // built with the generated writers and appended to a real file, because the
 // bound is a property of the runtime rather than of any fixture.
+// Append a chain of `levels` attributes structures to `f`, each level naming
+// the one below it `fanout` times, and return the outermost block's offset.
+// FILE_SIZE is rewritten so the appended blocks are inside the file.
+//
+// Fan-out is what separates the two uses: one offset per level is a chain and
+// tests the depth bound; many offsets per level is a DAG whose every path is
+// distinct, which is what a walk without memory pays for exponentially.
+::IFE::Offset append_attribute_chain(std::vector<BYTE>& __f, std::size_t __levels,
+                                     std::size_t __fanout) {
+    namespace b = ::IFE::blocks;
+    namespace k = ::IFE::constants;
+    const ::IFE::Offset base = __f.size();
+    __f.resize(base + __levels * (128 + __fanout * b::NESTED_OFFSET_SIZE));
+
+    ::IFE::Offset cursor = base, child = 0;
+    for (std::size_t i = 0; i < __levels; ++i) {
+        std::vector<b::AttributeSizeEntry> e(1);
+        if (i == 0) {
+            e[0] = {.key = "k", .value = "leaf"};
+        } else {
+            e[0] = {.key    = "k",
+                    .nested = std::vector<::IFE::Offset>(__fanout, child),
+                    .KIND   = k::AttributeKinds::ATTRIBUTE_NESTED};
+        }
+        const b::AttributeSizesCreateInfo si{.entries = e};
+        const b::AttributeBytesCreateInfo bi{.entries = e};
+        const ::IFE::Offset s_at = cursor; cursor += b::size_of(si);
+        const ::IFE::Offset b_at = cursor; cursor += b::size_of(bi);
+        const ::IFE::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
+        IFE_CHECK(static_cast<bool>(b::store(__f.data(), s_at, si)));
+        IFE_CHECK(static_cast<bool>(b::store(__f.data(), b_at, bi)));
+        IFE_CHECK(static_cast<bool>(b::store(__f.data(), a_at, b::AttributesCreateInfo{
+            .FORMAT = k::MetadataFormats::METADATA_DICOM, .VERSION = 2024,
+            .SIZES_OFFSET = s_at, .BYTES_OFFSET = b_at})));
+        child = a_at;
+    }
+    __f.resize(cursor);
+    ::IFE::store<std::uint64_t>(__f.data() + b::FILE_HEADER::offset::FILE_SIZE, __f.size());
+    return child;
+}
+
+// A structure named many times over is validated once.
+//
+// Every path here is acyclic and none exceeds the depth bound, so neither
+// guard fires -- what would otherwise make this file unreadable is arithmetic:
+// twelve levels of forty-way sharing is 40^12 distinct paths through five
+// kilobytes of disk. The walk remembers the blocks it has finished with, so
+// the cost is the number of blocks and not the number of paths.
+//
+// If that memory is ever removed this test does not fail, it hangs; the target
+// carries a ctest TIMEOUT so the hang is reported rather than waited on.
+void test_shared_nested_structures_are_validated_once() {
+    namespace b = ::IFE::blocks;
+    v1_fixture::Expected expected;
+    auto f = v1_slide(expected);
+
+    const ::IFE::Offset head = append_attribute_chain(f, b::MAX_BLOCK_DEPTH - 4, 40);
+    BYTE* value = first_nested_value(f, root_attributes(f));
+    IFE_CHECK(value != nullptr);
+    if (!value) return;
+    ::IFE::store<std::uint64_t>(value, head);
+
+    // Accepted, not merely survived: the file is well formed, and a reader
+    // that rejected sharing would be refusing something the format allows.
+    const auto result = IrisCodec::validate_file_structure(f.data(), f.size());
+    IFE_CHECK(result == Iris::IRIS_SUCCESS);
+    if (result != Iris::IRIS_SUCCESS) std::fprintf(stderr, "  %s\n", result.message.c_str());
+
+    // The map walks the same edges on files with no validated graph behind
+    // them, so it carries the same memory.
+    const auto map = IrisCodec::generate_file_map(f.data(), f.size());
+    IFE_CHECK(map.size() > 0);
+}
+
 void test_attribute_nesting_depth_is_bounded() {
     namespace b = ::IFE::blocks;
     namespace k = ::IFE::constants;
@@ -612,6 +686,7 @@ int main(int argc, char** argv) {
     test_partial_nested_offset_is_rejected();
     test_attribute_cycle_is_rejected();
     test_attribute_nesting_depth_is_bounded();
+    test_shared_nested_structures_are_validated_once();
     test_file_map_finds_every_block();
     test_recovery_finds_blocks_without_the_offset_graph();
 

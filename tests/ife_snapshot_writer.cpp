@@ -34,6 +34,7 @@
 #include "ife_v1_fixture.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
