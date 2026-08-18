@@ -230,3 +230,9 @@ and recovering the file structure — for callers who need to work at that level
 including anyone writing an encoder or decoder outside C++.
 
 # Publications
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — the append-only wire contract, the
+two guards (the wire witness and the conformance corpus), and how to build and
+test are spelled out there.

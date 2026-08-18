@@ -17,6 +17,10 @@ The checks are ordered by how much damage the defect causes:
      that does not exist.
   4. Document agreement. The two spec files must describe one specification.
   5. Convention. Recovery tags are the 0x55 sequence; version labels parse.
+  6. The append-only witness. A diff against the committed baseline that the
+     within-document checks cannot see: a shipped field moved, widened,
+     retyped or removed, or an enum/constant value that changed. Additions
+     pass silently — that is the whole point.
 
 This is not a JSON Schema, deliberately: checks 1-4 are inexpressible in one
 (uniqueness over object values, cross-document agreement), and the structural
@@ -49,6 +53,7 @@ from .model.layout import (
     value_members,
     version_key,
 )
+from .witness import witness
 
 # The tag prefix occupies the high byte, so the sequence occupies the low one:
 # 0x5500 through 0x55FF. Tag 256 would be 0x5600 and would silently change the
@@ -199,13 +204,95 @@ def _field_names(fields_doc: dict[str, Any]) -> Iterator[tuple[str, str]]:
                 yield f"{name} entry", field.get("name", "")
 
 
+def _check_field_list(label: str, shipped: list[Any], current: list[Any]) -> list[str]:
+    """Compare one field list against its shipped prefix, by field name.
+
+    Appending a field is legal growth: every shipped field must keep its
+    exact (name, type, width, offset). Because an offset is derived from
+    list position, comparing tuples by name IS the prefix rule in disguise
+    — a reorder or an insertion shifts some shipped offset, so it is caught
+    here. Keying by name is what lets the error name the field and both
+    offsets, which a positional comparison cannot do for a swap (both
+    positions sit at the same offset).
+    """
+    errors: list[str] = []
+    current_by_name = {field[0]: field for field in current}
+    for old_field in shipped:
+        name = old_field[0]
+        if name not in current_by_name:
+            errors.append(
+                f"DELETED {label}: field {name!r} removed — removal changes "
+                "the wire format for existing streams"
+            )
+            continue
+        new_field = current_by_name[name]
+        if new_field != old_field:
+            errors.append(
+                f"CHANGED {label}: {name!r} {old_field[1:]} → {new_field[1:]} "
+                "— wire offsets are permanent"
+            )
+    return errors
+
+
+def _check_permanence(
+    current: dict[str, Any],
+    baseline: dict[str, Any],
+    label: str,
+    monotonic: bool = False,
+) -> list[str]:
+    """FastFHIR's permanence comparator, same rule and wording.
+
+    Additions pass silently — that is the whole point of append-only. A
+    shipped fact that changed or disappeared is a wire-format break.
+    ``entry_size`` values are cumulative sizes at the close of a version
+    group: growth is legal (a field was appended), so shipped sizes are
+    lower bounds — shrinkage means a shipped field was removed or narrowed.
+    """
+    errors: list[str] = []
+    for key, old in baseline.items():
+        if key not in current:
+            errors.append(
+                f"DELETED {label}.{key} — removal changes the wire format for "
+                "existing streams"
+            )
+            continue
+        new = current[key]
+        if isinstance(old, dict):
+            errors.extend(
+                _check_permanence(
+                    new, old, f"{label}.{key}", monotonic=(key == "entry_size")
+                )
+            )
+        elif isinstance(old, list):
+            errors.extend(_check_field_list(f"{label}.{key}", old, new))
+        elif monotonic:
+            if new < old:
+                errors.append(
+                    f"CHANGED {label}.{key}: entry size {old} → {new} — a shipped "
+                    "field was removed or narrowed (growth is legal)"
+                )
+        elif new != old:
+            errors.append(
+                f"CHANGED {label}.{key}: {old!r} → {new!r} — wire constants are "
+                "permanent"
+            )
+    return errors
+
+
 def validate(
     fields_doc: dict[str, Any],
     constants_doc: dict[str, Any],
     document: dict[str, Any],
     narrative: str | None = None,
+    baseline_witness: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Return a list of problems; empty means the documents are consistent."""
+    """Return a list of problems; empty means the documents are consistent.
+
+    ``baseline_witness`` is the committed wire witness (tests/wire/witness.json,
+    loaded by the pipeline, which owns all file I/O). When supplied, the
+    current tree is checked against it — the append-only gate. None skips the
+    gate, which is how derived fixture schemas are excluded.
+    """
     problems: list[str] = []
     blocks = _entries(fields_doc, "blocks")
     primitives = _entries(fields_doc, "primitives")
@@ -573,6 +660,24 @@ def validate(
                     f"enum {group_name}: member {member!r} is a macro in "
                     f"{_PLATFORM_MACROS[canonical]}; rename it."
                 )
+
+    # ---- 7. the append-only witness (Phase 2 item 1) -------------------- #
+    # Every check above sees only the current document; a 1.0 field moved,
+    # widened or retyped is invisible to them because it is a property of the
+    # DIFF against the committed baseline. The witness captures only what
+    # reaches the wire, so emitter reformatting can never trip it. The
+    # baseline is loaded by the pipeline; a schema with no baseline beside it
+    # — the derived versioning fixtures — is not gated.
+    if baseline_witness is not None:
+        current_witness = witness(fields_doc, constants_doc, document)
+        for section in ("blocks", "entries", "enums", "constants"):
+            problems.extend(
+                _check_permanence(
+                    current_witness[section],
+                    baseline_witness.get(section, {}),
+                    section,
+                )
+            )
 
     return problems
 

@@ -10,18 +10,21 @@ Run it with:
 ```bash
 python3 -m generator                    # writes generated_source/ + generated_docs/
 python3 -m generator --out-dir DIR      # write the C++ elsewhere
-python3 -m generator --validate         # conflicts and dangling references only
+python3 -m generator --validate         # conflicts, dangling references, wire-witness drift
 python3 -m generator --check            # CI: exit 1 if outputs drifted
 ```
 
 `--validate` runs automatically before every generation, so a broken spec
-never reaches the emitters.
+never reaches the emitters. It also recomputes the wire witness and fails on
+drift against the committed baseline in `tests/wire/witness.json` — the
+append-only gate (see below).
 
 ## Output contract
 
 | Output | Contract |
 |--------|----------|
 | `spec/*.json` | **Source of truth. Committed.** Identity, fields, types, values. |
+| `tests/wire/witness.json` | **Append-only evidence. Committed.** The wire witness — every fact that reaches the stream, never C++ text. `--validate` fails if a shipped fact changed or disappeared; additions pass silently. Refresh only after a reviewed wire change: see `tests/wire/README.md`. |
 | `generated_source/` | **Freely regenerable. Gitignored.** C++ layer: `IFE_Constants.hpp`, `IFE_VTables.hpp`, `IFE_Blocks.hpp` + `IFE_Blocks.cpp`. Rebuilt whenever missing at CMake configure, or on demand with `-DIFE_RUN_GENERATOR=ON`. |
 | `generated_docs/` | **Freely regenerable. Gitignored.** Doc tables: `layout_tables.md`. |
 
@@ -39,7 +42,7 @@ the JSON is versioned append-only.
 | `--schema-dir` | `spec/` | Directory holding `ife_header.json` + `ife_fields.json` + `ife_constants.json` |
 | `--out-dir` | `generated_source/` | Where generated C++ is written |
 | `--docs-dir` | `generated_docs/` | Where generated documentation is written |
-| `--validate` | — | Check the documents for conflicts and dangling references, emit nothing (exit 1 on any) |
+| `--validate` | — | Check the documents for conflicts, dangling references, and drift against the committed wire witness (`tests/wire/witness.json`), emit nothing (exit 1 on any) |
 | `--check` | — | Regenerate in memory and fail (exit 1) if outputs drifted |
 
 CMakeLists.txt invokes exactly this interface at configure time; changing
@@ -57,6 +60,8 @@ flowchart LR
     H & F & C --> M[__main__.py<br/><i>argument parsing only</i>]
     M --> P[pipeline.py<br/><i>all file I/O</i>]
     P --> V[validate.py<br/><i>pure predicate</i>]
+    V --> W[witness.py<br/><i>wire facts only</i>]
+    P -->|loads| B[tests/wire/witness.json<br/><i>committed baseline</i>]
     P --> L[model/layout.py<br/><i>numbers only</i>]
     L --> CPP[emit/cpp.py<br/><i>text only</i>]
     L --> DOC[emit/docs.py<br/><i>text only</i>]
@@ -68,14 +73,17 @@ flowchart LR
 |--------|------|
 | `__main__.py` | CLI entry point (`python -m generator`); contract above. |
 | `pipeline.py` | Stage orchestration: load JSON → validate → derive → emit → write or `--check`. The only module that touches the filesystem; no code generation lives here. |
-| `validate.py` | Consistency checks across the documents. Returns problems, raises nothing, reads no files. |
+| `validate.py` | Consistency checks across the documents, including the append-only gate: the current tree's witness against the committed baseline. Returns problems, raises nothing, reads no files. |
+| `witness.py` | The wire witness: captures only what reaches the stream (block tags, per-version field tuples, enum values, named constants), derived through `model/layout.py`. Reads no files. |
 | `model/layout.py` | Layout derivation — the single implementation of the offset/size rules; offsets are never read from the JSON. |
 | `emit/cpp.py` | C++ emission: `IFE_Constants.hpp` (enums + sentinels), `IFE_VTables.hpp` (vtables), `IFE_Blocks.hpp`/`.cpp` (handles, readers, validators). |
 | `emit/docs.py` | Markdown emission: derived layout tables (first cut of the doc emitter; full spec assembly comes with the document pipeline). |
 
 The boundary in that diagram is load-bearing: `model/` never produces text,
 `emit/` never does arithmetic on a byte offset, `validate.py` never touches the
-filesystem. Arithmetic found in `emit/` is in the wrong file.
+filesystem. Arithmetic found in `emit/` is in the wrong file. The witness
+baseline is read by `pipeline.py` — the only module that touches the
+filesystem — and handed to `validate.py` as data, so the boundary holds.
 
 CMake's configure-time gate (`EXISTS generator/pipeline.py`) runs
 `python -m generator` whenever `generated_source/IFE_VTables.hpp` is

@@ -144,6 +144,21 @@ def _run_check(outputs: dict[str, str], out_dir: Path, docs_dir: Path) -> int:
     return 0
 
 
+def _baseline_witness(schema_dir: Path) -> dict | None:
+    """The committed permanence baseline for this schema, if it has one.
+
+    The append-only gate compares the current tree's witness against evidence
+    committed beside the live spec — tests/wire/witness.json, found at
+    <schema-dir parent>/tests/wire/. Derived fixture schemas (tests/fixtures/*)
+    live in a different tree and deliberately diverge from the live spec (that
+    is their job), so they have no baseline beside them and are not gated.
+    """
+    path = schema_dir.parent / "tests" / "wire" / "witness.json"
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
+
+
 def run(
     schema_dir: Path,
     out_dir: Path,
@@ -158,6 +173,8 @@ def run(
         fields_doc = json.loads(fields_path.read_text())
         constants_doc = json.loads(constants_path.read_text())
         header = json.loads(header_path.read_text())
+        # A corrupt baseline fails loud rather than silently disabling the gate.
+        baseline = _baseline_witness(schema_dir)
     except (OSError, ValueError) as exc:
         print(f"generator: {exc}", file=sys.stderr)
         return 2
@@ -169,7 +186,9 @@ def run(
     # generating C++ from a checkout without it still works.
     narrative_path = schema_dir / "ife_spec.adoc"
     narrative = narrative_path.read_text() if narrative_path.exists() else None
-    problems = validate(fields_doc, constants_doc, header, narrative)
+    problems = validate(
+        fields_doc, constants_doc, header, narrative, baseline_witness=baseline
+    )
     for problem in problems:
         print(f"generator: {problem}", file=sys.stderr)
     if problems:

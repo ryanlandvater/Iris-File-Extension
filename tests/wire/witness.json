@@ -1,0 +1,1004 @@
+{
+  "blocks": {
+    "ANNOTATIONS": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ],
+          [
+            "GROUP_SIZES_OFFSET",
+            "offset",
+            8,
+            16
+          ],
+          [
+            "GROUP_BYTES_OFFSET",
+            "offset",
+            8,
+            24
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21773
+    },
+    "ANNOTATION_BYTES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            10
+          ]
+        ]
+      },
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": 21774
+    },
+    "ANNOTATION_GROUP_BYTES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            10
+          ]
+        ]
+      },
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": 21776
+    },
+    "ANNOTATION_GROUP_SIZES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21775
+    },
+    "ATTRIBUTES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "FORMAT",
+            "metadata_formats",
+            1,
+            10
+          ],
+          [
+            "VERSION",
+            "u16",
+            2,
+            11
+          ],
+          [
+            "SIZES_OFFSET",
+            "offset",
+            8,
+            13
+          ],
+          [
+            "BYTES_OFFSET",
+            "offset",
+            8,
+            21
+          ]
+        ]
+      },
+      "primitive": "BLOCK",
+      "recovery_tag": 21765
+    },
+    "ATTRIBUTE_BYTES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            10
+          ]
+        ]
+      },
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": 21769
+    },
+    "ATTRIBUTE_SIZES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21768
+    },
+    "CIPHER": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ]
+        ]
+      },
+      "primitive": "BLOCK",
+      "recovery_tag": 21763
+    },
+    "CLINICAL_METADATA": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            10
+          ]
+        ],
+        "1.1": [
+          [
+            "ENCODING",
+            "clinical_encodings",
+            1,
+            14
+          ]
+        ]
+      },
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": 21777
+    },
+    "FILE_HEADER": {
+      "fields": {
+        "1.0": [
+          [
+            "MAGIC",
+            "u32",
+            4,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            4
+          ],
+          [
+            "FILE_SIZE",
+            "u64",
+            8,
+            6
+          ],
+          [
+            "EXTENSION_MAJOR",
+            "u16",
+            2,
+            14
+          ],
+          [
+            "EXTENSION_MINOR",
+            "u16",
+            2,
+            16
+          ],
+          [
+            "FILE_REVISION",
+            "u32",
+            4,
+            18
+          ],
+          [
+            "TILE_TABLE_OFFSET",
+            "offset",
+            8,
+            22
+          ],
+          [
+            "METADATA_OFFSET",
+            "offset",
+            8,
+            30
+          ]
+        ]
+      },
+      "primitive": "FILE_HEADER",
+      "recovery_tag": 21761
+    },
+    "ICC_PROFILE": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            10
+          ]
+        ]
+      },
+      "primitive": "BYTE_ARRAY",
+      "recovery_tag": 21772
+    },
+    "IMAGES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21770
+    },
+    "IMAGE_BYTES": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "TITLE_SIZE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "IMAGE_SIZE",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "BLOCK",
+      "recovery_tag": 21771
+    },
+    "LAYER_EXTENTS": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21766
+    },
+    "METADATA": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "CODEC_MAJOR",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "CODEC_MINOR",
+            "u16",
+            2,
+            12
+          ],
+          [
+            "CODEC_BUILD",
+            "u16",
+            2,
+            14
+          ],
+          [
+            "ATTRIBUTES_OFFSET",
+            "offset",
+            8,
+            16
+          ],
+          [
+            "IMAGES_OFFSET",
+            "offset",
+            8,
+            24
+          ],
+          [
+            "ICC_COLOR_OFFSET",
+            "offset",
+            8,
+            32
+          ],
+          [
+            "ANNOTATIONS_OFFSET",
+            "offset",
+            8,
+            40
+          ],
+          [
+            "MICRONS_PIXEL",
+            "f32",
+            4,
+            48
+          ],
+          [
+            "MAGNIFICATION",
+            "f32",
+            4,
+            52
+          ]
+        ],
+        "1.1": [
+          [
+            "CLINICAL_OFFSET",
+            "offset",
+            8,
+            56
+          ],
+          [
+            "MICRONS_PLANE",
+            "f32",
+            4,
+            64
+          ]
+        ]
+      },
+      "primitive": "BLOCK",
+      "recovery_tag": 21764
+    },
+    "TILE_OFFSETS": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "STRIDE",
+            "u16",
+            2,
+            10
+          ],
+          [
+            "COUNT",
+            "u32",
+            4,
+            12
+          ]
+        ]
+      },
+      "primitive": "ARRAY",
+      "recovery_tag": 21767
+    },
+    "TILE_PIXEL_DATA": {
+      "fields": {
+        "1.1": [
+          [
+            "VALIDATION",
+            "u40",
+            5,
+            -5
+          ],
+          [
+            "TILE_INDEX",
+            "u32",
+            4,
+            -9
+          ],
+          [
+            "Z_PLANES",
+            "u16",
+            2,
+            -11
+          ]
+        ]
+      },
+      "primitive": "TILE_FRAME",
+      "recovery_tag": null
+    },
+    "TILE_TABLE": {
+      "fields": {
+        "1.0": [
+          [
+            "VALIDATION",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "RECOVERY",
+            "recovery_codes",
+            2,
+            8
+          ],
+          [
+            "ENCODING",
+            "tile_encodings",
+            1,
+            10
+          ],
+          [
+            "FORMAT",
+            "pixel_formats",
+            1,
+            11
+          ],
+          [
+            "CIPHER_OFFSET",
+            "offset",
+            8,
+            12
+          ],
+          [
+            "TILE_OFFSETS_OFFSET",
+            "offset",
+            8,
+            20
+          ],
+          [
+            "LAYER_EXTENTS_OFFSET",
+            "offset",
+            8,
+            28
+          ],
+          [
+            "X_EXTENT",
+            "u32",
+            4,
+            36
+          ],
+          [
+            "Y_EXTENT",
+            "u32",
+            4,
+            40
+          ]
+        ],
+        "1.1": [
+          [
+            "TILE_LENGTH",
+            "u16",
+            2,
+            44
+          ]
+        ]
+      },
+      "primitive": "BLOCK",
+      "recovery_tag": 21762
+    }
+  },
+  "constants": {
+    "MAGIC_BYTES": 1232234867,
+    "NULL_ID": 16777215,
+    "NULL_OFFSET": 18446744073709551615,
+    "NULL_TILE": 1099511627775,
+    "ORIENTATION_0": 0,
+    "ORIENTATION_180": 22944,
+    "ORIENTATION_270": 23608,
+    "ORIENTATION_90": 21920,
+    "ORIENTATION_MINUS_180": 55712,
+    "ORIENTATION_MINUS_270": 56376,
+    "ORIENTATION_MINUS_90": 54688
+  },
+  "entries": {
+    "ANNOTATIONS": {
+      "entry_size": {
+        "1.0": 39
+      },
+      "fields": {
+        "1.0": [
+          [
+            "IDENTIFIER",
+            "u24",
+            3,
+            0
+          ],
+          [
+            "BYTES_OFFSET",
+            "offset",
+            8,
+            3
+          ],
+          [
+            "FORMAT",
+            "annotation_types",
+            1,
+            11
+          ],
+          [
+            "X_LOCATION",
+            "f32",
+            4,
+            12
+          ],
+          [
+            "Y_LOCATION",
+            "f32",
+            4,
+            16
+          ],
+          [
+            "X_SIZE",
+            "f32",
+            4,
+            20
+          ],
+          [
+            "Y_SIZE",
+            "f32",
+            4,
+            24
+          ],
+          [
+            "PIXEL_WIDTH",
+            "u32",
+            4,
+            28
+          ],
+          [
+            "PIXEL_HEIGHT",
+            "u32",
+            4,
+            32
+          ],
+          [
+            "PARENT_ID",
+            "u24",
+            3,
+            36
+          ]
+        ]
+      }
+    },
+    "ANNOTATION_GROUP_SIZES": {
+      "entry_size": {
+        "1.0": 6
+      },
+      "fields": {
+        "1.0": [
+          [
+            "TITLE_SIZE",
+            "u16",
+            2,
+            0
+          ],
+          [
+            "MEMBER_COUNT",
+            "u32",
+            4,
+            2
+          ]
+        ]
+      }
+    },
+    "ATTRIBUTE_SIZES": {
+      "entry_size": {
+        "1.0": 7
+      },
+      "fields": {
+        "1.0": [
+          [
+            "KEY_SIZE",
+            "u16",
+            2,
+            0
+          ],
+          [
+            "VALUE_SIZE",
+            "u32",
+            4,
+            2
+          ],
+          [
+            "KIND",
+            "attribute_kinds",
+            1,
+            6
+          ]
+        ]
+      }
+    },
+    "IMAGES": {
+      "entry_size": {
+        "1.0": 20
+      },
+      "fields": {
+        "1.0": [
+          [
+            "BYTES_OFFSET",
+            "offset",
+            8,
+            0
+          ],
+          [
+            "WIDTH",
+            "u32",
+            4,
+            8
+          ],
+          [
+            "HEIGHT",
+            "u32",
+            4,
+            12
+          ],
+          [
+            "ENCODING",
+            "image_encodings",
+            1,
+            16
+          ],
+          [
+            "FORMAT",
+            "pixel_formats",
+            1,
+            17
+          ],
+          [
+            "ORIENTATION",
+            "f16",
+            2,
+            18
+          ]
+        ]
+      }
+    },
+    "LAYER_EXTENTS": {
+      "entry_size": {
+        "1.0": 12,
+        "1.1": 14
+      },
+      "fields": {
+        "1.0": [
+          [
+            "X_TILES",
+            "u32",
+            4,
+            0
+          ],
+          [
+            "Y_TILES",
+            "u32",
+            4,
+            4
+          ],
+          [
+            "SCALE",
+            "f32",
+            4,
+            8
+          ]
+        ],
+        "1.1": [
+          [
+            "Z_PLANES",
+            "u16",
+            2,
+            12
+          ]
+        ]
+      }
+    },
+    "TILE_OFFSETS": {
+      "entry_size": {
+        "1.0": 8
+      },
+      "fields": {
+        "1.0": [
+          [
+            "OFFSET",
+            "u40",
+            5,
+            0
+          ],
+          [
+            "SIZE",
+            "u24",
+            3,
+            5
+          ]
+        ]
+      }
+    }
+  },
+  "enums": {
+    "annotation_types": {
+      "members": {
+        "ANNOTATION_JPEG": 2,
+        "ANNOTATION_PNG": 1,
+        "ANNOTATION_SVG": 3,
+        "ANNOTATION_TEXT": 4,
+        "ANNOTATION_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    },
+    "attribute_kinds": {
+      "members": {
+        "ATTRIBUTE_NESTED": 1,
+        "ATTRIBUTE_STRING": 0
+      },
+      "underlying_type": "u8"
+    },
+    "clinical_encodings": {
+      "members": {
+        "CLINICAL_FASTFHIR": 3,
+        "CLINICAL_FHIR_JSON": 2,
+        "CLINICAL_HL7_V2": 1,
+        "CLINICAL_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    },
+    "image_encodings": {
+      "members": {
+        "IMAGE_ENCODING_AVIF": 3,
+        "IMAGE_ENCODING_JPEG": 2,
+        "IMAGE_ENCODING_PNG": 1,
+        "IMAGE_ENCODING_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    },
+    "metadata_formats": {
+      "members": {
+        "METADATA_DICOM": 2,
+        "METADATA_FREE_TEXT": 3,
+        "METADATA_I2S": 1,
+        "METADATA_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    },
+    "pixel_formats": {
+      "members": {
+        "FORMAT_B8G8R8": 1,
+        "FORMAT_B8G8R8A8": 3,
+        "FORMAT_R8G8B8": 2,
+        "FORMAT_R8G8B8A8": 4,
+        "FORMAT_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    },
+    "recovery_codes": {
+      "members": {
+        "RECOVER_ANNOTATIONS": 21773,
+        "RECOVER_ANNOTATION_BYTES": 21774,
+        "RECOVER_ANNOTATION_GROUP_BYTES": 21776,
+        "RECOVER_ANNOTATION_GROUP_SIZES": 21775,
+        "RECOVER_ATTRIBUTES": 21765,
+        "RECOVER_ATTRIBUTE_BYTES": 21769,
+        "RECOVER_ATTRIBUTE_SIZES": 21768,
+        "RECOVER_CIPHER": 21763,
+        "RECOVER_CLINICAL_METADATA": 21777,
+        "RECOVER_FILE_HEADER": 21761,
+        "RECOVER_ICC_PROFILE": 21772,
+        "RECOVER_IMAGES": 21770,
+        "RECOVER_IMAGE_BYTES": 21771,
+        "RECOVER_LAYER_EXTENTS": 21766,
+        "RECOVER_METADATA": 21764,
+        "RECOVER_TILE_OFFSETS": 21767,
+        "RECOVER_TILE_TABLE": 21762,
+        "RECOVER_UNDEFINED": 21760
+      },
+      "underlying_type": "u16"
+    },
+    "tile_encodings": {
+      "members": {
+        "TILE_ENCODING_AVIF": 3,
+        "TILE_ENCODING_IRIS": 1,
+        "TILE_ENCODING_JPEG": 2,
+        "TILE_ENCODING_UNDEFINED": 0
+      },
+      "underlying_type": "u8"
+    }
+  }
+}
