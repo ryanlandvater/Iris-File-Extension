@@ -31,12 +31,12 @@ list lives at the top of `../FastFHIR/TASKS.md`.
 
 ## Priority summary
 
-| ID | Priority | Task | Why |
-|---|---|---|---|
-| XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced |
-| XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism |
-| XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today |
-| XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for |
+| ID | Priority | Task | Why | Status |
+|---|---|---|---|---|
+| XP-1 | **P0** | Port FastFHIR's wire witness → enforce append-only | The invariant every compatibility claim rests on is still unenforced | ✅ **done (2026-08-18)** |
+| XP-2 | **P1** | Rebuild `--check` on parity, not byte-equality | Phase 3 lists this as future work; XP-1 supplies the mechanism | open |
+| XP-3 | P2 | Port the determinism test | Generator reordering silently changes output today | open |
+| XP-4 | P2 | Port the dangling-view test | `ByteSpan` has the lifetime hazard the FastFHIR test was written for | open |
 
 ---
 
@@ -75,7 +75,7 @@ python3 -m generator --validate | tail -1
 **Expect:** `--validate` prints `generator: spec documents are consistent`,
 and `tests/wire/` does not exist.
 
-### XP-1.1 — Emit the witness
+### XP-1.1 — Emit the witness — ✅ DONE
 
 Add `generator/witness.py` with one entry point:
 
@@ -99,7 +99,7 @@ second derivation is a second thing to be wrong.
 **Done when:** `python3 -c "import json,generator.witness as w, ..."` prints a
 dict containing `ATTRIBUTE_SIZES.entry.KIND` at offset 6, width 1.
 
-### XP-1.2 — Commit the baseline
+### XP-1.2 — Commit the baseline — ✅ DONE (file written; commit pending — see status below)
 
 Write the witness for the current tree to `tests/wire/witness.json`,
 **committed** (unlike `generated_source/`, this is evidence, not output).
@@ -110,7 +110,7 @@ exact command to refresh it deliberately.
 **Done when:** `tests/wire/witness.json` is committed and
 `git diff --stat` is clean after regenerating it.
 
-### XP-1.3 — Gate on it
+### XP-1.3 — Gate on it — ✅ DONE
 
 Add check 6 to `generator/validate.py`, run by `--validate`: recompute the
 witness and compare against `tests/wire/witness.json`. Report, per finding:
@@ -132,13 +132,28 @@ exits 0, and each of these red-greens (revert after each):
 - widen `KEY_SIZE` u16→u32 → error names the width change
 - append a new field to a `1.1` group → **passes**
 
-⚠ **XP-1.4 — the baseline's own history.** `witness.json` records today's
+⚠ **XP-1.4 — the baseline's own history — ✅ DONE.** `witness.json` records today's
 tree, which already contains the deliberate 1.0 `ATTRIBUTE_SIZE` correction.
 The gate therefore starts from a state that itself broke append-only once.
 Record that in `tests/wire/README.md` in one sentence, with the commit hash,
 so a future reader does not conclude the invariant has held unbroken. Do not
 try to reconstruct a pre-correction baseline — the correction was deliberate
 and is documented in `spec/ife_header.json`'s revision errata.
+
+> **Status (2026-08-18): XP-1 is DONE — XP-1.1 through XP-1.4.**
+> `generator/witness.py` derives the wire witness (blocks, entries, enums,
+> constants — only what reaches the stream, never C++ text) through
+> `generator.model.layout.derive_layout`; the baseline is committed evidence
+> at `tests/wire/witness.json` with `tests/wire/README.md` (which also
+> records the baseline's own history — the deliberate 1.0 `ATTRIBUTE_SIZE`
+> correction, commit `9e591fa`). Check 7 in `generator/validate.py` is the
+> gate: a shipped fact that moves, widens, retypes or disappears errors;
+> additions pass. Two extensions landed with it: `tools/refresh_witness.py`
+> refuses to record a wire break and prints what it records; `--validate`
+> warns (non-fatally) when the baseline lags the spec and `--check` fails
+> until the deliberate refresh lands — so a version bump carries its
+> baseline refresh in the same change. The baseline file is written but not
+> yet committed (work-order rule: leave changes in the working tree).
 
 ---
 
@@ -194,24 +209,14 @@ view outliving the buffer it was built from — in particular that
 ---
 
 
-> **Status (2026-08-12):** Phase 6 is DONE. The hand-written layer
-> (`src/IrisCodecExtension.hpp/.cpp`) is deleted; the generated layer reads,
-> validates, maps, recovers **and writes** — `store()`/`size_of()` for all 18
-> block types, round-tripped in `ife_blocks_tests` — through `IFE_Runtime` and
-> the generated block layer. Exercised by `ife_blocks_tests`, the
-> version-gating pair, `ife_runtime_tests`, `ife_validation_tests`, the oracle
-> (reading the hosted, digest-pinned snapshot) and the >4 GiB sparse-file
-> test — 11/11 ctest on macOS in Release and ASan+UBSan, on both byte orders.
-> Function coverage is 100% in `IFE_Blocks.cpp` and `IFE_Validation.cpp`.
-> Open items: the Iris-Codec encoder cutover (the generated
-> `IrisCodec::Serialization` consumer namespace landed and the encoder is
-> migrated onto it in the scratch clone — remaining is a full link on the
-> codec dependencies and the coordinated commit; see the open question
-> below), corruption tests
-> (`ife_blocks_corruption_tests.cpp`), diagnostics sourced from the JSON's
+> **Status (2026-08-12):** Phase 6 is DONE — the generated layer reads,
+> validates, maps, recovers and writes all 18 block types, round-tripped
+> through `IFE_Runtime`; function coverage is 100% in `IFE_Blocks.cpp` and
+> `IFE_Validation.cpp`; 12/12 ctest on macOS in Release and ASan+UBSan, on
+> both byte orders. Open items live in the Phase 6 sections below
+> (Iris-Codec encoder cutover, corruption tests, diagnostics from the JSON's
 > normative clauses, TSan/fuzzing, the hosted corpus's remaining five
-> blocks, and real AVIF-encoded tile bytes (the `TILE_ENCODING_AVIF` value
-> itself is covered in-process).
+> blocks, real AVIF tile bytes).
 > Gates in force: `--validate`, `--check`, the exported-symbol check, the
 > corpus digest fetch, and the test binaries under ASan+UBSan, on both byte
 > orders.
@@ -220,10 +225,10 @@ view outliving the buffer it was built from — in particular that
 > (`plans/phase-N-*.md`) during a refinement pass **before** implementation
 > begins. Implementation tasks are then executed by directed (flash-class)
 > models working from those checklists; this document is the map, not the
-> task list. **Exception: Phase 4's refinement pass is complete and lives
-> inline** (see "Phase 4 implementation plan"), because it is the phase now
-> in front of us — it is written to the flash-execution standard and is the
-> task list for 4.x work.
+> task list. Phase 4's refinement pass was executed inline and is complete
+> (see "Phase 4 implementation plan"); the pending work lives in the work
+> orders at the top of this document (XP-2–XP-4) and the open Phase 6 items
+> listed above.
 
 ## Objective
 
@@ -389,23 +394,28 @@ spec will encode. Broad checklist:
 
 ## Phase 2 — JSON specification
 
-**Status (2026-08-07): delivered except two items, both named below.** The
-documents are authored and the validator runs before every generation. What is
-*not* built: **the append-only diff check** (validator item 1 — the invariant
-every compatibility guarantee in this document rests on is still unenforced),
-and the **normative shall/should/may clauses** in the JSON, which 4.6 needs and
-which no field currently carries. Neither blocks Phase 4; the first blocks
-Phase 6.
+**Status (2026-08-18): delivered except one item, named below.** The
+documents are authored and the validator runs before every generation. The
+append-only diff check — validator item 1 — is now built (XP-1, 2026-08-18):
+`--validate` recomputes the wire witness and compares it against the
+committed baseline `tests/wire/witness.json`; a shipped field moved, widened,
+retyped or removed errors, additions pass, and `--check` fails until the
+baseline is deliberately refreshed. Not built: the **normative
+shall/should/may clauses** in the JSON, which 4.6 needs and which no field
+currently carries.
 
-- [ ] **Spec validator** — `python -m generator --validate`, stdlib-only,
-      run in CI beside `--check`. **Built, minus item 1** —
-      `generator/validate.py` implements 2–5, and `.github/workflows/ci.yml`
-      runs it. Checks, in rough order of importance:
+- [x] **Spec validator** — `python -m generator --validate`, stdlib-only,
+      run in CI beside `--check`. **Built** — `generator/validate.py`
+      implements all five checks below (the append-only invariant as the
+      witness gate, check 7), and `.github/workflows/ci.yml` runs it.
+      Checks, in rough order of importance:
       1. **The append-only invariant**: no field removed, retyped, resized or
-         reordered against the previous committed spec; retirement only via
-         `deprecated`. Without this the invariant is a convention that one
-         careless edit silently breaks, and every compatibility guarantee in
-         this document rests on it.
+         reordered against the committed wire witness (`tests/wire/witness.json`,
+         XP-1); retirement only via `deprecated`. Additions pass; the
+         evidence is refreshed deliberately (`tools/refresh_witness.py`), and
+         `--check` enforces it. Without this the invariant is a convention
+         that one careless edit silently breaks, and every compatibility
+         guarantee in this document rests on it.
       2. Unique recovery tags; unique enum values within a group; unique
          field names within a block.
       3. `points_to` targets name existing blocks; `enum` references name
@@ -447,7 +457,7 @@ Phase 6.
 **Status (2026-08-07): the generator is built and feeding Phase 4.** Five
 artifacts emit from `spec/` alone and regeneration is byte-stable. Outstanding:
 **binding surfaces** (nothing emitted for Python or WASM) and the `--check`
-parity redesign, which was always future work.
+parity redesign — now XP-2 (P1, pending).
 
 - [x] **`generator/`** — Python stdlib-only package run as `python -m generator`, deterministic output (stable
       ordering, no timestamps). Gated by `--validate` and `--check` rather than
@@ -1296,156 +1306,6 @@ document to 1.1 and appending `TILE_TABLE.FOCUS_PLANES` produces a gated
 `std::optional<std::uint16_t> focus_planes()`, emits both boundary markers,
 and the wall **passes**.
 
-The original task description follows, for the record.
-
-##### 4.2b — Emitter scaffolding, block handles, readers (original)
-
-- **v1 precedent — the shape being generated:**
-  `src/IrisCodecExtension.hpp:385-408` (`DATA_BLOCK`: the four state members,
-  the `operator bool`, the shared `validate_offset`) and `:421-462`
-  (`FILE_HEADER`: `type`, `recovery`, the vtable enums, then the per-block
-  method set `size` / `validate_*` / `read_header` / `get_tile_table` /
-  `get_metadata`). Those two structs *are* the target output, written by
-  hand. `:473-519` (`TILE_TABLE`) shows the same shape for a non-root header
-  block, and `:677-711` (`LAYER_EXTENTS`) for an array block. The generated
-  struct keeps the member names and the method roles; what disappears is the
-  hand-maintained `vtable_sizes` / `vtable_offsets` arithmetic and the
-  inheritance from `DATA_BLOCK` (the universal header makes it unnecessary).
-  For the accessor bodies, `src/IrisCodecExtension.cpp:901-920`
-  (`read_header`) and `:922-941` (`get_tile_table`) show how v1 reads a
-  field and how it constructs a child block — including passing the version
-  down, which is mechanism 3.
-- **Read first:** `generator/emit/cpp.py` in full (this is the file being
-  extended, and `_pascal`, `_comment`, `_cpp_of`, `_emit_size_offset`,
-  `BANNER` are the helpers to **reuse, not re-create**);
-  `generator/pipeline.py:21-29` (`_render` — the registration point);
-  `generated_source/IFE_VTables.hpp:1-110` (the exact output shape to mirror).
-- **Steps:**
-  1. Add `emit_blocks_header(layout: LayoutResult) -> str` to
-     `generator/emit/cpp.py`, structured exactly like `emit_vtables_header`:
-     `out: list[str]` starting with `BANNER`, include guard
-     `IFE_Blocks_hpp`, `return "\n".join(out)`.
-  2. Register it in `generator/pipeline.py::_render` — **one dict entry**:
-     `f"{_CPP_ROOT}/IFE_Blocks.hpp": emit_blocks_header(layout),`.
-     `_dest_dir`, `_write_if_changed` and `_run_check` are already generic;
-     change nothing else in that file.
-  3. Emit `#include "IFE_Constants.hpp"`, `#include "IFE_VTables.hpp"`,
-     `#include "../src/IFE_Bytes.hpp"`, and — per decision 4.0-C — the Iris
-     header providing `Offset`/`Size`/`BYTE`/`Result`, so the generated header
-     is self-contained. *(Superseded: 4.2 emits both a header and a source —
-     see "Generated code ships as a header and a source".)*
-  4. Per block, in `namespace IFE { namespace blocks {`, emit one struct named
-     exactly as the JSON block and **deriving from its primitive base**
-     (see "Primitive block types"), carrying:
-     - the two static identity constants v1 declares at
-       `src/IrisCodecExtension.hpp:422-425` — `type` (the block name, used in
-       error reporting) and `recovery` (the block's tag, sourced from
-       `::IFE::constants::RecoveryCodes`) — plus `header_size` aliased from
-       the block's `vtables::` namespace;
-     - the state members v1 declares at `:399-401`, with the same names —
-       `__offset`, `__size` (file size), `__version` — plus `__base`, which
-       v1 passes as a parameter to every method instead of storing. Storing
-       it is the one deliberate divergence: it removes the `__base` argument
-       from every generated accessor. Keep the v1 names so the 4.4 port reads
-       familiarly. Members and shared behaviour common to a primitive are
-       emitted **once on the primitive base**, not repeated per block;
-     - `operator bool`, v1's at `src/IrisCodecExtension.cpp:774-777`. Make it
-       **stricter**: v1 checks `__offset != NULL_OFFSET && __offset < __size`;
-       the generated one additionally requires `__offset + header_size <=
-       __size`, so a truncated file fails at construction rather than mid-read.
-  5. **One accessor per field**, name = field name lower-cased
-     (`FILE_SIZE` → `file_size()`); if that collides with `type`, `recovery`,
-     `header_size` or `entry_size`, suffix `_field`. Each is
-     `[[nodiscard]] inline <T> <name>() const noexcept` reading at
-     `__base + __offset + vtables::<BLOCK>::offset::<FIELD>`:
-     - scalars → `_TYPE_CPP` type via `load<T>`;
-     - `u24` → `std::uint32_t` via `load_u24`; `u40` → `std::uint64_t` via
-       `load_u40`;
-     - `enum` fields → `constants::<Pascal(group)>`, `static_cast` from the
-       underlying integer (reuse `_pascal`);
-     - `constant` fields (`MAGIC`) → **no accessor**; they are validated in
-       4.2c instead;
-     - `points_to` fields → return the **target block's handle**,
-       `{__base, <loaded offset>, __size, __version}`; when `nullable` and the
-       loaded value is `NULL_OFFSET`, return a default-constructed (falsy)
-       handle. Emit a forward declaration block for every struct first so
-       these cross-references compile in any order.
-  6. **Array blocks** additionally get `stride()` (u16 @ `offset::STRIDE`),
-     `count()` (u32 @ `offset::COUNT`), and
-     `constexpr Offset entries_begin() const noexcept { return __offset + header_size; }`.
-     - typed entries: emit `struct <ENTRY_NAME>` with the same accessor rules,
-       plus `entry(std::uint32_t i)` on the block returning it at
-       `entries_begin() + i * stride()`. **Iterate by the stored `stride()`,
-       never by the generated `entry_size`** — that is the array analogue of
-       version gating and is what makes a v1.1 encoder readable by a v1.0
-       decoder. An entry accessor whose `offset + size > stride()` must return
-       nothing (see rule 7).
-     - blob entries (`stride == 1`): no entry struct; emit
-       `bytes()` returning `{__base + entries_begin(), count()}` as a
-       `std::span<const Byte>`-shaped POD (do not include `<span>` if 4.0-C
-       kept the header dependency-free — emit a 2-member `ByteSpan` POD in
-       `IFE_Bytes.hpp` instead).
-  7. **Version gating.** Reproduce the v1 contract exactly (see "Version
-     gating — the v1 mechanism, reverse-engineered" above). Two gates, and no
-     third:
-     - **File version**, read **once** from `FILE_HEADER`
-       (`EXTENSION_MAJOR` u16 @14, `EXTENSION_MINOR` u16 @16) by the 4.4
-       runtime — exactly where shipped 1.0 keeps it and exactly what
-       `src/IrisCodecExtension.cpp:912-913` reads. There is no preamble;
-       composed as `major<<16 | minor`, and propagated into every handle as
-       `__version` — including into every `points_to` target constructed by
-       an accessor. There is no per-block version field; do not look for one,
-       and do not add one. A field with `since != "1.0"`
-       gets a `std::optional<T>` accessor yielding nothing when `__version`
-       is below its `since`.
-     - **Array stride**, read per array from the file. An entry accessor
-       additionally yields nothing when `offset + size > stride()`. This is
-       what lets a v1.0 decoder read a v1.1 encoder's wider entries.
-
-     **Emit the version-boundary markers.** After the last field of each
-     version group — in `IFE_VTables.hpp`'s `size`/`offset` namespaces, in
-     `IFE_Blocks.hpp`'s accessor lists, and in every emitted entry struct —
-     emit the cumulative size constant, then the marker pair, then the
-     newest-version alias. **Copy the exact form from
-     `src/IrisCodecExtension.hpp:445-449`** — the `HEADER_V1_0_SIZE`
-     constant, the `// Version 1.0 ends here.` line, the dashed rule beneath
-     it, the blank line, then `HEADER_SIZE`. `:499-505` (`TILE_TABLE`) and
-     `:670-675` (`LAYER_EXTENT`, an entry struct) are the same form on the
-     other two structure kinds. Match that layout with the generated naming
-     (`header_size_v1_0` → `header_size`, `entry_size_v1_0` → `entry_size`);
-     do not invent a different comment string or ordering.
-
-     `_emit_size_offset` (`generator/emit/cpp.py:113`) is the **single**
-     function through which the preamble, the universal block header, the
-     array header, every block header and every entry struct are emitted —
-     put the marker logic there and all six get it uniformly. Do not write it
-     in more than one place.
-
-     One marker per version group, in ascending order, so a reader can see at
-     a glance where each amendment ends and where the next one appends. The
-     text is the literal string `// Version 1.0 ends here.` with the version
-     substituted — do not reword it; it is the convention already used
-     throughout `src/`. The rule extends to the **last** group as well: the
-     newest version also ends somewhere, and that is exactly where a future
-     amendment gets appended.
-
-     What generation removes is v1's hand-threaded *control flow* — the
-     `if (__version > IRIS_EXTENSION_1_0); else goto LABEL;` idiom and its 58
-     sites — not the documentation that marks the boundary.
-
-     With today's spec every field is `since == "1.0"`, so the emitter
-     produces exactly one marker per structure and **zero** gated accessors.
-     The gating logic is therefore unexercisable against `spec/` and **must**
-     be tested against the synthetic 1.1 fixture in 4.5.
-- **Done when:** `python3 -m generator` writes `IFE_Blocks.hpp`;
-  `python3 -m generator --check` exits 0;
-  `c++ -std=c++20 -fsyntax-only -Isrc -Igenerated_source -I<Iris-Headers include dir> generated_source/IFE_Blocks.hpp`
-  succeeds (the Iris include path is required by decision 4.0-C — resolve it
-  the way `CMakeLists.txt` resolves the `IrisHeaders` dependency); and
-  `IFE_Constants.hpp` / `IFE_VTables.hpp` still compile with **no** `-I`
-  beyond `generated_source`. Running the generator twice produces
-  byte-identical output.
-
 ##### 4.2c — Generated validators — ✅ DONE
 
 `validate()` per block reproduces v1's checks (`IrisCodecExtension.cpp:778-803`
@@ -1482,60 +1342,6 @@ can only revisit an offset if every tag along it matches — and no block type
 appears twice on any path. `Check::CYCLE` is defence in depth for a corrupted
 file whose tags happen to line up; `VisitPath` is therefore tested directly
 rather than through a crafted file.
-
-The original task description follows, for the record.
-
-##### 4.2c — Generated validators (original)
-
-- **v1 precedent — the checks to reproduce, and the one thing to change:**
-  `src/IrisCodecExtension.cpp:778-803` (`DATA_BLOCK::validate_offset` — the
-  two universal checks every block performs: VALIDATION equals the block's
-  own offset, RECOVERY equals the block's tag); `:827-868`
-  (`FILE_HEADER::validate_header` — the root's extra checks: magic bytes,
-  stored file size vs. OS file size, and the newer-version **warning** path
-  of mechanism 8); `:869-900` (`validate_full` — how v1 chains a block's own
-  check into its children); `:1641-1686` (`LAYER_EXTENTS::validate_full` —
-  the array case: stride/count read from the file, the
-  `start + ENTRIES*STEP > __size` bounds check, then per-entry field
-  validation). Reproduce every one of those checks. **Change only the error
-  channel:** v1 builds an `Iris::Result` carrying a formatted `std::string`
-  at each failure site — see the message construction at `:784-800`. That is
-  the right information and the wrong place to build it.
-- **Steps:**
-  1. Emit, once, above the block structs, a `Check` enum and a `Status` POD
-     carrying: the code, the block name, the field name, the found value, the
-     expected value, and the offset — i.e. exactly the operands v1
-     interpolates into its message strings at
-     `src/IrisCodecExtension.cpp:784-800`, but unformatted. Give `Status` an
-     `explicit operator bool`. Codes needed, one per failure the v1 checks
-     above can produce: `OK`, `NOT_CONSTRUCTED`, `OUT_OF_BOUNDS`,
-     `BAD_VALIDATION`, `BAD_RECOVERY`, `BAD_CONSTANT`, `BAD_STRIDE`,
-     `ARRAY_OVERRUN`, `VERSION_TOO_NEW`, `CYCLE`.
-
-     Generated validators **never allocate, never throw, never format a
-     string**. Message text is built once, in the 4.4 runtime, from the JSON
-     `description` fields. v1's rich error messages are kept; the
-     `std::string` construction moves out of the hot path.
-  2. Per block, `[[nodiscard]] inline Status validate() const noexcept`
-     checking, in order: `operator bool` (else `NOT_CONSTRUCTED`);
-     `load<u64>(VALIDATION) == __offset` (else `BAD_VALIDATION`);
-     `load<u16>(RECOVERY) == recovery` (else `BAD_RECOVERY`); every `constant`
-     field equals its sentinel (else `BAD_CONSTANT`). For arrays additionally:
-     `stride() != 0`, `stride() >= <entry_size at v1.0>` for typed entries and
-     `stride() == 1` for blobs (else `BAD_STRIDE`); and
-     `entries_begin() + stride() * count() <= __size` computed in `u64` with
-     no overflow (else `ARRAY_OVERRUN`).
-  3. Per block, `[[nodiscard]] Status validate_deep(VisitSet&) const noexcept`:
-     `validate()`, then recurse into every non-null `points_to` target —
-     **including `points_to` fields on array entries** (`IMAGES` and
-     `ANNOTATIONS` both point out from their entries; a header-only walk
-     silently skips `IMAGE_BYTES` and `ANNOTATION_BYTES`). `VisitSet` is a
-     fixed-capacity sorted array of visited offsets emitted alongside `Status`
-     — no heap, no `<set>`; a repeat offset returns `Check::CYCLE`. Emit a
-     depth cap constant. This is the successor to v1's hand-threaded
-     `validate_full` chains.
-- **Done when:** regeneration is drift-clean, the header still passes
-  `-fsyntax-only`, and 4.5's corruption tests pass.
 
 ##### 4.2d — Generated writers — ✅ DONE (bar the v1-oracle round-trip)
 
