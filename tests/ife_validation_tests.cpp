@@ -345,6 +345,62 @@ void test_attached_enforces_clinical_encoding_membership() {
 
 }  // namespace
 
+// ---- the tile frame's anchor ------------------------------------------- //
+// The frame is the one structure in the IFE laid out *backward*: its
+// displacements are negative, measured from the first byte of the tile stream
+// (the byte a TILE_OFFSETS entry names), so VALIDATION sits five bytes before
+// that anchor and stores its own position. See CLAUDE.md for why.
+//
+// Two ways to get it wrong, and they fail differently. Both are pinned here
+// because the layout is confusing relative to everything else in the format.
+
+void test_frame_validation_is_anchored_five_bytes_before_the_stream() {
+    auto f = buffer();
+    constexpr ::IFE::Offset STREAM_AT = 512;   // what the tile table names
+
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), STREAM_AT,
+        b::TilePixelDataCreateInfo{.TILE_INDEX = 7, .Z_PLANES = 0})));
+
+    const b::TILE_PIXEL_DATA frame{f.data(), STREAM_AT, f.size(), b::VERSION_WRITTEN};
+    IFE_CHECK(static_cast<bool>(frame.validate()));
+    IFE_CHECK(frame.tile_index() == 7);
+
+    // The contract, stated: the u40 at (anchor - 5) holds (anchor - 5).
+    const auto stored = frame.validation();
+    IFE_CHECK(stored.has_value());
+    IFE_CHECK(*stored == STREAM_AT - 5);
+
+    // The confusion this guards: storing the offset the TILE_OFFSETS entry
+    // carries -- the stream's own address -- instead of the field's position.
+    // Every other block in the format stores its own start, so this is the
+    // mistake the layout invites.
+    ::IFE::store_u40(f.data() + STREAM_AT - 5, STREAM_AT);
+    const auto status = frame.validate();
+    IFE_CHECK(!static_cast<bool>(status));
+    IFE_CHECK(status.code == b::Check::BAD_VALIDATION);
+}
+
+void test_a_frame_written_from_its_own_start_fails_at_the_anchor() {
+    auto f = buffer();
+    constexpr ::IFE::Offset STREAM_AT = 512;
+    const ::IFE::Offset frame_start = STREAM_AT - b::TILE_PIXEL_DATA::header_size;
+
+    // The bug: passing the frame's START where store() wants the ANCHOR. It
+    // writes a frame five bytes early that is entirely self-consistent -- a
+    // u40 storing its own position is self-consistent wherever it lands -- so
+    // nothing local to the frame objects.
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), frame_start,
+        b::TilePixelDataCreateInfo{.TILE_INDEX = 7, .Z_PLANES = 0})));
+    const b::TILE_PIXEL_DATA misplaced{f.data(), frame_start, f.size(), b::VERSION_WRITTEN};
+    IFE_CHECK(static_cast<bool>(misplaced.validate()));   // self-consistent, and wrong
+
+    // What catches it is validating at the offset the TILE_OFFSETS entry
+    // actually names. There is no frame there, so the anchor check fails --
+    // which is the check a reader performs anyway.
+    const b::TILE_PIXEL_DATA at_anchor{f.data(), STREAM_AT, f.size(), b::VERSION_WRITTEN};
+    IFE_CHECK(!static_cast<bool>(at_anchor.validate()));
+}
+
 int main() {
     test_detached_costs_nothing_and_enforces_nothing();
     test_attached_enforces_a_range_clause();
@@ -358,6 +414,8 @@ int main() {
     test_attached_enforces_image_encoding_membership();
     test_attached_enforces_annotation_type_membership();
     test_attached_enforces_clinical_encoding_membership();
+    test_frame_validation_is_anchored_five_bytes_before_the_stream();
+    test_a_frame_written_from_its_own_start_fails_at_the_anchor();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

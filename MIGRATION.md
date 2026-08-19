@@ -29,7 +29,7 @@ and ⚠ marks a decision a flash model must not take alone.
 | R-3 | P1 | Release 1.1 | No tag has ever been cut on this repository | open |
 | R-4 | P2 | Python bindings (pybind11) | Already specified in Phase 6; unblocked by the tag | open |
 | R-5 | P3 | JS/WASM binding surface | Transport exists; only the binding is missing | open |
-| R-6 | **P1** | Corpus checks every function of every block | Presence-checking called a frame "covered" while it was attached to nothing | open |
+| R-6 | P2 | Expectations header for the 1.1 witness | 1.1's fields are pinned by digest and read by no test; the 1.0 pair is the pattern | open |
 
 ---
 
@@ -402,36 +402,46 @@ is the binding, not the transport.
 
 ---
 
-## R-6 — Make the corpus check every function of every block (P1)
+## R-6 — Give the 1.1 witness an expectations header (P2)
 
-**Why.** R-1's harness proves a block is *present and walkable*. It never calls
-`validate_deep()`, never reads a field, never compares a value. That gap is not
-theoretical: writing the 1.1 witness put every tile frame five bytes early, and
-the harness called `TILE_FRAME` **covered** — a `u40` storing its own position
-is self-consistent wherever it lands, so the recovery scan accepted a frame
-attached to no stream at all. It surfaced only because the stray write happened
-to land inside a `CIPHER` block. Presence-checking cannot catch that class;
-value-checking can.
+**Scope, first, because the obvious reading is wrong.** This is *not* "read
+everything". Tile pixel streams are out of scope permanently: IFE references
+them in their on-disk compressed form and never interprets a byte, because
+compression is Iris-Codec's layer. The witness writer fills them with `0xCD`
+and nothing should ever look.
 
-The complementary evidence already exists but is weaker than it looks:
-`IFE_Blocks.cpp` and `IFE_Validation.cpp` report 100% function coverage from
-the in-process tests, which is a writer and a reader agreeing with each other.
-Running the same functions against frozen hosted bytes is a different claim.
+What *is* in scope is the structural field values, and the precedent is already
+here: `ife_v1_oracle_tests` makes 106 assertions against
+`tests/ife_v1_fixture.hpp` — `encoding()`, `x_extent()`, per-layer
+`x_tiles()`/`scale()`, `microns_pixel()`, every annotation entry field, the ICC
+and attribute byte runs. Those accessors are generated in this repository; a
+wrong derived offset is this repository's defect to catch.
 
-**Shape.** Per block the walk reaches, build the typed handle and exercise its
-full surface — `validate()`, `validate_deep()`, every accessor — against
-expected values carried by the fixture's own declarations, the way
-`ife_v1_fixture.hpp` already does for the 1.0 witness. The 1.1 witness needs an
-equivalent expectations header.
+**The gap.** That treatment stops at the 1.0 witness. The 1.1 witness has no
+expectations header, so everything 1.1 added is pinned by digest and read by
+nobody — including the optional values just written: `TILE_LENGTH` 128, layer
+`Z_PLANES` 3, per-stream frame `Z_PLANES` 3/0/0, one `NULL_TILE` slot,
+`MICRONS_PLANE`. A digest pin catches a change; it does not catch a *reader*
+that stops returning them correctly.
 
-⚠ **Decide before building:** whether expectations live per fixture (a header
-beside each writer, which is how 1.0 works today) or are generated from the
-manifest. Two witnesses already disagree in content by design, so a single
-shared expectation set is not obviously right.
+**Shape.** A `tests/ife_v11_fixture.hpp` beside the 1.1 writer, declaring what
+that fixture contains, and a test asserting it — mirroring the 1.0 pair rather
+than inventing a second idiom. The assertions that matter most are the
+version-gated ones: every 1.1 field reads its value on the 1.1 witness and
+**absent** on the 1.0 witness. That pair is the bidirectional guarantee stated
+as a test instead of as prose.
 
-**Done when:** every block type the corpus reaches has its fields read and
-compared, and re-introducing the frame-anchor bug (pass the frame start rather
-than the stream offset) turns the corpus test red.
+**The frame anchor is already covered (2026-08-19)** and is no longer part of
+this task. `ife_validation_tests.cpp` pins both failure modes on synthetic
+buffers, needing no fixture: storing the tile-offsets entry's own value in the
+VALIDATION slot (which `validate()` rejects), and storing a correct frame at
+the wrong place (which `validate()` cannot reject, because it is internally
+consistent — what catches it is validating at the offset the entry names).
+Both red-greened.
+
+**Done when:** every 1.1 field is asserted present-and-correct on the 1.1
+witness and absent on the 1.0 witness, and re-introducing the frame-anchor bug
+turns a test red.
 
 ---
 
