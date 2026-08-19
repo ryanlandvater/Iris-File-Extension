@@ -106,9 +106,11 @@ Traps that have already cost this project time:
   after a failed build.
 - After changing `spec/*.json` or an emitter, run `cmake .` (configure), not
   just `cmake --build` — fixtures are generated at configure time.
-- The corpus is fetched at configure into `.deps/corpus/`; if the network is
-  unavailable the fetch fails without failing configure — check the files
-  exist.
+- The corpus is fetched at configure into `.deps/corpus/`, inside the
+  `if(IFE_BUILD_TESTS)` guard, and a failed fetch is a `message(FATAL_ERROR)`
+  (`tests/tests.cmake`). It breaks the whole configure, not just the corpus
+  test — which is why a manifest entry must never name an object that is not
+  yet hosted. A build with tests off never contacts the host at all.
 
 ## Picking work
 

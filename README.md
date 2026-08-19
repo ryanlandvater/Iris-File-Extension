@@ -25,7 +25,7 @@ and has an equivalent Bazel build (`BUILD.bazel`); both are exercised in CI.
 # Installation
 Incorporating the Iris File Extension into your code base is simple; Additional [Iris headers](https://github.com/IrisDigitalPathology/Iris-Headers) are required but are automatically included when this repository is built or included in a CMake project.
 
-In addition to building from source, we provide pre-compiled binaries for all major systems under the **releases tab**. Language bindings are not built from this repository: Python and JavaScript access is provided by the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which consumes this repository for slide file serialization.
+In addition to building from source, we provide pre-compiled binaries under the **releases tab** for Linux (x86-64 and arm64), macOS (universal) and Windows (x64). Each archive carries the shared and static libraries, the public headers, and the CMake package configuration that `find_package(IrisFileExtension)` resolves; every archive is pinned by SHA-256 in the release's `SHA256SUMS`. The specification itself is published with them as PDF and HTML. Language bindings are not built from this repository: Python and JavaScript access is provided by the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which consumes this repository for slide file serialization.
 
 ### Non-CMake Project
 If you are **NOT** using CMake to build your project, you should still use CMake to generate the Iris File Extension library.
@@ -41,9 +41,12 @@ cmake --install ./Iris-File-Extension/build
 
 #### Bazel
 An equivalent Bazel build covers the library, the examples and the full test
-suite (`BUILD.bazel`). `generated_source/` is regenerated at build time from
-`spec/` (never committed), and Iris-Headers is resolved from the sibling
-checkout next to this repository (see `MODULE.bazel`).
+suite (`BUILD.bazel`). The test rules live in `tests/tests.bzl`, declared from
+the `ife_tests()` macro that `BUILD.bazel` calls — the fixture genrules, the
+header-only input library and all twelve `cc_test` targets. `generated_source/`
+is regenerated at build time from `spec/` (never committed), and Iris-Headers
+is resolved from the sibling checkout next to this repository (see
+`MODULE.bazel`).
 
 ```shell
 git clone https://github.com/IrisDigitalPathology/Iris-File-Extension.git

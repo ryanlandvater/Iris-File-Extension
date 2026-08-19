@@ -59,6 +59,18 @@ regeneration.
 The newest witness doubles as the feature corpus while its version is draft,
 so there is no separate "moving" fixture to keep in step.
 
+```mermaid
+graph TD
+    subgraph W["Witnesses — one per version, frozen at ratification"]
+        W10["v1_0_witness<br/>every 1.0 block but CIPHER"]
+        W11["v1_1_witness<br/>every 1.1 block but CIPHER<br/>+ the tile frame"]
+    end
+    V["cipher_iris — variant<br/>adds CIPHER, which needs<br/>TILE_ENCODING_IRIS"]
+    F["v1_tile_offsets_full_width.bin — fragment<br/>u40/u24 with every byte significant"]
+    W10 -- "1.1 appends, never moves a field" --> W11
+    W11 -. "same layout, plus the one block<br/>a conformant witness cannot carry" .-> V
+```
+
 | Fixture | Role | Covers |
 |---|---|---|
 | `v1_0_witness.test_slide` | witness, frozen | every block 1.0 defines but `CIPHER` |

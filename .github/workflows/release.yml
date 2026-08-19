@@ -1,0 +1,233 @@
+name: Release
+
+# The release pipeline, and the sentence in README.md it exists to make true:
+# pre-compiled binaries "for all major systems under the releases tab". Four
+# jobs:
+#
+#   verify    the tag, the version spec/ife_header.json declares, and that
+#             revision's ratification status agree -- checked before a compiler
+#             runs, because the fix for a disagreement is a retag, not a rebuild
+#   package   one install tree per platform, proven by linking against it, then
+#             archived
+#   document  the specification PDF and HTML, through build_document.sh's three
+#             gates
+#   publish   one release carrying all of it, pinned by SHA256SUMS
+#
+# No tag has ever been cut on this repository, so this is written to be
+# exercised before it is trusted: workflow_dispatch runs everything except
+# publish, and its gate reports instead of failing, so the packaging can be
+# proven while the specification is still draft.
+#
+# ci.yml is deliberately not re-run here. That is the gate on the commit; this
+# is the gate on the release. A tag pointing at a commit CI never passed is a
+# tagging mistake, and rebuilding the suite here would find it late and slowly.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Read-only by default. Only publish writes, and only a release; stated once
+# here so the whole grant is visible in one place.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: tag and specification agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # tools/release_guard.py carries the reasoning and the exit codes -- read
+      # it for why a draft revision cannot ship. It writes `version` whether or
+      # not it passes, so a dry run still names its archives correctly.
+      - name: Release gate
+        id: guard
+        run: >
+          python3 tools/release_guard.py
+          ${{ github.ref_type == 'tag' && format('--tag {0}', github.ref_name) || '' }}
+          --github-output "$GITHUB_OUTPUT"
+        # A dispatch run publishes nothing, so ratification is not required of
+        # it. It exists to prove the packaging works, which is worth doing while
+        # the specification is still draft -- and refusing that would make this
+        # workflow unrunnable until the moment it must not fail.
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+
+  package:
+    name: ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pinned to the oldest supported runner image rather than -latest: a
+          # binary links the glibc it was built against and will not run on
+          # anything older, so -latest silently narrows who can use the release
+          # every time GitHub moves the image.
+          - {name: linux-x86_64, os: ubuntu-22.04}
+          - {name: linux-arm64, os: ubuntu-22.04-arm}
+          # One archive covering both Macs, because the alternative is asking
+          # users to know which of two downloads their machine takes.
+          - {name: macos-universal, os: macos-14, osx_archs: 'arm64;x86_64'}
+          - {name: windows-x64, os: windows-2022}
+    env:
+      PKG: IrisFileExtension-${{ needs.verify.outputs.version }}-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        shell: bash
+        run: |
+          # An array, not `[ -n … ] && extra=…`: `shell: bash` runs with `set -e`,
+          # where a false test as a step's last command fails the step.
+          extra=()
+          if [ -n "${{ matrix.osx_archs }}" ]; then
+            extra+=("-DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_archs }}")
+          fi
+          # IFE_RUN_GENERATOR is not optional here. generated_source/ is
+          # gitignored, so a release builds the C++ layer from spec/*.json in
+          # this same run or it does not build at all.
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DIFE_RUN_GENERATOR=ON "${extra[@]}"
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      # --config again: Visual Studio is a multi-config generator and installs
+      # whichever configuration it is told to, ignoring CMAKE_BUILD_TYPE.
+      - name: Install into a staging tree
+        shell: bash
+        run: cmake --install build --config Release --prefix "stage/$PKG"
+
+      # The code's terms travel with the binaries. The specification's terms
+      # differ (CC BY-ND) and travel with the document instead.
+      - name: Add the licence
+        shell: bash
+        run: cp LICENSE "stage/$PKG/"
+
+      # Presence is not function. This resolves the installed package config,
+      # includes its headers and links its shared library -- the only check
+      # that the archive is more than a correctly named tarball, and on MSVC
+      # the only place the shipped DLL's import library is ever linked.
+      - name: Consume the installed package
+        shell: bash
+        run: |
+          cmake -B smoke -S tools/package_smoke -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_PREFIX_PATH="$PWD/stage/$PKG"
+          cmake --build smoke --config Release
+
+      - name: Run against the shipped library
+        shell: bash
+        run: |
+          # Only the loader's variable differs by platform; on Windows the DLL
+          # installs to bin/ and its import library to lib/.
+          case "${{ runner.os }}" in
+            Windows)
+              export PATH="$PWD/stage/$PKG/bin:$PWD/stage/$PKG/lib:$PATH"
+              exe="smoke/Release/ife_package_smoke.exe" ;;
+            macOS)
+              export DYLD_LIBRARY_PATH="$PWD/stage/$PKG/lib"
+              exe="smoke/ife_package_smoke" ;;
+            *)
+              export LD_LIBRARY_PATH="$PWD/stage/$PKG/lib"
+              exe="smoke/ife_package_smoke" ;;
+          esac
+          "$exe"
+
+      - name: Archive
+        shell: bash
+        working-directory: stage
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$PKG.zip" "$PKG" > /dev/null
+          else
+            tar -czf "$PKG.tar.gz" "$PKG"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PKG }}
+          path: stage/${{ env.PKG }}.*
+          if-no-files-found: error
+
+  document:
+    name: specification document
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+      - run: gem install asciidoctor asciidoctor-pdf
+
+      # The script's own three checks are the gate, not the exit code:
+      # Asciidoctor reports a missing include in the output and still exits 0.
+      - name: Build HTML and PDF
+        run: spec/build_document.sh "$GITHUB_WORKSPACE/doc"
+
+      # Named for the release rather than for the build tree: a file called
+      # ife_spec.pdf on someone's disk a year from now says nothing about which
+      # version of the format it describes.
+      - name: Name the document for the release
+        shell: bash
+        working-directory: doc
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          mv ife_spec.pdf  "IFE-specification-${version}.pdf"
+          mv ife_spec.html "IFE-specification-${version}.html"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: specification
+          path: doc/
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    # Never on a dispatch run: that build exists to prove the packaging, and a
+    # branch has no tag to publish under.
+    if: github.ref_type == 'tag'
+    needs: [verify, package, document]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Everything this project ships is pinned by digest -- the corpus
+      # fixtures, the wire witness. A release asking users to trust an
+      # unverifiable download would be the one exception.
+      - name: Checksums
+        shell: bash
+        working-directory: artifacts
+        run: |
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      # The revision summary in spec/ife_header.json is the changelog, already
+      # written and already published on the document's cover. Rendering the
+      # body from it is what stops a second, disagreeing account of the same
+      # release being typed here.
+      - name: Render the release body
+        run: python3 tools/release_guard.py --tag "${{ github.ref_name }}" --notes-file notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          --repo "${{ github.repository }}"
+          --title "Iris File Extension ${{ needs.verify.outputs.version }}"
+          --notes-file notes.md
+          artifacts/*

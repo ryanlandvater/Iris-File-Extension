@@ -12,6 +12,20 @@ The tile frame is the one exception. Its displacements are **negative** —
 the first byte of the tile stream, which is the byte a `TILE_OFFSETS` entry
 addresses.
 
+```mermaid
+flowchart LR
+    subgraph FRAME["TILE_FRAME — 11 B, laid out backward"]
+        direction LR
+        Z["Z_PLANES<br/>u16 @ -11"]
+        T["TILE_INDEX<br/>u32 @ -9"]
+        V["VALIDATION<br/>u40 @ -5<br/>stores its own position"]
+    end
+    A(["ANCHOR<br/>first byte of the stream"])
+    S["compressed tile stream<br/>opaque to IFE"]
+    Z --> T --> V --> A --> S
+    E["TILE_OFFSETS entry<br/>OFFSET, SIZE"] -. "addresses the ANCHOR,<br/>never the frame" .-> A
+```
+
 This is deliberate, and it is what makes the header **optional**:
 
 * **A tile offset always points straight at pixel data.** The entry addresses

@@ -1,5 +1,65 @@
 # IFE Migration — JSON-Specified Format, Generated Code & Documentation
 
+# ▶ ZERO-COPY SPAN / CONST-LENS READ PATH — the FastFHIR pattern to follow (2026-08-19)
+
+FastFHIR completed this exact migration on 2026-08-19 (TASKS.md OPEN TOPIC §C);
+IFE serialization must adopt the same structure so the read path stays
+allocation-free and the "0 heap allocations / nanosecond reads" claim holds.
+**This is the reference implementation: `FastFHIR::reflected_fields_view()`
+returning `std::span<const FF_FieldInfo>` over a static table, and
+`Node::fields()` returning that span.** The old by-value
+`reflected_fields()` → `std::vector<FF_FieldInfo>` was deleted — every caller
+migrated, nothing needs an owning copy on the read path.
+
+### The rule
+
+**Read-path metadata and entry access is a const lens over resident memory:
+`std::span<const T>` over static (generated) or in-place (block) storage.
+Never materialize a `std::vector` per call on the read path.** Builder-side
+vectors that own data being *written* are fine — the migration is about reads.
+
+### What this looks like in IFE
+
+| Current IFE pattern | Must become | Notes |
+|---|---|---|
+| `generated_source/IFE_Blocks.hpp` — per-block static layout tables | `std::span<const T>` accessors over the static arrays (the FastFHIR `reflected_fields_view` shape) | tables are already static/constexpr; expose spans, never copy |
+| `include/IFE_Runtime.hpp` — `Layer = std::vector<TileEntry>`, `Layers = std::vector<Layer>`, `AttributeSet = std::vector<AttributeNode>` | lazy spans over the resident `Window` bytes (resident mode), owning vectors only where data must outlive the window | the `Window::__pages` cache mode legitimately owns; span-ify the resident path |
+| `src/IFE_Runtime.cpp` — per-call `std::vector<AttributeSlice> slices` | parse into spans over the block, or reuse one buffer — no per-call allocation | measured cost of the vector pattern in FastFHIR: ~65% of `entries()`'s time was per-element `push_back` machinery at `-O0`; at `-O3` it is still a real per-call allocation on a path documented allocation-free |
+| `const std::vector<T>& entries` in the generated `*CreateInfo` structs | keep (write side, owns data) — but read it back through spans | `store()` reads `vector::size()`; that is the builder, not the read path |
+
+### Why (numbers, FastFHIR 2026-08-19, 50.8 MiB bundle, min of 7)
+
+- `Bundle.entry.entries()`: 856 µs/call → **36 µs** at `-O3` after removing the
+  allocating reflection path (and the reflective walk: 0.75 → **0.60 µs/entry**
+  once `Node::fields()` stopped allocating per block).
+- `node_size()` was building an entire `std::vector` just to call `.size()` —
+  `FIELD_COUNT` is a compile-time constant. Now 17.5 ns/call.
+- The Debug-build trap applies here too: all these costs are ~10× higher at
+  `-O0` (FastFHIR's `ninja` preset is Debug). **Measure IFE reads against a
+  Release build** (`-DCMAKE_BUILD_TYPE=Release`) or every span decision will be
+  made on inflated numbers.
+
+### Checklist for IFE code
+
+- [ ] Block layout tables in `generated_source/IFE_Blocks.hpp` exposed as
+      `std::span<const T>` (generator change in `generator/emit/cpp.py`), never
+      returned by value.
+- [ ] Read path (`IFE_Runtime.cpp` / `IFE_Window.cpp`): no `std::vector`
+      constructed per call when the source data is resident-addressable.
+- [ ] `AttributeSlice` / tile-entry access goes through spans over the block,
+      not materialized `std::vector` layers.
+- [ ] Wire-format gate (if any) and the corpus harness measure against a
+      Release build.
+- [ ] Benchmark parity: any public API change (e.g. a function now returning
+      `std::span`) is noted for the companion benchmark repo.
+
+Reference commit context: FastFHIR `generator/emit/views.py` now emits only
+`reflected_fields_view` (span); `Node::fields()`, `ObjectHandle::fields()`,
+`MutableEntry::fields()` all return `std::span<const FF_FieldInfo>`; the
+allocating variants were deleted from the emitter. Copy that structure.
+
+---
+
 # ▶ RELEASE WORK ORDERS — start here
 
 Written 2026-08-18, after the Phase 6 audit corrected this document (three
@@ -26,7 +86,7 @@ and ⚠ marks a decision a flash model must not take alone.
 |---|---|---|---|---|
 | R-1 | **P0** | Build the corpus harness | Four tests eat the corpus; nothing checks it still contains what it claims | **done (2026-08-18)** |
 | R-2 | P1 | Close the reachable corpus gaps | All five missing blocks are writable today — the blocker was v1, now deleted | **done (2026-08-19) — 18 of 18** |
-| R-3 | P1 | Release 1.1 | No tag has ever been cut on this repository | open |
+| R-3 | P1 | Release 1.1 | No tag has ever been cut on this repository | open — R-3.4 done (2026-08-19); R-3.1 held, the document had a normative gap |
 | R-4 | P2 | Python bindings (pybind11) | Already specified in Phase 6; unblocked by the tag | open |
 | R-5 | P3 | JS/WASM binding surface | Transport exists; only the binding is missing | open |
 | R-6 | P2 | Expectations header for the 1.1 witness | 1.1's fields are pinned by digest and read by no test; the 1.0 pair is the pattern | open |
@@ -381,6 +441,85 @@ contradicts its own README is worse than shipping without binaries.
 
 **Exit:** a tag exists, the specification is published from the pipeline, and
 every claim the README makes about artifacts is true.
+
+> **Status (2026-08-19): R-3.4 is done; R-3.1 is deliberately held.**
+>
+> **A blocker this task did not record: the 1.1 document is normatively
+> incomplete.** `spec/ife_spec.adoc` carried three `TODO(draft)` comments —
+> AsciiDoc line comments, so they render as nothing and the published PDF
+> simply lacked the content. One was load-bearing: the document required "the
+> global tile index" in five clauses (`TILE_INDEX *shall* encode the global
+> tile index`; `The count *shall* equal the total number of global tile
+> indices derived from the layer extents array`) and defined it nowhere, while
+> Terms cross-referenced `<<ife-tile-offsets>>` for the axis — the very
+> section the TODO sat in front of. An implementer could not have written a
+> conformant encoder from the published document.
+>
+> **Closed.** `[[ife-tile-indexing]] ==== Global Tile Indexing` now states the
+> scheme, from the owner's own figure: indices ascend by layer and row-major
+> within a layer from the upper-left tile, _base_(_l_) is the tile count of
+> every preceding layer, and _G_(_l_, _x_, _y_) = _base_(_l_) + _y_ ×
+> X_TILES~_l_~ + _x_, with the inverse and the total stated as clauses. The
+> derivation is checked against real bytes rather than asserted: the snapshot
+> writer's extents are 2 × 2, 4 × 4 and 8 × 8 at ascending scale — 84 tiles,
+> the figure's exact geometry — so the worked table in the section (0–3, 4–19,
+> 20–83) is the corpus fixture's own indexing. Four cross-references that had
+> no target now resolve to it, including the Terms one, which also said
+> "global *slide* indexing scheme" for the term the document defines as
+> "global *tile* indexing scheme".
+>
+> **Still deferred, and not blocking:** the other two `TODO(draft)` markers —
+> Equations 2.1/2.2 (MpP and Mc normalization) and Figure 2.7 (slide space).
+> Both are a figure and its equations for rules the narrative already states
+> in prose beside the field and in Terms respectively, so the document is
+> complete without them and poorer for it. They want the v1.0 document, which
+> exists in no checkout here.
+>
+> **R-3.1 held by owner decision (2026-08-19):** the revision stays `draft`
+> until the migration above is reviewed. `spec/ife_header.json` is untouched,
+> so R-3.2 has nothing to refresh — the narrative is not part of the wire
+> witness, and `--validate`/`--check` are green without it.
+>
+> **R-3.4 is done, resolved the way the ⚠ asked: the workflow builds the
+> binaries.** `.github/workflows/release.yml` — `verify` → `package` →
+> `document` → `publish`, tag-triggered, with `workflow_dispatch` running
+> everything except publish so the pipeline can be exercised before the first
+> tag. Four archives: linux-x86_64, linux-arm64, macos-universal (one archive,
+> both architectures) and windows-x64, each an install tree plus LICENSE,
+> published with the specification PDF/HTML and a `SHA256SUMS`.
+>
+> Two pieces carry the reasoning rather than the YAML:
+>
+> * `tools/release_guard.py` — the tag, the declared version and the
+>   ratification status have to agree before a compiler runs, because the fix
+>   for a disagreement is a retag. It **refuses to release a draft**, so it
+>   fails today, by design and on purpose. Red-greened over seven cases
+>   (draft, ratified, `v1.1`, `v1.1.3`, wrong version, malformed tag, output
+>   emission). It also renders the release body from the revision summary, so
+>   the changelog is not typed a second time.
+> * `tools/package_smoke/` — a consumer of the *installed* package:
+>   `find_package(IrisFileExtension CONFIG)`, the umbrella header, and a call
+>   into the shared library. Nothing else in the tree ever links the shipped
+>   artifact — the tests and examples link the object library — so this is the
+>   only check that an archive is more than a correctly named tarball, and on
+>   MSVC the only place the DLL's import library is linked at all. It found a
+>   real one immediately: `BYTE` is `Iris::BYTE` to a consumer, unqualified
+>   only inside tests that bring their own using-directive.
+>
+> Verified locally on macOS end to end: configure → build → `cmake --install`
+> (10 files: 6 headers, 2 libraries, 2 package-config files) → smoke consumer
+> builds, links `@rpath/libIrisFileExtension.dylib`, and runs. The document
+> builds through all three of `build_document.sh`'s gates, HTML and PDF.
+>
+> **Unverified, and where the risk sits:** every platform but macOS-arm64. The
+> other three matrix legs, the Windows loader paths, `ubuntu-22.04-arm` as a
+> runner label, and the whole publish job have never executed. Run the
+> workflow by dispatch once before trusting it — that is what the dispatch
+> trigger is for. A Windows consumer also gets no `IFE_IMPORT_API`, so
+> `IFE_EXPORT` is empty rather than `dllimport` on that side of the install;
+> functions link through the import library regardless, but that is the corner
+> the smoke test is most likely to fail in first, and changing it is an
+> export-contract task, not a packaging one.
 
 ---
 

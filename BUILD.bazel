@@ -8,6 +8,8 @@
 #
 #   - generated_source/ is NEVER committed; a genrule runs generator/ at
 #     build time. Needs python3 on PATH, exactly like CMake's configure step.
+#   - The test suite is declared in tests/tests.bzl as one ife_tests() macro;
+#     this file calls it (see the Tests section below).
 #   - Runfiles cannot hand a test a directory. The corpus tests receive the
 #     runfiles path of one corpus file and resolve its parent
 #     (tests/ife_corpus_path.hpp); ife_large_file_tests takes "-" for its

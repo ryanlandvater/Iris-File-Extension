@@ -138,7 +138,7 @@ decimal number of highest-resolution layer tiles such that a location or size
 (_x_, _y_) in *slide space* ranges from ([0, _T~(N−1)x~_], [0, _T~(N−1)y~_])
 where the origin (0, 0) is defined as the upper-left of the slide and the point
 (_T~(N−1)x~_, _T~(N−1)y~_) is defined as the lower-right of the slide using the
-same axis as the global slide indexing scheme (<<ife-tile-offsets>>), layer
+same axis as the global tile indexing scheme (<<ife-tile-indexing>>), layer
 _N_ − 1.
 
 NOTE: Slide space is a single-precision float in fractional tiles, not an
@@ -379,9 +379,9 @@ include::{generated}/constants/pixel_formats.adoc[]
 ===== Tile Length
 
 Every tile in a slide has the same edge length. That length sets the axis of
-the global tile indexing scheme and of slide space (<<ife-terms>>), and is a
-property of the whole slide: layers differ in how many tiles they hold, never
-in how large a tile is.
+the global tile indexing scheme (<<ife-tile-indexing>>) and of slide space
+(<<ife-terms>>), and is a property of the whole slide: layers differ in how
+many tiles they hold, never in how large a tile is.
 
 The field names an edge, not an area and not a byte count — a slide of 512
 pixel tiles encodes 512, and the compressed size of any one of those tiles is
@@ -527,8 +527,69 @@ NOTE: A 1.0 reader steps through this array by the stride stored in the array
 header and never reads Z_PLANES, so a 1.1 file remains readable to it as a
 single-plane slide. See <<ife-array-header>>.
 
-// TODO(draft): migrate the global tile indexing scheme narrative,
-// Equations 2.3/2.4, and Figure 2.6 from v1.0 Sections 2.4.1-2.4.2.
+[[ife-tile-indexing]]
+==== Global Tile Indexing
+
+The layer extents array (<<ife-layer-extents>>) and the tile offsets array
+(<<ife-tile-offsets>>) are joined by one index space: every tile of every
+layer has exactly one *global tile index*, and that index is the tile offsets
+array's subscript. No field stores it. It is derived from the extents, which
+is why a byte-stream separated from its entry cannot recover which tile it
+holds unless it carries a frame (<<ife-tile-frame>>).
+
+Indices *shall* ascend by layer, and within a layer in row-major order from
+the upper-left tile: _x_ advances first, then _y_. Layer 0 is the
+lowest-resolution layer (<<ife-terms>>), so index 0 is the upper-left tile of
+the lowest-resolution layer.
+
+The first index of layer _l_ is the number of tiles all preceding layers hold,
+which is zero for layer 0 because none precede it:
+
+_base_(_l_) = X_TILES~0~ × Y_TILES~0~ + … + X_TILES~_l_−1~ × Y_TILES~_l_−1~
+
+and the tile at column _x_, row _y_ of layer _l_ therefore has the global index
+
+_G_(_l_, _x_, _y_) = _base_(_l_) + _y_ × X_TILES~_l_~ + _x_
+
+* An implementation *shall* derive the global tile index from the layer
+  extents array by the relations above and *shall not* assume any other
+  ordering.
+* The total number of global tile indices *shall* equal _base_(_N_) for a
+  slide of _N_ layers, which is the count the tile offsets array encodes
+  (<<ife-tile-offsets>>).
+* The inverse *shall* be taken by locating the greatest _l_ for which
+  _base_(_l_) ≤ _G_, giving _t_ = _G_ − _base_(_l_), _x_ = _t_ modulo
+  X_TILES~_l_~, and _y_ = _t_ ÷ X_TILES~_l_~ under integer division.
+
+The space is contiguous: every value from zero to _base_(_N_) − 1 names
+exactly one tile, and the layer boundaries fall wherever the extents put them.
+A slide of three layers measuring 2 × 2, 4 × 4 and 8 × 8 tiles indexes as
+
+[cols="^1,^2,^2,^2,^3",options="header"]
+|===
+|Layer |X_TILES |Y_TILES |Tiles |Global indices
+
+|0 |2 |2 |4  |0 – 3
+|1 |4 |4 |16 |4 – 19
+|2 |8 |8 |64 |20 – 83
+|===
+
+where layer 1, taken alone, carries its sixteen indices in row-major order
+from _base_(1) = 4:
+
+[cols="^1,^1,^1,^1",frame=all,grid=all]
+|===
+|4  |5  |6  |7
+|8  |9  |10 |11
+|12 |13 |14 |15
+|16 |17 |18 |19
+|===
+
+The index orders the *array*, not the file. Entry _G_ sits at the subscript
+_G_ names, so the tile offsets array is in index order by construction, while
+the byte-streams those entries address may be written in any order at all
+(<<ife-tile-pixel-data>>) — where a stream sits in the file says nothing about
+which tile it holds.
 
 [[ife-tile-offsets]]
 ==== Tile Offsets Array
@@ -537,7 +598,7 @@ include::{generated}/layout/TILE_OFFSETS.adoc[]
 include::{generated}/layout/TILE_OFFSETS_entry.adoc[]
 
 * The count *shall* equal the total number of global tile indices derived
-  from the layer extents array.
+  from the layer extents array (<<ife-tile-indexing>>).
 * OFFSET *shall* encode the byte offset location relative to the SOF where
   the corresponding compressed tile byte-stream is located and *shall not*
   exceed the 40-bit maximum value (1.0995 TB), or *shall* encode NULL_TILE
@@ -574,7 +635,8 @@ include::{generated}/layout/TILE_PIXEL_DATA.adoc[]
 
 * VALIDATION *shall* encode the byte offset of the VALIDATION field itself,
   which is the address of the stream it precedes less five.
-* TILE_INDEX *shall* encode the global tile index of the stream that follows.
+* TILE_INDEX *shall* encode the global tile index (<<ife-tile-indexing>>) of
+  the stream that follows.
 * Z_PLANES *shall* encode the number of focal planes the stream carries and
   *shall not* exceed the Z_PLANES maximum of the layer holding the tile
   (<<ife-layer-extents>>).
