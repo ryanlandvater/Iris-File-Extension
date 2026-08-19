@@ -45,7 +45,7 @@ using ::Iris::BYTE;
 
 /// The snapshot bytes, heap-allocated: the mapping the tree is built from.
 std::vector<BYTE> load_slide(const std::string& corpus_dir) {
-    const std::string path = corpus_dir + "/v1_snapshot.test_slide";
+    const std::string path = corpus_dir + "/v1_0_witness.test_slide";
     std::FILE* in = std::fopen(path.c_str(), "rb");
     if (!in) {
         std::fprintf(stderr, "FAIL: no snapshot at %s\n", path.c_str());

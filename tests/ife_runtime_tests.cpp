@@ -62,7 +62,7 @@ std::vector<BYTE> v1_slide(v1_fixture::Expected& expected) {
 
     // .test_slide, not .iris: nothing should mistake a build-tree fixture
     // for a real slide, and no tool should try to open it as one.
-    const std::string path = g_corpus_dir + "/v1_snapshot.test_slide";
+    const std::string path = g_corpus_dir + "/v1_0_witness.test_slide";
     std::FILE* in = std::fopen(path.c_str(), "rb");
     if (!in) { std::fprintf(stderr, "FAIL: no snapshot at %s\n", path.c_str()); ++g_failures; return {}; }
     std::fseek(in, 0, SEEK_END);
@@ -504,7 +504,10 @@ void test_file_map_finds_every_block() {
     int nested_blocks = 0;
     for (const auto& sequence : expected.nested_attributes)
         nested_blocks += 3 * static_cast<int>(sequence.items.size());
-    IFE_CHECK(blocks == 12 + nested_blocks + static_cast<int>(expected.annotations.size()));
+    // 14, not 12: the witness carries ANNOTATION_GROUP_SIZES and
+    // ANNOTATION_GROUP_BYTES, which the 1.0 fixture gained when it was made
+    // comprehensive.
+    IFE_CHECK(blocks == 14 + nested_blocks + static_cast<int>(expected.annotations.size()));
     IFE_CHECK(tile_data == static_cast<int>(expected.tiles));
 
     // upper_bound is the documented use: everything after a write point.
@@ -553,8 +556,10 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     int nested_blocks = 0;
     for (const auto& sequence : expected.nested_attributes)
         nested_blocks += 3 * static_cast<int>(sequence.items.size());
+    // 13, not 11: as above, the two group arrays are tagged blocks and a
+    // scan finds them without the ANNOTATIONS block that names them.
     IFE_CHECK(recovered.size() ==
-              11 + nested_blocks + expected.annotations.size());
+              13 + nested_blocks + expected.annotations.size());
 
     // What a scan cannot do is tell the root attributes structure from an
     // item: they are structurally identical, and only the reference from a

@@ -25,10 +25,11 @@ and ⚠ marks a decision a flash model must not take alone.
 | ID | Priority | Task | Why | Status |
 |---|---|---|---|---|
 | R-1 | **P0** | Build the corpus harness | Four tests eat the corpus; nothing checks it still contains what it claims | **done (2026-08-18)** |
-| R-2 | P1 | Close the reachable corpus gaps | All five missing blocks are writable today — the blocker was v1, now deleted | open |
+| R-2 | P1 | Close the reachable corpus gaps | All five missing blocks are writable today — the blocker was v1, now deleted | **done (2026-08-19) — 18 of 18** |
 | R-3 | P1 | Release 1.1 | No tag has ever been cut on this repository | open |
 | R-4 | P2 | Python bindings (pybind11) | Already specified in Phase 6; unblocked by the tag | open |
 | R-5 | P3 | JS/WASM binding surface | Transport exists; only the binding is missing | open |
+| R-6 | **P1** | Corpus checks every function of every block | Presence-checking called a frame "covered" while it was attached to nothing | open |
 
 ---
 
@@ -110,6 +111,13 @@ never the fetch** — the oracle and the >4 GiB test depend on the snapshot.
 > the other three corpus tests still get their bytes. ctest 15/15, bazel
 > 13/13, `--validate`/`--check`/portability lint clean.
 >
+> **Two later corrections to what is described here** — see R-2's closeout: the
+> harness now unions `recover_file_structure` into the walk (a tile frame is
+> invisible to the offset graph), and it counts *observed* blocks rather than
+> declared ones (it briefly over-reported coverage for fixtures that failed to
+> load). What it still does not do is exercise each block's functions: that is
+> R-6.
+>
 > **It caught a real drift on its first run.** The snapshot fixture contains
 > `TILE_PIXEL_DATA` — `tests/ife_snapshot_writer.cpp` writes 16 B of pixel
 > data per tile across 84 tiles, and the tile-offsets entries address it —
@@ -130,7 +138,136 @@ never the fetch** — the oracle and the >4 GiB test depend on the snapshot.
 
 ---
 
-## R-2 — Close the reachable corpus gaps (P1)
+## R-2 — Close the reachable corpus gaps (P1) — ✅ DONE
+
+> **Restructured 2026-08-18 (owner decision) — the corpus is a set of frozen
+> per-version witnesses, each covering everything its version defines.**
+> Not one moving file: the newest witness *is* the feature corpus while its
+> version is draft, and freezes when the version ratifies. The set grows; no
+> entry is ever rewritten, so the version trail is immutable and old-file /
+> new-reader stays provable against real bytes — which a corpus regenerated at
+> head would delete on its first regeneration (`ife_v1_oracle_tests` asserts
+> `declared == 0x00010000u` and reads every field through a handle built at the
+> version the file declares).
+>
+> **No split by tile encoding.** Measured across the whole field schema, the
+> only thing that varies with encoding is the `ENCODING` byte itself; nothing
+> else keys off it, and `CIPHER_OFFSET` is NULL for both JPEG and AVIF. A
+> `corpus_AVIF` would be structurally identical to `corpus_JPEG` but for one
+> enum byte, in a repository whose scope excludes compression. Real AVIF bytes
+> are Iris-Codec's evidence, not this layer's.
+>
+> **CIPHER (was R-2.2 ⚠) — resolved by isolation.** The encoding rule is
+> normative prose only; nothing in the validator enforces it. And the block is
+> content-free by design — "encoders write nothing beyond the universal header
+> and readers ignore its contents" — so a CIPHER fixture invents no payload.
+> What it cannot do is sit in a conformant JPEG witness, because
+> `CIPHER_OFFSET` shall be NULL_OFFSET unless `ENCODING` is
+> `TILE_ENCODING_IRIS`. So it gets its own file claiming IRIS, which confines
+> the unreal claim to one small fixture and leaves the witnesses realistic.
+>
+> **Built and verified (2026-08-18); hosted and green 2026-08-19:**
+>
+> | File | Bytes | sha256 | Covers |
+> |---|---|---|---|
+> | `v1_1_witness.test_slide` | 859 | `1293df66…` | 17 of 18 + `TILE_FRAME` |
+> | `v1_0_witness.test_slide` | 3151 | `aab8dec8…` | 16 — every 1.0 block but CIPHER |
+> | `cipher_iris.test_slide` | 869 | `90a36c79…` | all 18 + `TILE_FRAME` |
+>
+> Both validate; both byte-reproducible across runs. The earlier 574-byte
+> draft is superseded — do not host it.
+>
+> **A writer bug this caught, worth keeping.** `store()` for a tile frame takes
+> the **anchor** (the first byte of the stream), not the frame's own start:
+> `TILE_PIXEL_DATA::offset::VALIDATION` is **-5**, a displacement *behind* the
+> anchor, and the runtime builds the handle the same way. Passing the frame
+> start writes it five bytes early — which the recovery scan still accepts,
+> because a u40 storing its own position is self-consistent wherever it lands,
+> so the frame appeared "covered" while attached to no stream at all. It
+> surfaced only because the misplaced write landed inside the CIPHER block and
+> broke validation there. A presence-checking harness would never have caught
+> it; a function-checking one would.
+>
+> **Update (2026-08-18, later): the restructure is complete in the tree and
+> the corpus reaches 18 of 18 blocks.** Names settled as
+> `v1_0_witness` / `v1_1_witness` / `cipher_iris`, renamed across every test
+> source, `tests.bzl`, `tests/corpus/BUILD.bazel` and the docs; the manifest
+> gained `role` and now lists four fixtures.
+>
+> | Fixture | Bytes | sha256 | Blocks |
+> |---|---|---|---|
+> | `v1_0_witness.test_slide` | 3151 | `aab8dec8…` | 16 — every 1.0 block but CIPHER |
+> | `v1_1_witness.test_slide` | 859 | `1293df66…` | 17 + `TILE_FRAME` |
+> | `cipher_iris.test_slide` | 869 | `90a36c79…` | 18 + `TILE_FRAME` |
+>
+> The 1.0 witness gained the two annotation-group blocks (both 1.0 fields), so
+> `tests/ife_v1_fixture.hpp` gained `annotation_groups` — two groups of
+> different title lengths and member counts, because one group cannot prove the
+> byte run is sliced and equal-sized groups cannot prove the slice moves with
+> the entry. The oracle now *verifies* them rather than asserting their
+> absence: title and 24-bit members decoded out of the shared run at the
+> boundary each sizes entry declares, ending exactly at the run's end. Two
+> block counts in `ife_runtime_tests` moved 12→14 and 11→13.
+>
+> **A latent build defect surfaced doing it:** `ife_snapshot_writer` never
+> linked the baseline `IFE_Blocks.cpp`, so the target did not link at all. It
+> is `EXCLUDE_FROM_ALL` and nothing depends on it, so nobody had noticed.
+>
+> **ctest is 15/15; `bazel test //...` is red with a 404 until the three
+> objects are uploaded** — its genrule fetches into a fresh `RULEDIR` every
+> time and can never use the local cache, which is the same property that makes
+> it the honest check. CMake passes here only because `.deps/corpus` holds the
+> digest-matching objects.
+>
+> **Closed out 2026-08-19.** All three objects are hosted; `ctest` is 15/15 and
+> `bazel test //...` is 13/13 against them. Two defects surfaced during the
+> upload round-trip and are fixed:
+>
+> * The `ife_corpus_tests` Bazel target declared only two of the four fixtures
+>   as `data`, so two were absent from the runfiles tree. CMake had not caught
+>   it — it passes the corpus *directory*, so a new fixture needs no build
+>   change there, while Bazel builds runfiles from an explicit list. Recorded
+>   in `tests/corpus/README.md` as the third step of adding a fixture.
+> * **The harness counted declared blocks rather than observed ones**, so it
+>   printed "18 of 18" in the same run where two fixtures failed to open. The
+>   count now comes from what the walk reached; verified against a deliberately
+>   incomplete corpus, where it reports 16 of 18 and fails. A coverage gate that
+>   over-reports on failure is the exact defect the gate exists to prevent, and
+>   it was inside the gate.
+>
+> Also lost and restored in the same round-trip: `v1_tile_offsets_full_width.bin`
+> 404'd after the upload (the prefix appears to have been replaced rather than
+> added to). It is 32 bytes and the only fixture whose `u40`/`u24` fields have
+> every byte significant — in a normal small slide those high bytes are always
+> zero, so a truncating load or store reads back correctly and hides.
+>
+> **Optional values filled (2026-08-19).** Coverage of optional *blocks* was
+> already complete — all eight nullable offsets are reached — but every 1.1
+> optional *value* was sitting at its default, which for several of them is
+> indistinguishable from absence. The 1.1 witness now carries `TILE_LENGTH` 128
+> (zero and absence both mean 256, so an unset field cannot tell a decoder
+> honouring it from one assuming the default), layer `Z_PLANES` 3, per-stream
+> frame `Z_PLANES` varying 3/0/0, and one `NULL_TILE` slot so a sparse layer
+> exercises the sentinel. Verified by reading each back through the handles:
+> the 1.1 witness returns the set values and the **1.0 witness returns absent
+> for every one**, which is the version gate proven on real bytes rather than
+> only on the synthetic 200.0 fixture. Fixtures re-pinned — `v1_1_witness` 832 B
+> `e93a2018…`, `cipher_iris` 842 B `7ddfa5aa…` — and re-uploaded.
+>
+> Still uncovered by design: tile encodings other than JPEG, and
+> `clinical_encodings` values beyond `CLINICAL_HL7_V2`.
+>
+> **Still open:** R-1's harness checks block *presence*, not every function of
+> every block — it does not read any of the values above, so nothing would
+> notice if they regressed. The frame-anchor bug and this are the same gap:
+> R-6.
+
+> **Superseded:** the 1.0 witness is not yet comprehensive (16 of the 17 blocks
+> 1.0 defines — it lacks the annotation groups), and making it so touches
+> `tests/ife_v1_fixture.hpp`, which the oracle reads its expectations from.
+> The manifest needs `role`/`covers_version` and the renames. And R-1's harness
+> still checks block *presence*, not every function of every block.
+
 
 **The blocker recorded below is stale.** §Conformance corpus says the
 annotation-group blocks are "still blocked: no group writer". That was v1's
@@ -152,6 +289,46 @@ with size, digest and its `blocks` array.
 **Done when:** the R-1.3 gate observes all four in the new fixture, and the
 corpus reaches 17 of 18 block types — from 14, not the 13 the section below
 recorded before R-1's harness corrected it.
+
+> **Status (2026-08-18): R-2.1 is built and verified; it needs an upload.**
+> `tests/ife_corpus_writer_11.cpp` emits a 574-byte 1.1 fixture, sha256
+> `92869ecd6fb47a0b2e16071fb2a17e80492f0af4e10286c2dcf03113d8c423b3`, carrying
+> one named annotation group, an HL7 v2 clinical stream, and framed tile
+> streams. Verified against the real gate by placing it in `.deps/corpus/`
+> with its manifest entry staged — `fetch_corpus.py` takes a digest-matching
+> cached file without touching the network, so the whole path runs locally:
+> validation passes and **the corpus reaches 17 of 18 blocks plus
+> `TILE_FRAME`, from 14**. Two independent compilations produced byte-identical
+> output.
+>
+> **The manifest entry is deliberately NOT staged in the tree.** The file has
+> to be uploaded to `r2://ife-validation/spec-validation/` first; an entry
+> naming a URL that 404s fails `fetch_corpus.py`, which is a
+> `message(FATAL_ERROR)` at configure — it would break every build, not just
+> the corpus test. Entry is ready to paste once the object is live.
+>
+> **Two corrections to the task as written.**
+>
+> 1. *"Extend `tests/ife_snapshot_writer.cpp`"* is wrong. That writer is built
+>    against the **1.0 baseline** schema (`build_baseline_spec.py`) on purpose,
+>    so the snapshot is 1.0 bytes a 1.1 reader must cope with, and its content
+>    is pinned field-for-field to `tests/ife_v1_fixture.hpp` because the oracle
+>    reads its expectations from there. 1.1 content cannot come out of a 1.0
+>    schema, and adding it would break the oracle. Hence a second writer, built
+>    against the current layer.
+> 2. *The frame is invisible to the harness R-1 built.* `generate_file_map`
+>    walks the offset graph; a tile frame carries **no recovery tag** and is
+>    addressed backward from the stream it precedes, so only
+>    `recover_file_structure`'s signature match finds one. R-1's harness now
+>    unions both maps. That also means the corpus exercises the recovery path
+>    over real bytes, which nothing else did — on a healthy file recovery finds
+>    a subset of the graph (measured: 12 of 14 on the snapshot, missing
+>    `FILE_HEADER` and `TILE_PIXEL_DATA`, both untagged).
+>
+> One more false green caught in passing: the harness first reported "18 of
+> 18" with `CIPHER` still unreached, because it counted `TILE_FRAME` — a
+> prefix, not one of the 18 blocks — in a numerator whose denominator excluded
+> it. Now counted separately.
 
 ### R-2.2 ⚠ — CIPHER needs a decision
 
@@ -222,6 +399,39 @@ Nothing about that analysis changed; it was waiting on the tag.
 As R-4. The residency work is done — `IFE::Window`'s Emscripten branch fetches
 byte ranges on demand, and the `wasm` CI job compiles it — so what is missing
 is the binding, not the transport.
+
+---
+
+## R-6 — Make the corpus check every function of every block (P1)
+
+**Why.** R-1's harness proves a block is *present and walkable*. It never calls
+`validate_deep()`, never reads a field, never compares a value. That gap is not
+theoretical: writing the 1.1 witness put every tile frame five bytes early, and
+the harness called `TILE_FRAME` **covered** — a `u40` storing its own position
+is self-consistent wherever it lands, so the recovery scan accepted a frame
+attached to no stream at all. It surfaced only because the stray write happened
+to land inside a `CIPHER` block. Presence-checking cannot catch that class;
+value-checking can.
+
+The complementary evidence already exists but is weaker than it looks:
+`IFE_Blocks.cpp` and `IFE_Validation.cpp` report 100% function coverage from
+the in-process tests, which is a writer and a reader agreeing with each other.
+Running the same functions against frozen hosted bytes is a different claim.
+
+**Shape.** Per block the walk reaches, build the typed handle and exercise its
+full surface — `validate()`, `validate_deep()`, every accessor — against
+expected values carried by the fixture's own declarations, the way
+`ife_v1_fixture.hpp` already does for the 1.0 witness. The 1.1 witness needs an
+equivalent expectations header.
+
+⚠ **Decide before building:** whether expectations live per fixture (a header
+beside each writer, which is how 1.0 works today) or are generated from the
+manifest. Two witnesses already disagree in content by design, so a single
+shared expectation set is not obviously right.
+
+**Done when:** every block type the corpus reaches has its fields read and
+compared, and re-introducing the frame-anchor bug (pass the frame start rather
+than the stream offset) turns the corpus test red.
 
 ---
 
@@ -2883,6 +3093,13 @@ cmake . -B build && cmake --build build --config Release -j && ctest --test-dir 
   machinery, not on the corpus's remaining fixture work.
 
 ### Conformance corpus — live plan
+
+> **This section is the original plan and is kept for its reasoning. For the
+> corpus as it now stands, read R-1 and R-2 above, and
+> `tests/corpus/README.md`.** What changed: the corpus is one frozen witness
+> per IFE version plus a `CIPHER` variant, it reaches **18 of 18** block types,
+> and `v1_snapshot.test_slide` was renamed `v1_0_witness.test_slide`
+> (2026-08-19) — references to the old name below are historical.
 
 The corpus exists to replace what `ife_v1_oracle_tests` proves: that the
 new stack reads bytes **a shipped encoder wrote**, rather than agreeing with

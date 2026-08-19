@@ -4,7 +4,7 @@ Real bytes on disk, pinned by digest. The corpus exists so the test suite
 proves the stack reads **files that exist**, rather than re-deriving the format
 from the same schema it was generated from.
 
-> **`v1_snapshot.test_slide` is no longer an independent witness — read this
+> **`v1_0_witness.test_slide` is no longer an independent witness — read this
 > before relying on it.** It was written by the shipped v1 encoder, which made
 > it evidence about *another implementation's* bytes: the one check that cannot
 > be fooled by a reader and a writer agreeing with each other about the wrong
@@ -22,15 +22,20 @@ from the same schema it was generated from.
 > 1.0 bytes — `TILE_LENGTH` and `Z_PLANES` reading back absent, the layer
 > extent stride at the 1.0 entry size. A 1.1 fixture proves none of that.
 >
-> The result is 3087 B against v1's 2857. One of those bytes is the `KIND`
-> field of the original text attribute; the other 229 are nested content, which
-> the fixture carries deliberately so that nesting is exercised against pinned
-> bytes rather than only in memory. The root attributes structure now holds
-> three entries — a text value, a two-item sequence, and an empty sequence —
-> and the file holds **three** `ATTRIBUTES` structures with their sizes and
-> byte arrays, twenty-one self-validating blocks in all. The sequence items are
-> written before the byte run that names them, so blocks after the attribute
-> region no longer sit at the offsets v1 gave them.
+> The result is **3151 B** against v1's 2857. The root attributes structure
+> holds three entries — a text value, a two-item sequence, and an empty
+> sequence — so the file carries **three** `ATTRIBUTES` structures with their
+> sizes and byte arrays; nesting is exercised against pinned bytes rather than
+> only in memory. The sequence items are written before the byte run that names
+> them, so blocks after the attribute region no longer sit at the offsets v1
+> gave them.
+>
+> It also carries the two annotation-group blocks (added 2026-08-18 to make the
+> 1.0 witness comprehensive — both are 1.0 fields, so they belong here rather
+> than in a later version). Two groups, of different title lengths and member
+> counts: one group cannot prove the byte run is sliced at all, and equal-sized
+> groups cannot prove the slice moves with the entry rather than by a fixed
+> stride.
 >
 > **What is kept:** the digest pin, so a schema edit that moves a shipped field
 > breaks reading a file nobody regenerated. **What is lost:** the cross-check,
@@ -38,6 +43,42 @@ from the same schema it was generated from.
 > outright rather than moving — v1 stored `METADATA_FREE_TEXT` as an alias of
 > `METADATA_I2S`, and demonstrating that errata needs bytes a v1 encoder
 > actually wrote.
+
+## How the corpus is organised
+
+**One witness per IFE version, each covering every block that version
+defines.** The set grows; no entry is ever rewritten. A witness is mutable
+while its version is draft and **frozen when that version ratifies**, which is
+what makes the version trail immutable — and the trail is the point: a current
+reader reading frozen 1.0 bytes is the only real-bytes proof of backward
+compatibility, and `ife_v1_oracle_tests` is built on exactly that (it asserts
+the file declares 1.0 and reads every field through a handle at that version).
+A corpus regenerated at head would delete that evidence on its first
+regeneration.
+
+The newest witness doubles as the feature corpus while its version is draft,
+so there is no separate "moving" fixture to keep in step.
+
+| Fixture | Role | Covers |
+|---|---|---|
+| `v1_0_witness.test_slide` | witness, frozen | every block 1.0 defines but `CIPHER` |
+| `v1_1_witness.test_slide` | witness, draft | every block 1.1 defines but `CIPHER`, plus the tile frame |
+| `cipher_iris.test_slide` | variant | the 1.1 witness plus `CIPHER` |
+| `v1_tile_offsets_full_width.bin` | fragment | a bare `TILE_OFFSETS` array whose `u40`/`u24` fields have every byte significant |
+
+**Why `CIPHER` is off on its own.** `CIPHER_OFFSET` shall be `NULL_OFFSET`
+unless `ENCODING` is `TILE_ENCODING_IRIS`, and that encoding is reserved and
+unused — so any file carrying the block claims an encoding no encoder
+produces. Confining that claim to one small variant keeps the witnesses
+conformant *and* representative. The block itself invents nothing: the schema
+says encoders write nothing beyond its universal header and readers ignore its
+contents.
+
+**Not split by tile encoding.** Measured across the whole field schema, the
+only thing that varies with encoding is the `ENCODING` byte; nothing else keys
+off it. A `corpus_AVIF` would differ from a `corpus_JPEG` by one enum byte in
+a repository whose scope excludes compression. Real AVIF bytes are Iris-Codec's
+evidence, not this layer's.
 
 Files are **hosted, not committed**: `iris.exampleslides.org` (Cloudflare R2)
 serves them, `manifest.json` pins each by SHA-256, and CMake fetches into the
@@ -47,7 +88,11 @@ corpus reproducible.
 ## `manifest.json`
 
 Per fixture: `url`, `size`, `sha256`, the IFE `version` it was written under,
-`kind`, and the `blocks` it covers.
+`kind`, `role`, and the `blocks` it covers.
+
+`role` is `"witness"` (the frozen per-version record), `"variant"` (a fixture
+that exists to carry something a witness cannot, currently only `CIPHER`), or
+`"fragment"`.
 
 `kind` is `"slide"` (a whole file, walkable from its file header) or
 `"fragment"` (a bare block, e.g. `v1_tile_offsets_full_width.bin`). It
@@ -62,30 +107,50 @@ and a block reached but undeclared is a manifest that has fallen behind its
 own evidence. Both fail. (The second is not hypothetical: the gate's first
 run found `TILE_PIXEL_DATA` present and undeclared.)
 
-Adding a fixture is a manifest entry plus an upload. The corpus is a living
-set: it grows with coverage and with each new IFE version.
+Adding a fixture is a manifest entry, an upload, **and a `data` entry in the
+`ife_corpus_tests` target in `tests/tests.bzl`**. That third step is easy to
+miss: CMake passes the corpus *directory*, so it picks up a new fixture with no
+build change, while Bazel builds a runfiles tree from an explicit list and the
+test fails to open a file that is not in it.
+
+The corpus is a living set: it grows with coverage and with each new IFE
+version.
 
 ## Coverage
 
-The two live fixtures reach **14 of the 18 block types** — a number now
-produced by `ife_corpus_tests` rather than counted by hand.
+The corpus reaches **18 of the 18 block types**, plus the optional tile frame
+(`TILE_FRAME`, a prefix rather than one of the 18). That number is produced by
+`ife_corpus_tests` from what it actually walked — never from what the manifest
+claims, so a fixture that fails to load subtracts from it instead of being
+credited with everything it declared.
 
-The remaining four are **not blocked on a missing capability**: the generated
-layer has a `CreateInfo` and a `store()` for every one of them (verified
-2026-08-18; the old "no group writer" note meant v1's writer, deleted in
-Phase 6). What is missing is a fixture that contains them.
+`TILE_FRAME` is worth a note: it carries no recovery tag and is addressed
+backward from the stream it precedes, so the offset graph has no edge leading
+to it and `generate_file_map` cannot see it at all. The harness unions in
+`recover_file_structure`, whose signature match does find it — which also means
+the corpus exercises the recovery path over real bytes, something nothing else
+did. See `CLAUDE.md` for why the frame grows backward.
 
-| Block | What it needs |
-|---|---|
-| `ANNOTATION_GROUP_SIZES`, `ANNOTATION_GROUP_BYTES` | a fixture with ≥1 named group |
-| `CLINICAL_METADATA` | a 1.1 fixture carrying a clinical stream |
-| framed `TILE_PIXEL_DATA` (`TILE_FRAME`) | a fixture whose tiles carry the 1.1 frame prefix |
-| `CIPHER` | ⚠ a decision first — the spec requires `TILE_ENCODING_IRIS`, which is reserved and unused, so any fixture would claim an encoding no encoder produces |
+**Optional values, not just optional blocks.** All eight nullable offsets are
+reached (five on `METADATA`, both `ANNOTATIONS` group offsets, and
+`CIPHER_OFFSET` in the variant), and the 1.1 witness now sets every 1.1
+optional *value* to something a default cannot fake:
 
-Worth encoding deliberately when fixtures are next produced: `NULL_TILE` slots
-(both published files are dense, so the sentinel is never exercised), a
-non-zero `FILE_REVISION`, tile encodings other than JPEG, and the 1.1 features
-— `Z_PLANES` > 1, a non-256 `TILE_LENGTH`, `MICRONS_PLANE`, and a tile frame.
+| Value | Setting | Why not the default |
+|---|---|---|
+| `TILE_TABLE.TILE_LENGTH` | 128 | zero *and* absence both mean 256, so an unset field cannot tell a decoder honouring it from one assuming the default |
+| `LAYER_EXTENT.Z_PLANES` | 3 | distinguishes "one plane" from "absent" |
+| `TILE_PIXEL_DATA.Z_PLANES` | 3, 0, 0 | a tile may carry fewer planes than its layer's maximum; only differing siblings expose a reader that takes the layer's value for the tile's |
+| `METADATA.MICRONS_PLANE` | 0.5 | — |
+| `TILE_OFFSETS` entry | one `NULL_TILE` | a sparse layer is the only thing that exercises the sentinel |
+| `FILE_REVISION` | 7 | not confirmed only at 0 |
+
+Reading the same fields on the 1.0 witness returns **absent** for every one of
+them, which is the version gate working on real bytes rather than on the
+synthetic 200.0 fixture.
+
+Still uncovered: tile encodings other than JPEG, and `clinical_encodings`
+values beyond `CLINICAL_HL7_V2`.
 
 Two things need no fixture. Slides over 4 GiB are covered by
 `ife_large_file_tests` (a 4.00 GiB sparse file, 28 KiB actually allocated), and
@@ -95,8 +160,8 @@ the s390x CI leg exercises the reader.
 ## Rules that are easy to get wrong
 
 * **Unreachable corpus fails; it does not skip.** `-DIFE_CORPUS=OFF` is the
-  explicit opt-out, and it disables only the corpus test — never the snapshot
-  fetch, which the oracle depends on.
+  explicit opt-out, and it disables only the corpus test — never the fetch,
+  which the oracle, the runtime tests and the >4 GiB test all depend on.
 * **The zone's bot protection rejects `Python-urllib`** (Cloudflare error
   1010). `tools/fetch_corpus.py` sends `ife-corpus-fetch/1.0`. Keep a
   non-default user agent if the host ever changes.

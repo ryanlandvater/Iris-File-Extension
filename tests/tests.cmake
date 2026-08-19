@@ -383,9 +383,33 @@ if(IFE_BUILD_TESTS)
     # times a year, so `cmake --build .` should not compile it. Build it
     # explicitly when regenerating the snapshot:
     #     cmake --build build --target ife_snapshot_writer
+    # The 1.1 corpus fixture writer. Built against the CURRENT generated
+    # layer, unlike ife_snapshot_writer below, which is deliberately built
+    # against the 1.0 baseline: 1.1 content cannot come out of a 1.0 schema,
+    # and the snapshot's content is pinned to the oracle's expectations.
+    # EXCLUDE_FROM_ALL for the same reason as the snapshot writer -- run by
+    # hand when a fixture is (re)generated:
+    #     cmake --build build --target ife_corpus_writer_11
+    add_executable(
+        ife_corpus_writer_11 EXCLUDE_FROM_ALL
+        ${PROJECT_SOURCE_DIR}/tests/ife_corpus_writer_11.cpp
+        ${IFE_GENERATED_SOURCES}
+    )
+    target_include_directories(
+        ife_corpus_writer_11 PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_corpus_writer_11 PRIVATE cxx_std_20)
+    target_link_libraries(ife_corpus_writer_11 PRIVATE ${IFE_Dependencies})
+    set_target_properties(ife_corpus_writer_11 PROPERTIES FOLDER "Tests")
+
     add_executable(
         ife_snapshot_writer EXCLUDE_FROM_ALL
         ${PROJECT_SOURCE_DIR}/tests/ife_snapshot_writer.cpp
+        # The BASELINE block layer, not ${IFE_GENERATED_SOURCES}: this writer
+        # emits 1.0 bytes and must link the 1.0 store()s that go with the 1.0
+        # headers it includes. Without it the target does not link at all --
+        # it is EXCLUDE_FROM_ALL, so that went unnoticed.
+        ${IFE_BASELINE_FIXTURE_DIR}/generated/IFE_Blocks.cpp
     )
     target_include_directories(
         ife_snapshot_writer PRIVATE ${IFE_INCLUDE_DIR}

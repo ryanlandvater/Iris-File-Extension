@@ -37,18 +37,19 @@ guards are not interchangeable:
 |---|---|---|
 | What it is | Every fact the spec puts on the wire — recovery tags, per-version field (name, type, width, offset), entry sizes, enum values, named constants — derived from `spec/*.json` through `generator.model.layout.derive_layout`, the same derivation the emitters use | Real files on disk, pinned by SHA-256, hosted on Cloudflare R2 |
 | When it runs | `python3 -m generator --validate` — before generation, before any C++ compiles, in CI | `ctest` — after a full build |
-| Coverage | **All 18 blocks, every version group, every enum member, every constant** | 13 of 18 block types, one instantiation each, written under 1.0 only — everything 1.1 added is invisible to it |
+| Coverage | **All 18 blocks, every version group, every enum member, every constant** | **All 18 block types**, plus the optional tile frame, across one frozen witness per version (1.0 and 1.1) and a `CIPHER` variant — so 1.1 additions are covered by real bytes, not only by the contract |
 | What it catches | Any shipped field moved, widened, retyped or removed; any enum or constant value changed | Anything that stops a real file decoding end-to-end — including derivation bugs the witness shares with the generator |
 | What it permits | Additions, silently — that is what append-only means | — |
 | Error it gives | Names the field and both offsets, e.g. `CHANGED blocks.TILE_TABLE.fields.1.0: 'X_EXTENT' ['u32', 4, 36] → ['u32', 4, 40]` | A failed test; the bisect is yours |
-| Refresh | Deliberate, reviewed, committed — exact command in `tests/wire/README.md` | A manifest entry plus an upload — see `tests/corpus/README.md` |
+| Refresh | Deliberate, reviewed, committed — exact command in `tests/wire/README.md` | A manifest entry, an upload, and a `data` entry in `tests/tests.bzl` — see `tests/corpus/README.md` |
 
 **Why both.** The witness is complete, precise, and instant, but it is
 derived from the same schema and the same `derive_layout` the generator uses —
 it can be wrong in exactly the way the code is wrong, and a shared bug passes
 both. The pinned corpus bytes are the one check that cannot be fooled by a
 reader and a writer agreeing with each other about the wrong thing. The
-corpus, in turn, is partial: it pins bytes, not the schema. **Contract first,
+corpus, in turn, pins bytes rather than the schema, and it checks that a block
+is *present and walkable*, not that every function of it behaves. **Contract first,
 bytes second**: the witness catches the schema edit at `--validate` time, the
 corpus catches what the implementation actually does at `ctest` time — and
 neither replaces the other.
@@ -66,6 +67,11 @@ neither replaces the other.
 4. Corpus bytes change only when coverage deliberately grows, as a manifest
    entry plus an upload in the same change. A rule-1-compliant edit never
    breaks a pinned file, so it never *requires* a corpus change.
+5. **A ratified version's witness is frozen.** Corpus fixtures are one witness
+   per IFE version; the newest is mutable while its version is draft and fixed
+   when it ratifies. Growing coverage adds a fixture, it does not rewrite a
+   shipped one — a rewritten 1.0 witness would delete the only real-bytes proof
+   that a current reader still reads 1.0 files.
 
 ## Build & test
 

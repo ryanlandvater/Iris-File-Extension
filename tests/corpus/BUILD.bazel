@@ -16,7 +16,9 @@ genrule(
         "//:tools/fetch_corpus.py",
     ],
     outs = [
-        "v1_snapshot.test_slide",
+        "v1_0_witness.test_slide",
+        "v1_1_witness.test_slide",
+        "cipher_iris.test_slide",
         "v1_tile_offsets_full_width.bin",
     ],
     cmd = PYTHON_RESOLVE +

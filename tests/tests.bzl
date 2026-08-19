@@ -75,14 +75,20 @@ def ife_tests(
         size = "small",
         includes = ["tests/fixtures/corpus"],
         deps = [ife, "@rules_cc//cc/runfiles"],
+        # EVERY fixture in the manifest, not a subset: this test iterates the
+        # whole manifest, so one missing from runfiles is a failure it reports
+        # rather than a fixture it skips. Adding a fixture means adding it
+        # here as well as to the manifest.
         data = [
-            "//tests/corpus:v1_snapshot.test_slide",
+            "//tests/corpus:v1_0_witness.test_slide",
+            "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:cipher_iris.test_slide",
             "//tests/corpus:v1_tile_offsets_full_width.bin",
         ],
-        # Both fixtures are read, so either runfiles path resolves to the
-        # directory holding both; pass the snapshot, as the other tests do.
+        # Any fixture's runfiles path resolves to the directory holding them
+        # all; pass the 1.0 witness, as the other tests do.
         local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/v1_snapshot.test_slide"],
+        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
 
     native.genrule(
@@ -228,13 +234,13 @@ def ife_tests(
         copts = copts,
         size = "small",
         deps = [ife, "@rules_cc//cc/runfiles"],
-        data = ["//tests/corpus:v1_snapshot.test_slide"],
+        data = ["//tests/corpus:v1_0_witness.test_slide"],
         # Bazel cannot pass a directory, and Windows tests have no runfiles
         # tree (manifest-only mode) — so pass the manifest-style path and
         # resolve it through the runfiles library in ife_corpus_dir().
         # "_main" is the main repo's runfiles directory name under bzlmod.
         local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/v1_snapshot.test_slide"],
+        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
 
     # Lifetime (XP-4): the abstraction reads over a lens of the caller's
@@ -254,12 +260,12 @@ def ife_tests(
         copts = copts,
         size = "small",
         deps = [ife, "@rules_cc//cc/runfiles"],
-        data = ["//tests/corpus:v1_snapshot.test_slide"],
+        data = ["//tests/corpus:v1_0_witness.test_slide"],
         # As ife_runtime_tests: Bazel cannot pass a directory, so pass the
         # manifest-style path of one corpus file and resolve it through the
         # runfiles library in ife_corpus_dir().
         local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/v1_snapshot.test_slide"],
+        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
 
     # The v1 oracle: bytes written by the SHIPPED encoder, read back through
@@ -277,13 +283,13 @@ def ife_tests(
         size = "small",
         deps = [ife, "@rules_cc//cc/runfiles"],
         data = [
-            "//tests/corpus:v1_snapshot.test_slide",
+            "//tests/corpus:v1_0_witness.test_slide",
             "//tests/corpus:v1_tile_offsets_full_width.bin",
         ],
         # Manifest-style path resolved via the runfiles library (see
         # ife_runtime_tests); "_main" is the main repo under bzlmod.
         local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/v1_snapshot.test_slide"],
+        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
 
     # A whole slide larger than 4 GiB. 64-bit hosts only, same as CMake.
@@ -313,13 +319,13 @@ def ife_tests(
             "//conditions:default": ["@platforms//:incompatible"],
         }),
         deps = [ife, "@rules_cc//cc/runfiles"],
-        data = ["//tests/corpus:v1_snapshot.test_slide"],
+        data = ["//tests/corpus:v1_0_witness.test_slide"],
         # "-" → $TEST_TMPDIR (see main()); corpus manifest path resolved via
         # the runfiles library like the other corpus tests.
         local_defines = ["IFE_BAZEL_RUNFILES"],
         args = [
             "-",
-            "_main/tests/corpus/v1_snapshot.test_slide",
+            "_main/tests/corpus/v1_0_witness.test_slide",
         ],
     )
 

@@ -216,7 +216,7 @@ void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __cor
     // shipped encoder wrote it.
     std::vector<Iris::BYTE> snapshot;
     {
-        std::FILE* in = std::fopen((__corpus_dir + "/v1_snapshot.test_slide").c_str(), "rb");
+        std::FILE* in = std::fopen((__corpus_dir + "/v1_0_witness.test_slide").c_str(), "rb");
         if (!in) {
             std::fprintf(stderr, "FAIL: no snapshot in %s\n", __corpus_dir.c_str());
             ++g_failures;

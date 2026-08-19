@@ -330,12 +330,43 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
         IFE_CHECK(std::memcmp(ab.data, spec.payload.data(), spec.payload.size()) == 0);
     }
 
-    // No groups: v1 has no group writer, so the honest value is NULL_OFFSET,
-    // and a reader must report absence rather than follow zero.
-    IFE_CHECK(!static_cast<bool>(an.group_sizes_offset()));
-    IFE_CHECK(an.group_sizes_offset().__offset == k::NULL_OFFSET);
-    IFE_CHECK(!static_cast<bool>(an.group_bytes_offset()));
-    IFE_CHECK(an.group_bytes_offset().__offset == k::NULL_OFFSET);
+    // The named groups. Both arrays are 1.0 fields and the witness carries
+    // them, so absence is no longer the expected answer -- what is checked is
+    // that each group's title and members slice out of one shared byte run at
+    // the boundary its sizes entry declares.
+    const auto gs = an.group_sizes_offset();
+    const auto gb = an.group_bytes_offset();
+    IFE_CHECK(static_cast<bool>(gs));
+    IFE_CHECK(static_cast<bool>(gb));
+    IFE_CHECK(gs.count() == expected.annotation_groups.size());
+
+    const auto group_run = gb.bytes();
+    ::IFE::Size run_at = 0;
+    for (std::size_t i = 0; i < expected.annotation_groups.size(); ++i) {
+        const auto& spec  = expected.annotation_groups[i];
+        const auto  entry = gs.entry(static_cast<std::uint32_t>(i));
+        IFE_CHECK(entry.title_size()   == spec.title.size());
+        IFE_CHECK(entry.member_count() == spec.members.size());
+
+        // Title, then one 24-bit identifier per member, packed with no
+        // separator -- the entry above is the only thing that says where one
+        // ends and the next begins.
+        IFE_CHECK(run_at + spec.title.size() <= group_run.size);
+        IFE_CHECK(std::memcmp(group_run.data + run_at, spec.title.data(),
+                              spec.title.size()) == 0);
+        run_at += spec.title.size();
+        for (const std::uint32_t id : spec.members) {
+            const ::IFE::BYTE* m = group_run.data + run_at;
+            const std::uint32_t decoded =
+                static_cast<std::uint32_t>(m[0]) |
+                (static_cast<std::uint32_t>(m[1]) << 8) |
+                (static_cast<std::uint32_t>(m[2]) << 16);
+            IFE_CHECK(decoded == id);
+            run_at += 3;
+        }
+    }
+    // The run holds the groups and nothing else.
+    IFE_CHECK(run_at == group_run.size);
 }
 
 // A bare TILE_OFFSETS array whose u40/u24 fields have every byte significant.
@@ -421,7 +452,7 @@ int main(int argc, const char* argv[]) {
     const std::string corpus_dir = ife_corpus_dir(argv[1]);
 
     v1_fixture::Expected expected;
-    const auto bytes = v1_fixture::load_snapshot(corpus_dir + "/v1_snapshot.test_slide", expected);
+    const auto bytes = v1_fixture::load_snapshot(corpus_dir + "/v1_0_witness.test_slide", expected);
     if (bytes.empty()) {
         std::fprintf(stderr, "ife_v1_oracle_tests: no snapshot in %s "
                              "(the corpus fetch runs at configure; see "

@@ -183,7 +183,33 @@ int main(int argc, char** argv) {
                                .PIXEL_HEIGHT = spec.height,
                                .PARENT_ID    = spec.parent});
     }
-    b::AnnotationsCreateInfo annotations_info{.entries = annotations};
+    // The named groups. Placed before the ANNOTATIONS block, which carries
+    // the offsets of both arrays; 1.0 fields, so they belong in the 1.0
+    // witness rather than waiting for a later version.
+    std::vector<b::AnnotationGroupSizeEntry> group_sizes;
+    std::vector<BYTE> group_bytes;
+    for (const auto& group : expected.annotation_groups) {
+        group_sizes.push_back(
+            {.TITLE_SIZE   = static_cast<std::uint16_t>(group.title.size()),
+             .MEMBER_COUNT = static_cast<std::uint32_t>(group.members.size())});
+        group_bytes.insert(group_bytes.end(), group.title.begin(), group.title.end());
+        // Identifiers are 24-bit, little-endian like everything else.
+        for (const std::uint32_t id : group.members) {
+            group_bytes.push_back(static_cast<BYTE>(id & 0xFF));
+            group_bytes.push_back(static_cast<BYTE>((id >> 8) & 0xFF));
+            group_bytes.push_back(static_cast<BYTE>((id >> 16) & 0xFF));
+        }
+    }
+    b::AnnotationGroupSizesCreateInfo group_sizes_info{.entries = group_sizes};
+    b::AnnotationGroupBytesCreateInfo group_bytes_info{
+        .bytes = group_bytes.data(), .count = group_bytes.size()};
+    const Offset group_sizes_at = place(b::size_of(group_sizes_info));
+    const Offset group_bytes_at = place(b::size_of(group_bytes_info));
+
+    b::AnnotationsCreateInfo annotations_info{
+        .GROUP_SIZES_OFFSET = group_sizes_at,
+        .GROUP_BYTES_OFFSET = group_bytes_at,
+        .entries            = annotations};
     const Offset annotations_at = place(b::size_of(annotations_info));
 
     // Tile pixel data last: unframed, simply a region the entries address.
@@ -254,6 +280,8 @@ int main(int argc, char** argv) {
             .bytes = reinterpret_cast<const BYTE*>(spec.payload.data()),
             .count = spec.payload.size()}));
     }
+    wrote("ANNOTATION_GROUP_SIZES", b::store(p, group_sizes_at, group_sizes_info));
+    wrote("ANNOTATION_GROUP_BYTES", b::store(p, group_bytes_at, group_bytes_info));
     wrote("ANNOTATIONS", b::store(p, annotations_at, annotations_info));
 
     wrote("METADATA", b::store(p, meta_at, b::MetadataCreateInfo{

@@ -16,7 +16,7 @@
 /// Resolve a test's corpus argument to a DIRECTORY, whichever form it came
 /// in. CMake/CTest passes the corpus directory itself; Bazel passes the
 /// manifest-style runfiles path of one corpus FILE (BUILD.bazel:
-/// "_main/tests/corpus/v1_snapshot.test_slide"), which is resolved through
+/// "_main/tests/corpus/v1_0_witness.test_slide"), which is resolved through
 /// the runfiles library — required on Windows. The directory is the resolved
 /// file's parent (both corpus files sit in the same runfiles directory). The
 /// directory case is unchanged behaviour for CTest.

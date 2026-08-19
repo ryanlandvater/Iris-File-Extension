@@ -21,6 +21,14 @@
  * every offset from the file header and reports a typed entry per block.
  * Writing a second walk here would just be a second thing to be wrong.
  *
+ * `recover_file_structure` runs too, and its types are unioned in. Two
+ * reasons. The offset graph cannot see a tile frame at all -- a frame carries
+ * no recovery tag and is addressed backward from the stream it precedes, so
+ * only the recovery scan's signature match finds one, and without this a
+ * framed fixture would be invisible to the gate. And it means the corpus
+ * exercises the recovery path over real bytes, which nothing else does: on a
+ * healthy file recovery should find a subset of the graph, and it does.
+ *
  * Fragments (a bare block, not a slide) cannot be walked from a file header,
  * so they are size-checked and excluded from coverage accounting rather than
  * silently credited. Digests are verified at fetch time by
@@ -131,8 +139,13 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
         return observed;
     }
 
-    const auto map =
-        ::IrisCodec::generate_file_map(bytes.data(), bytes.size());
+    // The offset graph, then the recovery scan; a block counts as reached if
+    // either finds it. See the file comment for why both are needed.
+    auto map = ::IrisCodec::generate_file_map(bytes.data(), bytes.size());
+    const auto recovered =
+        ::IrisCodec::recover_file_structure(bytes.data(), bytes.size());
+    for (const auto& [offset, entry] : recovered) map.emplace(offset, entry);
+
     for (const auto& [offset, entry] : map) {
         const char* name = manifest_name(entry.type);
         if (!name) {
@@ -151,11 +164,13 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
     return observed;
 }
 
-void test_fixture(const ife_corpus::Fixture& fixture,
-                  const std::string& corpus_dir) {
+/// Check one fixture; returns the block types actually observed in it, empty
+/// for anything that failed to load or was not walked.
+std::set<std::string> test_fixture(const ife_corpus::Fixture& fixture,
+                                   const std::string& corpus_dir) {
     const std::string path = std::string(corpus_dir) + "/" + fixture.name;
     std::vector<BYTE> bytes = read_whole_file(path);
-    if (bytes.empty()) return;
+    if (bytes.empty()) return {};
 
     // The manifest declares the size; fetch_corpus.py verifies the digest
     // before placing the file, so a size disagreement here means the cache
@@ -165,7 +180,7 @@ void test_fixture(const ife_corpus::Fixture& fixture,
                      "FAIL: %s: %zu bytes on disk, manifest declares %llu\n",
                      fixture.name, bytes.size(), fixture.size);
         ++g_failures;
-        return;
+        return {};
     }
 
     if (fixture.kind == ife_corpus::FIXTURE_FRAGMENT) {
@@ -174,12 +189,12 @@ void test_fixture(const ife_corpus::Fixture& fixture,
         // consumes it, and are deliberately NOT credited as coverage here.
         std::printf("  %-32s fragment, %llu B (not walked)\n",
                     fixture.name, fixture.size);
-        return;
+        return {};
     }
 
     const std::set<std::string> declared = declared_blocks(fixture);
     const std::set<std::string> observed = walk(fixture, bytes);
-    if (observed.empty()) return;  // walk() already reported why
+    if (observed.empty()) return {};  // walk() already reported why
 
     // Declared but not reached: the fixture has degraded, or was described
     // wrongly when it was hosted. Either way the corpus no longer proves what
@@ -208,6 +223,7 @@ void test_fixture(const ife_corpus::Fixture& fixture,
 
     std::printf("  %-32s slide, %llu B, %zu block types\n",
                 fixture.name, fixture.size, observed.size());
+    return observed;
 }
 
 }  // namespace
@@ -224,18 +240,28 @@ int main(int argc, char** argv) {
     std::set<std::string> reached;
     for (int i = 0; i < ife_corpus::fixture_count; ++i) {
         const auto& fixture = ife_corpus::fixtures[i];
-        test_fixture(fixture, corpus_dir);
-        if (fixture.kind == ife_corpus::FIXTURE_SLIDE) {
-            const auto declared = declared_blocks(fixture);
-            reached.insert(declared.begin(), declared.end());
-        }
+        // What the walk actually found, never what the manifest declared.
+        // Summing declared blocks credits coverage to a fixture that could
+        // not even be opened -- which is exactly what this printed, "18 of
+        // 18" beside two unopenable fixtures, before it was fixed.
+        const auto observed = test_fixture(fixture, corpus_dir);
+        reached.insert(observed.begin(), observed.end());
     }
 
     // The standing coverage number, printed rather than asserted: it is a
     // fact about how far the corpus has grown, and it grows by adding
     // fixtures (MIGRATION R-2), not by anything this test can do.
+    //
+    // TILE_FRAME is excluded from the count on purpose. It is the optional
+    // 11-byte prefix on a tile stream, not one of the 18 blocks the
+    // specification defines, so counting it would report 18/18 while a real
+    // block was still unreached -- which is the false green this whole test
+    // exists to prevent. It is reported on its own line instead.
+    const bool frame = reached.erase("TILE_FRAME") > 0;
     std::printf("ife_corpus_tests: corpus reaches %zu of 18 block types\n",
                 reached.size());
+    std::printf("ife_corpus_tests: tile frame (TILE_FRAME) %s\n",
+                frame ? "covered" : "NOT covered");
 
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);

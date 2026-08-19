@@ -1,13 +1,13 @@
 {
-  "v1_snapshot.test_slide": {
-    "url": "https://iris.exampleslides.org/spec-validation/v1_snapshot.test_slide",
-    "size": 3087,
-    "sha256": "1cf03729f9497b501c42c3b7fce62f5f10f0e10f15e89224b38968c7aecd41da",
+  "v1_0_witness.test_slide": {
+    "url": "https://iris.exampleslides.org/spec-validation/v1_0_witness.test_slide",
+    "size": 3151,
+    "sha256": "aab8dec8fa5588ca530b6bb21241034251278af7c1f72e47a6b6e1992d5bb346",
     "version": "1.0",
     "kind": "slide",
-    "written_by": "generated, 1.0 layout (tests/ife_snapshot_writer.cpp)",
-    "covers": "Nested attribute values: three ATTRIBUTES structures, the root carrying a text value, a two-item sequence, and an empty sequence. The nesting is on disk rather than only in memory, so the corpus exercises the KIND byte, the offset run, and the zero-item case against pinned bytes.",
-    "note": "Regenerated when the 1.0 correction took ATTRIBUTE_SIZE from six bytes to seven: a stride of six is no longer conformant, so the v1-written original (2857 B, sha256 658ead7c...) is rejected by the array validator. v1's writers were deleted in Phase 6, so this is written by the generated layer instead -- built against a 1.0-only schema derived by tests/fixtures/build_baseline_spec.py, because store() otherwise emits the newest version and the oracle's substance is a 1.1 reader over 1.0 bytes. It is 230 bytes larger than the original: one for the KIND field of the text attribute, and the rest for the nested content, which adds two attributes to the root and six blocks (three per sequence item, each item being a complete attributes structure). Those items are laid down before the byte run that names them, so the blocks after the attribute region no longer sit where v1 put them. What is lost relative to the original is the independent witness -- these bytes are now this implementation's own -- and what is kept is the pin: a schema edit that moves a shipped field breaks reading a file nobody regenerated.",
+    "role": "witness",
+    "written_by": "generated, 1.0 baseline layout (tests/ife_snapshot_writer.cpp)",
+    "covers": "Every block IFE 1.0 defines except CIPHER, which cannot appear in a conformant file whose ENCODING is not TILE_ENCODING_IRIS (see cipher_iris.test_slide). Frozen: this is the 1.0 version witness, and old-file/new-reader compatibility is proven against these bytes by ife_v1_oracle_tests.",
     "blocks": [
       "FILE_HEADER",
       "TILE_TABLE",
@@ -22,7 +22,70 @@
       "ICC_PROFILE",
       "ANNOTATIONS",
       "ANNOTATION_BYTES",
+      "ANNOTATION_GROUP_SIZES",
+      "ANNOTATION_GROUP_BYTES",
       "TILE_PIXEL_DATA"
+    ]
+  },
+  "v1_1_witness.test_slide": {
+    "url": "https://iris.exampleslides.org/spec-validation/v1_1_witness.test_slide",
+    "size": 832,
+    "sha256": "e93a201841311665e6068594e7b34b0a62dee286b5a9a70c617d1f293d437b1a",
+    "version": "1.1",
+    "kind": "slide",
+    "role": "witness",
+    "written_by": "generated, current 1.1 layout (tests/ife_corpus_writer_11.cpp)",
+    "covers": "Every block IFE 1.1 defines except CIPHER, plus the optional tile frame, and every 1.1 optional value at a non-default setting: TILE_LENGTH 128 (not the 256 that zero and absence both mean), layer Z_PLANES 3, per-stream frame Z_PLANES varying 3/0/0 (a tile may carry fewer planes than its layer's maximum), MICRONS_PLANE 0.5, and one NULL_TILE slot so the sentinel is exercised by a sparse layer. Mutable while 1.1 is draft; frozen when 1.1 ratifies.",
+    "blocks": [
+      "FILE_HEADER",
+      "TILE_TABLE",
+      "LAYER_EXTENTS",
+      "TILE_OFFSETS",
+      "METADATA",
+      "ATTRIBUTES",
+      "ATTRIBUTE_SIZES",
+      "ATTRIBUTE_BYTES",
+      "IMAGES",
+      "IMAGE_BYTES",
+      "ICC_PROFILE",
+      "ANNOTATIONS",
+      "ANNOTATION_BYTES",
+      "ANNOTATION_GROUP_SIZES",
+      "ANNOTATION_GROUP_BYTES",
+      "CLINICAL_METADATA",
+      "TILE_PIXEL_DATA",
+      "TILE_FRAME"
+    ]
+  },
+  "cipher_iris.test_slide": {
+    "url": "https://iris.exampleslides.org/spec-validation/cipher_iris.test_slide",
+    "size": 842,
+    "sha256": "7ddfa5aaf5da2ae17fd1b1801d02f734aa82aa3bd16f22ae945764afc10c997b",
+    "version": "1.1",
+    "kind": "slide",
+    "role": "variant",
+    "written_by": "generated, current 1.1 layout (tests/ife_corpus_writer_11.cpp --cipher)",
+    "covers": "The 1.1 witness plus CIPHER. Separate because CIPHER_OFFSET shall be NULL_OFFSET unless ENCODING is TILE_ENCODING_IRIS, which is reserved and unused -- so carrying the block costs a claim no real encoder makes, and that claim is confined to this file rather than spent on a witness.",
+    "blocks": [
+      "FILE_HEADER",
+      "TILE_TABLE",
+      "CIPHER",
+      "LAYER_EXTENTS",
+      "TILE_OFFSETS",
+      "METADATA",
+      "ATTRIBUTES",
+      "ATTRIBUTE_SIZES",
+      "ATTRIBUTE_BYTES",
+      "IMAGES",
+      "IMAGE_BYTES",
+      "ICC_PROFILE",
+      "ANNOTATIONS",
+      "ANNOTATION_BYTES",
+      "ANNOTATION_GROUP_SIZES",
+      "ANNOTATION_GROUP_BYTES",
+      "CLINICAL_METADATA",
+      "TILE_PIXEL_DATA",
+      "TILE_FRAME"
     ]
   },
   "v1_tile_offsets_full_width.bin": {
@@ -31,6 +94,7 @@
     "sha256": "b21ed7691f56b7ba4778f9472290b469b189a2e6c9b8145f7012f745376491aa",
     "version": "1.0",
     "kind": "fragment",
+    "role": "fragment",
     "blocks": [
       "TILE_OFFSETS"
     ]

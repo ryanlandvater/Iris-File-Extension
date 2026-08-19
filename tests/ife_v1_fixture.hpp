@@ -43,6 +43,15 @@ struct AnnotationSpec {
 /// spelling of Annotation::NULL_ID compiles against both.
 inline constexpr std::uint32_t NULL_ANNOTATION_ID = 16777215U;
 
+/// One named annotation group: a title, and the identifiers of the
+/// annotations belonging to it. The group byte array carries the title
+/// followed by one 24-bit identifier per member; the sizes entry is what
+/// says where the title ends, exactly as the attribute arrays work.
+struct AnnotationGroupSpec {
+    std::string                title;
+    std::vector<std::uint32_t> members;
+};
+
 /// One attribute whose value is a sequence of nested structures.
 ///
 /// `items` is a sequence in the DICOM sense: each item is a complete set of
@@ -72,6 +81,7 @@ struct Expected {
     std::string   attribute_value;
     std::vector<NestedAttributeSpec> nested_attributes;
     std::vector<AnnotationSpec> annotations;
+    std::vector<AnnotationGroupSpec> annotation_groups;
 };
 
 /// The values the fixture encodes. Pure data, so a test that cannot link the
@@ -131,10 +141,20 @@ inline Expected expectations() {
          .width = 32,  .height = 16,  .parent = 0x000303,
          .payload = "a plain-text annotation"},
     };
+    // Two groups, of different title lengths and different member counts.
+    // One group would not prove the byte run is sliced at all -- the reader
+    // could return the whole run and look correct -- and equal-sized groups
+    // would not prove the slice moves with the entry rather than by a fixed
+    // stride. The members name annotations that exist above, so a consumer
+    // resolving a group against the annotation set finds every one of them.
+    e.annotation_groups = {
+        {.title = "Tumor front", .members = {0x000101, 0x000202}},
+        {.title = "QC",          .members = {0x000404}},
+    };
     return e;
 }
 
-/// Load the snapshot file (`.deps/corpus/v1_snapshot.test_slide`) and the
+/// Load the snapshot file (`.deps/corpus/v1_0_witness.test_slide`) and the
 /// values v1 encoded into it. Empty on any I/O failure — callers must treat
 /// that as fatal, exactly as a missing corpus file is.
 std::vector<unsigned char> load_snapshot(const std::string& __path, Expected& __expected);
