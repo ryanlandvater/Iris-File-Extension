@@ -14,7 +14,7 @@
  * looks for. None of that is derivable from a byte layout.
  */
 
-#include "IFE_Runtime.hpp"
+#include "IrisFileExtension.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -403,16 +403,16 @@ Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, b::Visit
 
 // MARK: - Entry points
 
-bool IFE_EXPORT is_Iris_Codec_file(BYTE* const __base, size_t __size) {
+Result IFE_EXPORT is_iris_codec_file(const FileAccessInfo& __info) noexcept {
     // MAGIC is a `constant` field, so the generated layer validates it rather
     // than handing it back: FILE_HEADER::validate() checks the magic number,
     // the recovery tag, and that the header fits -- exactly the two loads v1
     // performed, plus the bounds check it had to be given separately.
-    return static_cast<bool>(root_at(__base, __size).validate());
+    return to_result(root_at(__info.file_ptr, __info.file_size).validate());
 }
 
-Result IFE_EXPORT validate_file_structure(BYTE* const __base, size_t __size) noexcept {
-    const b::FILE_HEADER header = versioned_root(__base, __size);
+Result IFE_EXPORT validate_file_structure(const FileAccessInfo& __info) noexcept {
+    const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
 
     // v1 validated the header, then the tile table, then the metadata, each
     // with validate_full, early-returning on failure. validate_deep does the
@@ -436,11 +436,11 @@ Result IFE_EXPORT validate_file_structure(BYTE* const __base, size_t __size) noe
     return to_result(b::Status{});
 }
 
-Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t __size) {
+Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __info) {
     using namespace Abstraction;
     File abstraction;
 
-    const b::FILE_HEADER header = versioned_root(__base, __size);
+    const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
     if (!header) fail(header.validate());
 
     abstraction.header = {.fileSize   = header.file_size(),
@@ -554,7 +554,7 @@ Abstraction::File IFE_EXPORT abstract_file_structure(BYTE* const __base, size_t 
             // encoded stream is the IMAGE_SIZE bytes that follow it.
             const Size  title_size = bytes.title_size();
             const auto  payload    = bytes.__offset + b::IMAGE_BYTES::header_size;
-            std::string label(reinterpret_cast<const char*>(__base + payload), title_size);
+            std::string label(reinterpret_cast<const char*>(__info.file_ptr + payload), title_size);
 
             AssociatedImage image;
             image.offset            = payload + title_size;
@@ -704,12 +704,12 @@ void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
 
 }  // namespace
 
-Abstraction::FileMap IFE_EXPORT generate_file_map(BYTE* const __base, size_t __size) {
+Abstraction::FileMap IFE_EXPORT generate_file_map(const FileAccessInfo& __info) {
     using namespace Abstraction;
     FileMap map;
-    map.file_size = __size;
+    map.file_size = __info.file_size;
 
-    const b::FILE_HEADER header = versioned_root(__base, __size);
+    const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
     if (!header) fail(header.validate());
     note(map, MAP_ENTRY_FILE_HEADER, header.__offset, b::FILE_HEADER::header_size);
 
@@ -805,10 +805,10 @@ Abstraction::MapEntryType entry_for(k::RecoveryCodes __tag) noexcept {
 
 }  // namespace
 
-Abstraction::FileMap IFE_EXPORT recover_file_structure(BYTE* const __base, size_t __size) {
+Abstraction::FileMap IFE_EXPORT recover_file_structure(const FileAccessInfo& __info) {
     using namespace Abstraction;
     FileMap map;
-    map.file_size = __size;
+    map.file_size = __info.file_size;
 
     // A block's signature is its VALIDATION field: a u64 holding the block's
     // own offset, immediately followed by a u16 recovery tag. Scanning for
@@ -822,16 +822,16 @@ Abstraction::FileMap IFE_EXPORT recover_file_structure(BYTE* const __base, size_
     // format does. So the same pass tests both widths at each position.
     constexpr Size FRAME_SIGNATURE = 5;
     constexpr Size SMALLEST = SIGNATURE < FRAME_SIGNATURE ? SIGNATURE : FRAME_SIGNATURE;
-    if (__size < SMALLEST) return map;
+    if (__info.file_size < SMALLEST) return map;
 
     // The scan has no file header to read a version from -- that header may be
     // the very thing that was lost -- so frames are read at the version this
     // build writes. Reading a frame from a *later* file still works: its
     // fields are laid out backward from the stream, so the ones this build
     // knows sit where they have always sat and the rest lie further back.
-    for (Offset at = 0; at < __size; ++at) {
-        if (at + SIGNATURE <= __size && ::IFE::load<uint64_t>(__base + at) == at) {
-            const auto tag = static_cast<k::RecoveryCodes>(::IFE::load<uint16_t>(__base + at + 8));
+    for (Offset at = 0; at < __info.file_size; ++at) {
+        if (at + SIGNATURE <= __info.file_size && ::IFE::load<uint64_t>(__info.file_ptr + at) == at) {
+            const auto tag = static_cast<k::RecoveryCodes>(::IFE::load<uint16_t>(__info.file_ptr + at + 8));
             if (const MapEntryType type = entry_for(tag); type != MAP_ENTRY_UNDEFINED) {
                 // Size is unknown without trusting fields the corruption may
                 // have reached, so record the header only. A caller builds the
@@ -841,13 +841,13 @@ Abstraction::FileMap IFE_EXPORT recover_file_structure(BYTE* const __base, size_
             }
         }
 
-        if (at + FRAME_SIGNATURE > __size) continue;
-        if (::IFE::load_u40(__base + at) != at) continue;
+        if (at + FRAME_SIGNATURE > __info.file_size) continue;
+        if (::IFE::load_u40(__info.file_ptr + at) != at) continue;
 
         // The frame must fit behind the stream it precedes; a match too near
         // the start of file is a coincidence, not a frame.
         const Offset stream_at = at + FRAME_SIGNATURE;
-        const b::TILE_PIXEL_DATA frame{__base, stream_at, __size, b::VERSION_WRITTEN};
+        const b::TILE_PIXEL_DATA frame{__info.file_ptr, stream_at, __info.file_size, b::VERSION_WRITTEN};
         if (!frame.validate()) continue;
 
         // Recorded with the stream's extent left at zero, as every other type

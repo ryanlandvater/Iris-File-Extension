@@ -7,7 +7,7 @@
  * exported symbols may not resolve at link time. This does both — one include
  * of the umbrella header, one call into the shared library.
  *
- * The buffer is deliberately not a slide. `is_Iris_Codec_file` bounds-checks
+ * The buffer is deliberately not a slide. `is_iris_codec_file` bounds-checks
  * its input and rejects it (the same rejection ife_runtime_tests pins over
  * random noise), so what is being checked here is that the call links and
  * runs, not what it decides. Reading real bytes is the test suite's job; this
@@ -24,7 +24,7 @@ int main() {
     // this type through a using-directive they bring themselves.
     std::array<Iris::BYTE, 64> not_a_slide{};
 
-    if (IrisCodec::is_Iris_Codec_file(not_a_slide.data(), not_a_slide.size())) {
+    if (IrisCodec::is_iris_codec_file({not_a_slide.data(), not_a_slide.size()})) {
         std::fputs("package smoke: 64 zero bytes were accepted as an Iris file\n", stderr);
         return 1;
     }

@@ -25,12 +25,13 @@
  #include <format>
  #include <filesystem>
  #include <cmath> 
- #ifdef IFE_USE_RUNTIME
- // The generated layer (Phase 4). This is the whole of the cutover for a
- // consumer: one include line. Everything below is unchanged.
- #include "IFE_Runtime.hpp"
- #elif defined BUILD_EXAMPLES_TEST
- // if CMake is building this to test the installation
+ // In tree the header is on the include path — whether this is the example
+ // target built against the runtime (IFE_USE_RUNTIME) or CMake building the
+ // example to test the installation (BUILD_EXAMPLES_TEST). Both took the same
+ // include once IFE_Runtime.hpp folded into the umbrella, so they share a
+ // branch rather than repeating one. An installed consumer gets the header
+ // from the package's own directory instead.
+ #if defined(IFE_USE_RUNTIME) || defined(BUILD_EXAMPLES_TEST)
  #include "IrisFileExtension.hpp"
  #else
  #include <Iris/IrisFileExtension.hpp>
@@ -85,7 +86,7 @@
          // ALWAYS VALIDATE the file structure before attempting to
          // read it. This will check the file against the IFE
          // Specfification to ensure adherence.
-         IrisCodec::validate_file_structure(ptr, size);
+         IrisCodec::validate_file_structure({ptr, size});
          std::cout << "Iris Slide file \"" << source_path
              << "\" successfully passed file validation.\n";
  
@@ -99,7 +100,7 @@
      try {
          using namespace IrisCodec::Abstraction;
  
-         auto slide = IrisCodec::abstract_file_structure(ptr, size);
+         auto slide = IrisCodec::abstract_file_structure({ptr, size});
          std::cout << "Slide File information:\n"
              << "\t Encoded using IFE Spec v"
              << (slide.header.extVersion >> 16) << "."

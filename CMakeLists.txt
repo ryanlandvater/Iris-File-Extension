@@ -95,7 +95,6 @@ endif()
 set (
     IFE_SourcesExport 
     ${IFE_INCLUDE_DIR}/IrisFileExtension.hpp
-    ${IFE_INCLUDE_DIR}/IFE_Runtime.hpp
     ${IFE_INCLUDE_DIR}/IFE_Bytes.hpp
     # The two Iris-Headers headers the public surface includes. IrisCore.hpp
     # and IrisCodecCore.hpp are runtime/codec concerns IFE does not use —
@@ -202,7 +201,7 @@ target_include_directories (
     ${IFE_IncludeDir}
 )
 # FetchContent consumers (Iris-Codec) include the PUBLIC headers —
-# IrisFileExtension.hpp → IFE_Runtime.hpp → generated IFE_Blocks.hpp — so
+# IrisFileExtension.hpp → generated IFE_Blocks.hpp — so
 # src/ and generated_source/ must be on the INTERFACE path too. priv/ stays
 # private on purpose: IrisMemory.hpp must not leak windows.h into consumers.
 # $<BUILD_INTERFACE:...>: the paths are build-tree absolute and must not be
@@ -352,7 +351,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/tests/tests.cmake)
 # generated layer straight into the executable, or link the object library,
 # so neither IFE_EXPORT nor IRIS_EXPORT should carry an attribute.
 #
-# IFE_EXPORT resolves correctly on its own (IFE_Runtime.hpp distinguishes
+# IFE_EXPORT resolves correctly on its own (IrisFileExtension.hpp distinguishes
 # "not exporting" from "importing"). IRIS_EXPORT is declared in Iris-Headers,
 # which still conflates the two: undefined, it becomes __declspec(dllimport)
 # on MSVC, and every use of Iris::Result or IrisCodec::AssociatedImageInfo

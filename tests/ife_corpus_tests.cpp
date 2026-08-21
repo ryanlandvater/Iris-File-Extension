@@ -36,7 +36,7 @@
  *
  * Self-contained; non-zero exit on failure.
  */
-#include "IFE_Runtime.hpp"
+#include "IrisFileExtension.hpp"
 
 #include "corpus_manifest.hpp"
 #include "ife_corpus_path.hpp"
@@ -64,7 +64,7 @@ using ::IrisCodec::Abstraction::MapEntryType;
 ///
 /// Deliberately a switch with no `default`: MapEntryType and the manifest
 /// vocabulary have to stay in step, and a new entry type must not silently
-/// map to "unknown" and pass. Adding one to IFE_Runtime.hpp and not here is
+/// map to "unknown" and pass. Adding one to IrisFileExtension.hpp and not here is
 /// a compiler diagnostic, which is where that mistake should surface.
 ///
 /// The two vocabularies differ in three places -- the map says TILE_DATA,
@@ -131,7 +131,7 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
     std::set<std::string> observed;
 
     const auto result =
-        ::IrisCodec::validate_file_structure(bytes.data(), bytes.size());
+        ::IrisCodec::validate_file_structure({bytes.data(), bytes.size()});
     if (result != ::Iris::IRIS_SUCCESS) {
         std::fprintf(stderr, "FAIL: %s: validation failed: %s\n",
                      fixture.name, result.message.c_str());
@@ -141,9 +141,9 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
 
     // The offset graph, then the recovery scan; a block counts as reached if
     // either finds it. See the file comment for why both are needed.
-    auto map = ::IrisCodec::generate_file_map(bytes.data(), bytes.size());
+    auto map = ::IrisCodec::generate_file_map({bytes.data(), bytes.size()});
     const auto recovered =
-        ::IrisCodec::recover_file_structure(bytes.data(), bytes.size());
+        ::IrisCodec::recover_file_structure({bytes.data(), bytes.size()});
     for (const auto& [offset, entry] : recovered) map.emplace(offset, entry);
 
     for (const auto& [offset, entry] : map) {

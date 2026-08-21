@@ -71,7 +71,6 @@ filegroup(
     name = "src_headers",
     srcs = [
         "include/IrisFileExtension.hpp",
-        "include/IFE_Runtime.hpp",
         "include/IFE_Bytes.hpp",
         "include/IFE_Window.hpp",
     ],

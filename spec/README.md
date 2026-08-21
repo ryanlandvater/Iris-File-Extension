@@ -126,7 +126,7 @@ to invent either a length prefix or a terminator, neither of which IFE has.
 
 JSON has no comment syntax, so both documents mark their section boundaries
 with **banner keys** — the same `// MARK: -` convention the hand-written
-headers use (`src/IFE_Runtime.hpp`). A banner is a key beginning
+headers use (`include/IrisFileExtension.hpp`). A banner is a key beginning
 `//`, whose value is a one-line description of the section that follows:
 
 | Document | Sections |

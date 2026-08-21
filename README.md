@@ -99,12 +99,12 @@ target_link_libraries (
 > [!WARNING]
 > When reading Iris slide files, you should **always validate** a slide before attempting to read data from it. 
 
-Validation will return an `Iris::Result` structure. In the event of failure `Iris::Result::message` will provide information about the failure. Validation requires the operating system's returned file size as part of the validation process and will fail if inaccurate. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](./src/IFE_Runtime.hpp) method.
+Validation will return an `Iris::Result` structure. In the event of failure `Iris::Result::message` will provide information about the failure. Validation requires the operating system's returned file size as part of the validation process and will fail if inaccurate. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](./include/IrisFileExtension.hpp) method.
 ```cpp
 size_t  size = GET_FILE_SIZE(file_handle);
 uint8_t* ptr = FILE_MAP(file_handle, size);
 
-auto  result = IrisCodec::validate_file_structure(ptr, size);
+auto  result = IrisCodec::validate_file_structure({ptr, size});
 
 if (result != IRIS_SUCCESS) {
     printf(result.message);
@@ -115,7 +115,7 @@ This method deep-validates the offset graph of the slide. If you prefer to valid
 
 
 ### Using Slide Abstraction
-The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](./src/IFE_Runtime.hpp), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
+The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](./include/IrisFileExtension.hpp), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
 > [!WARNING]
 > If you did not validate prior to abstraction, uncaught runtime exceptions will be thrown if the slide violates the standard. We leave how to deal with validation exceptions to your implementation, should they arise.  
 ```cpp
@@ -130,7 +130,7 @@ struct IrisCodec::Abstraction::File {
 ```cpp
 try {
     using namespace IrisCodec::Abstraction;
-    File file = abstract_file_structure ((uint8_t*)ptr, size);
+    File file = abstract_file_structure({(uint8_t*)ptr, size});
     std::cout   << "Encoded using IFE Spec v"
                 << (file.header.extVersion >> 16) << "."
                 << (file.header.extVersion & 0xFFFF) << std::endl;
@@ -193,9 +193,9 @@ struct FileMapEntry {
 ```cpp
 try {
     // Always validate the slide file first
-    IrisCodec::validate_file_structure(ptr, size);
-    // Then generate the slide map (src/IFE_Runtime.cpp). 
-    auto file_map = IrisCodec::generate_file_map((uint8_t*)ptr, size);
+    IrisCodec::validate_file_structure({ptr, size});
+    // Then generate the slide map (src/IFE_Runtime.cpp).
+    auto file_map = IrisCodec::generate_file_map({(uint8_t*)ptr, size});
 
     Offset write_location = //...some location you will write at;
     auto data_blocks_after = file_map.upper_bound(write_location);
