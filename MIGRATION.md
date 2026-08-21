@@ -23,7 +23,7 @@ vectors that own data being *written* are fine — the migration is about reads.
 | Current IFE pattern | Must become | Notes |
 |---|---|---|
 | `generated_source/IFE_Blocks.hpp` — per-block static layout tables | `std::span<const T>` accessors over the static arrays (the FastFHIR `reflected_fields_view` shape) | tables are already static/constexpr; expose spans, never copy |
-| `include/IFE_Runtime.hpp` — `Layer = std::vector<TileEntry>`, `Layers = std::vector<Layer>`, `AttributeSet = std::vector<AttributeNode>` | lazy spans over the resident `Window` bytes (resident mode), owning vectors only where data must outlive the window | the `Window::__pages` cache mode legitimately owns; span-ify the resident path |
+| `include/IrisFileExtension.hpp` — `Layer = std::vector<TileEntry>`, `Layers = std::vector<Layer>`, `AttributeSet = std::vector<AttributeNode>` | lazy spans over the resident `Window` bytes (resident mode), owning vectors only where data must outlive the window | the `Window::__pages` cache mode legitimately owns; span-ify the resident path |
 | `src/IFE_Runtime.cpp` — per-call `std::vector<AttributeSlice> slices` | parse into spans over the block, or reuse one buffer — no per-call allocation | measured cost of the vector pattern in FastFHIR: ~65% of `entries()`'s time was per-element `push_back` machinery at `-O0`; at `-O3` it is still a real per-call allocation on a path documented allocation-free |
 | `const std::vector<T>& entries` in the generated `*CreateInfo` structs | keep (write side, owns data) — but read it back through spans | `store()` reads `vector::size()`; that is the builder, not the read path |
 
@@ -1083,13 +1083,15 @@ currently carries.
       entry layouts, versioning semantics, validation rules. Plus
       `ife_header.json`, which Phase 1 did not anticipate: specification
       identity stated once so two documents cannot disagree about it.
-- [ ] **Doc-generation fields baked in from the start:** per-item `description`,
+- [x] **Doc-generation fields baked in from the start:** per-item `description`,
       normative clauses tagged shall/should/may, section anchors, cross
       references, units/ranges, equation hooks — everything Phase 5 needs so
-      the schema never needs a redesign for documentation. **Partial:**
-      `description`, `errata` and `unspecified` are carried; **no normative
-      clause tagging exists yet** — 4.6 step 2 is where it lands, and it must
-      stay inside the capped predicate vocabulary.
+      the schema never needs a redesign for documentation. **Done — clause
+      tagging landed via 4.6's capped predicate vocabulary** (range, enum
+      membership, ordering, non-null), each check emitting a sentence citing
+      its spec section; `description`, `errata` and `unspecified` are carried,
+      and section anchors are enforced by `generator/validate.py`. Equation
+      hooks stay prose-side (the deferred 2.1/2.2 markers), non-blocking.
 - [x] **Derivation rule:** byte offsets and block sizes are *never* stated in
       the JSON; they are derived from field order and type by consumers
       (generator and doc pipeline), eliminating transcription drift.
@@ -1113,22 +1115,21 @@ parity redesign — now XP-2 (P1, pending).
       runtime version checks are table-driven, not hand-threaded).
       `IFE_Constants.hpp`, `IFE_VTables.hpp`, `IFE_Blocks.hpp` + `.cpp`.
 - [ ] **Emitted binding surfaces** (stubs acceptable initially): field-key
-      tables for Python and WASM/Emscripten. **Not started** — Phase 6.
+      tables for Python and WASM/Emscripten. **Not started** — R-4 / R-5 (Phase 6).
 - [x] **Build integration:** configure-time generation when `generated_source/`
       is absent or `-DIFE_RUN_GENERATOR=ON`; CI check that
       regeneration is diff-clean; generator is stdlib-only Python.
       `CMakeLists.txt:110-137` and `.github/workflows/ci.yml`.
-- [ ] **`--check` parity, not byte-equality (future).** The current
-      `--check` is exact character equivalence: regenerate in memory, diff
-      against the on-disk files byte-for-byte. That gate is brittle — it
-      flags every *legitimate* change (a spec version bump, the banner's
+- [x] **`--check` parity, not byte-equality — DONE via XP-2 (2026-08-18).**
+      The old gate was exact character equivalence: regenerate in memory,
+      diff against the on-disk files byte-for-byte. That gate was brittle —
+      it flagged every *legitimate* change (a spec version bump, the banner's
       copyright year rolling over at New Year) as drift until regeneration,
-      and byte-equality cannot answer "was this produced from the current
-      spec?" Replace it with a generated-parity check: embed the schema
-      version (and a hash of the input JSON) in each output's banner, and
-      have `--check` verify the on-disk files carry the current version.
-      The gate then asks "is `generated_source/` in parity with `spec/`?"
-      instead of "is the diff empty?".
+      and byte-equality could not answer "was this produced from the current
+      spec?". XP-2 replaced it with a generated-parity check: each output's
+      banner embeds the witness hash, and `--check` verifies the on-disk
+      files carry the current one — the gate asks "is `generated_source/` in
+      parity with `spec/`?" instead of "is the diff empty?".
 
 **Exit:** regeneration byte-stable; generated headers compile standalone;
 CI drift gate green.
@@ -1143,13 +1144,14 @@ CI drift gate green.
       version-gated reads, all generated; `test_no_arg_validate_deep_on_every_block`
       executes every no-arg entry point, and the writer round-trip covers
       every store.
-- [ ] **Validation:** offset validation, recovery-tag checks, deep
+- [x] **Validation:** offset validation, recovery-tag checks, deep
       `validate_file_structure` equivalent, with error messages sourced from
-      the JSON's normative clauses. **Status (2026-08-12): generated
+      the JSON's normative clauses. **Done (2026-08-12 + 4.6):** generated
       validators + the runtime's `validate_file_structure` exist and pass
-      (`ife_validation_tests`); error messages are formatted by
-      `IFE_Runtime::to_result`, not sourced from the JSON's normative
-      clauses.**
+      (`ife_validation_tests`); structural messages are formatted by
+      `IFE_Runtime::to_result`, and clause-sourced messages live in the
+      attachable conformance layer (4.6). JSON-clause *structural*
+      diagnostics remain a non-blocking carry-forward.
 - [x] **Recovery — done (2026-08-12): IFE_Runtime's `generate_file_map` /
       `recover_file_structure`, covered by `ife_runtime_tests`:** file-map
       generation and corruption-recovery scan
@@ -1159,14 +1161,20 @@ CI drift gate green.
       `IFE_USE_FASTFHIR_SUBSTRATE` option are removed; the substrate belongs
       to Iris-Codec ('how'), not the spec ('what'). No dormant half-features
       remain.
-- [ ] **Public API:** define the generated surface (successor to
+- [x] **Public API:** define the generated surface (successor to
       `validate_file_structure` / `abstract_file_structure` /
       `Serialization::` / `Abstraction::`), designed with Iris-Codec's
       consumption in mind; legacy v1 API retired on a coordinated schedule
-      (Phase 6).
-- [ ] **Tests:** unit tests per block; multi-threaded write stress (TSan);
+      (Phase 6). **Done:** the exported surface is `include/IrisFileExtension.hpp`
+      (entry points + `Abstraction::` structs, 4.4); v1 retired (6.1–6.7);
+      restyled 2026-08-21 to the single-argument `FileAccessInfo` form.
+- [x] **Tests:** unit tests per block; multi-threaded write stress (TSan);
       corrupted-input fuzzing of the validators; round-trip
-      encode→validate→decode property tests.
+      encode→validate→decode property tests. **Done except the carried
+      items:** per-block unit tests (`ife_blocks_tests`, header-only and
+      compiled), writer round-trips, and the v1-oracle/1.1-witness property
+      tests all pass; TSan and fuzzing remain in the non-blocking
+      carry-forward ("Not blocking the release").
 
 **Exit:** a file can be encoded, validated, mapped, recovered, and decoded
 entirely through generated-layer code; test suite green including TSan.
@@ -2135,7 +2143,7 @@ branches (21 in the header, 95 in the `.cpp`). Generated code must contain
 - **Done when:** `grep -c __EMSCRIPTEN__ generated_source/*.hpp` is 0, and the
   WASM branch exists in exactly one translation unit.
 
-#### 4.4 — `src/IFE_Runtime.hpp` / `.cpp` — semantic layer and public API — ✅ DONE
+#### 4.4 — `include/IrisFileExtension.hpp` / `src/IFE_Runtime.cpp` — semantic layer and public API — ✅ DONE
 
 The four v1 entry points, the `Abstraction::` structs, and `recover_file_structure`
 (new), on top of the generated handles. Every byte offset, every `LOAD_U*`, every
@@ -2150,21 +2158,22 @@ runtime fails both it and `ife_runtime_tests`.
 
 Three things the port forced that the task text did not anticipate:
 
-- **The two layers are mutually exclusive, at compile *and* link time.** Both
-  define `IrisCodec::Abstraction` and the same four entry points — which is
-  exactly what makes the cutover a one-line include change — so they cannot
-  share a translation unit or a binary. `IFE_Runtime.hpp` says so with an
-  `#error`, and `IFE_Runtime.cpp` is deliberately **not** in
-  `IrisFileExtensionLib` until Phase 6 removes v1. It is why the runtime tests
-  take their fixture from a separate *process* (`ife_v1_slide_writer`) rather
-  than a linked function.
+- **The two layers were mutually exclusive, at compile *and* link time.** Both
+  defined `IrisCodec::Abstraction` and the same four entry points — which is
+  exactly what made the cutover a one-line include change — so they could not
+  share a translation unit or a binary. The retired `IFE_Runtime.hpp` said so
+  with an `#error`, and `IFE_Runtime.cpp` stayed out of `IrisFileExtensionLib`
+  until Phase 6 removed v1; the guard died with the retirement (6.7), and
+  `IFE_Runtime.cpp` now compiles into the library. It is why the runtime tests
+  took their fixture from a separate *process* (`ife_v1_slide_writer`, itself
+  deleted by 6.3) rather than a linked function.
 - **`FileMapEntry::datablock` could not carry over.** Its type was
   `Serialization::DATA_BLOCK`, a class that dies with v1, and there is nothing
   to `static_cast` to: a generated handle is *constructed* from an offset, not
   downcast. The entry now carries `{type, offset, size}` and the caller builds
   whichever handle it wants — strictly more capable, and the only place a
   consumer's code changes at the cutover.
-- **`is_Iris_Codec_file` is `validate()`, not two loads.** `MAGIC` is a
+- **`is_iris_codec_file` is `validate()`, not two loads.** `MAGIC` is a
   `constant` field, so the generated layer checks it rather than exposing an
   accessor; `FILE_HEADER::validate()` is exactly v1's two checks plus the
   bounds check v1 had to be given separately.
@@ -2573,7 +2582,8 @@ custom preprocessor in the pipeline.
 
 ## Phase 6 — Ecosystem cutover & release
 
-- [ ] **Conformance corpus — infrastructure done, harness not built.** Live
+- [x] **Conformance corpus — infrastructure and harness built (R-1/R-2,
+      2026-08-18/19).** The corpus reaches 18 of 18 block types. Live
       plan in [§Conformance corpus](#conformance-corpus--live-plan) below.
       The published
       [Iris-Example-Files](https://github.com/IrisDigitalPathology/Iris-Example-Files)
@@ -2596,6 +2606,12 @@ custom preprocessor in the pipeline.
 
       **Remaining:** write the harness (5 steps, §Conformance corpus →
       Harness); encode fixtures for the five ⚠ blocks.
+
+      **Superseded (2026-08-19) — the harness is built (R-1/R-2):**
+      `tests/ife_corpus_tests.cpp` walks each fixture with `generate_file_map`
+      and `recover_file_structure` and compares reached against declared in
+      both directions, and the five-block gap closed with the `v1_1_witness`
+      and `cipher_iris` fixtures — 18 of 18 blocks, ctest 15/15.
 - [x] **Iris-Codec coordinated update — done (2026-08-18):** the primary
       consumer builds against the generated API, boundary unchanged (structure
       here, compression/API there). The consumer-facing namespace question
@@ -2632,12 +2648,15 @@ custom preprocessor in the pipeline.
       machine-readable precisely so that implementations need not all look
       alike.
 
-      **Bind the `Abstraction::` methods** — `is_Iris_Codec_file`,
+      **Bind the `Abstraction::` methods** — `is_iris_codec_file`,
       `validate_file_structure`, `abstract_file_structure`,
       `generate_file_map`, `recover_file_structure`, and the `Abstraction::`
-      structs. That is the same surface the C++ shared library exports, so the
-      binding and the linked library present one API in two languages rather
-      than two APIs.
+      structs. Each entry point takes a single `const FileAccessInfo&`
+      (mapped pointer + size — the Vulkan-shaped info struct), which the
+      binding presents as one Python object rather than two arguments. That
+      is the same surface the C++ shared library exports, so the binding and
+      the linked library present one API in two languages rather than two
+      APIs.
 
       **This costs the C++ ABI nothing**, which is worth stating because it
       looks like it should. The export decision keeps `IFE::blocks` out of the
@@ -2934,6 +2953,18 @@ missing `INSTALL_INTERFACE` include dirs on the shared/static targets, and
 the header-only route's need for `IFE_Blocks.cpp` alongside the headers —
 the installed form of decision D, since the block layer is deliberately
 unexported and `IFE_HEADER_ONLY` folds that `.cpp` into the header.
+
+> **Follow-up (2026-08-21) — the fold went one step further.** `IFE_Runtime.hpp`
+> was folded into `IrisFileExtension.hpp` and deleted; the umbrella is now the
+> single public header, and the exported surface again has one home (the
+> 4-line passthrough earned nothing). In the same pass the entry points were
+> restyled to the Vulkan-shaped single-argument form — each takes
+> `const IrisCodec::FileAccessInfo&` (mapped pointer + size), call sites are
+> `func({ptr, size})` — and `is_Iris_Codec_file` became `is_iris_codec_file`,
+> returning `Iris::Result` and `noexcept` like `IrisCodecCore.hpp`'s.
+> Installed surface: `IrisFileExtension.hpp`, `IFE_Bytes.hpp`,
+> `IFE_Blocks.hpp`, `IrisTypes.hpp`, `IrisCodecTypes.hpp`. `IFE_Runtime.cpp`
+> keeps its name — it is the implementation.
 
 **Verified first in a scratch workspace, then shipped.** The
 `IrisCodec::Serialization` namespace round-trips all 18 block kinds through
