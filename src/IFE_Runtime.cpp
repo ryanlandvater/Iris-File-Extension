@@ -1,17 +1,16 @@
 /**
  * @file IFE_Runtime.cpp
- * @brief The semantic layer, ported onto the generated block handles.
+ * @brief The semantic layer on the generated block handles.
  * @copyright Iris Developers, 2025-2026
  *
- * What disappeared relative to the retired hand-written layer, and why the port is
- * worth the churn: every byte offset, every `LOAD_U*`, every hand-threaded
- * `if (__version > IRIS_EXTENSION_1_0); else goto ...`, and every
- * `#ifdef __EMSCRIPTEN__`. A reader body here is a sequence of accessor calls.
+ * A reader body here is a sequence of accessor calls over generated handles:
+ * no byte offsets, no `LOAD_U*`, no hand-threaded version branches, no
+ * `#ifdef __EMSCRIPTEN__`.
  *
- * What stays hand-written is the part that is genuinely semantic: the
- * traversal order, which blocks are optional, how a flat tile-offset array is
- * split across layers, the downsample computation, and what a recovery scan
- * looks for. None of that is derivable from a byte layout.
+ * The part that is genuinely semantic stays hand-written: the traversal
+ * order, which blocks are optional, how a flat tile-offset array is split
+ * across layers, the downsample computation, and what a recovery scan looks
+ * for. None of that is derivable from a byte layout.
  */
 
 #include "IrisFileExtension.hpp"
@@ -93,7 +92,7 @@ Result to_result(const b::Status& __status) noexcept try {
 
 /// The root handle. Its own version is unknowable until it has been read, so
 /// it is constructed with UINT32_MAX — every gate open for exactly one block —
-/// exactly as v1's FILE_HEADER constructor did.
+/// which lets it read its own version field.
 b::FILE_HEADER root_at(const BYTE* __base, size_t __size) noexcept {
     return b::FILE_HEADER{__base, 0, __size, UINT32_MAX};
 }
@@ -406,18 +405,16 @@ Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, b::Visit
 Result IFE_EXPORT is_iris_codec_file(const FileAccessInfo& __info) noexcept {
     // MAGIC is a `constant` field, so the generated layer validates it rather
     // than handing it back: FILE_HEADER::validate() checks the magic number,
-    // the recovery tag, and that the header fits -- exactly the two loads v1
-    // performed, plus the bounds check it had to be given separately.
+    // the recovery tag, and that the header fits within the file.
     return to_result(root_at(__info.file_ptr, __info.file_size).validate());
 }
 
 Result IFE_EXPORT validate_file_structure(const FileAccessInfo& __info) noexcept {
     const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
 
-    // v1 validated the header, then the tile table, then the metadata, each
-    // with validate_full, early-returning on failure. validate_deep does the
-    // same walk plus cycle detection, and follows edges leaving array entries
-    // as well as block headers -- which v1's chain did not.
+    // validate_deep walks the header, the tile table, and the metadata with
+    // cycle detection, following edges that leave array entries as well as
+    // block headers.
     if (const b::Status status = header.validate_deep(); !status) return to_result(status);
 
     // Then the one part of the graph the generated walk cannot see: the

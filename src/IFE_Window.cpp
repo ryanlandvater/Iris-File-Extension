@@ -54,9 +54,7 @@ const BYTE* Window::map(Offset __offset, Size __request) {
 
     // Fetch exactly what was asked for. Deliberately no read-ahead: the
     // runtime knows its access pattern and this layer does not, so guessing
-    // here would be policy in the wrong place. v1 instead fetched each block
-    // twice - once for the header, once at full size - because it discovered
-    // the size only after reading the header.
+    // here would be policy in the wrong place.
     Page page;
     page.begin = __offset;
     page.size  = __request;
@@ -80,10 +78,9 @@ const BYTE* Window::map(Offset __offset, Size __request) {
 #include <cstdlib>
 #include <string>
 
-// Bridges to JavaScript's fetch, appearing synchronous to C++ via Asyncify.
-// The mechanism is v1's, verbatim in shape: issue a ranged request, write the
-// status and length back through pointers, return a malloc'd payload the
-// caller frees.
+// Bridges to JavaScript's fetch, appearing synchronous to C++ via Asyncify:
+// issue a ranged request, write the status and length back through pointers,
+// return a malloc'd payload the caller frees.
 EM_ASYNC_JS(int, ife_fetch_range_async,
             (const char* url_ptr, const char* range_ptr, int* size_ptr, int* status_ptr), {
     const url_js   = UTF8ToString(url_ptr);

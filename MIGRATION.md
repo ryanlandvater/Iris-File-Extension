@@ -1120,16 +1120,11 @@ parity redesign — now XP-2 (P1, pending).
       is absent or `-DIFE_RUN_GENERATOR=ON`; CI check that
       regeneration is diff-clean; generator is stdlib-only Python.
       `CMakeLists.txt:110-137` and `.github/workflows/ci.yml`.
-- [x] **`--check` parity, not byte-equality — DONE via XP-2 (2026-08-18).**
-      The old gate was exact character equivalence: regenerate in memory,
-      diff against the on-disk files byte-for-byte. That gate was brittle —
-      it flagged every *legitimate* change (a spec version bump, the banner's
-      copyright year rolling over at New Year) as drift until regeneration,
-      and byte-equality could not answer "was this produced from the current
-      spec?". XP-2 replaced it with a generated-parity check: each output's
-      banner embeds the witness hash, and `--check` verifies the on-disk
-      files carry the current one — the gate asks "is `generated_source/` in
-      parity with `spec/`?" instead of "is the diff empty?".
+- [x] **`--check` parity, not byte-equality — done via XP-2 (2026-08-18).**
+      The gate is a generated-parity check: each output's banner embeds the
+      witness hash, and `--check` verifies the on-disk files carry the
+      current one — asking "is `generated_source/` in parity with `spec/`?"
+      rather than whether the diff is empty.
 
 **Exit:** regeneration byte-stable; generated headers compile standalone;
 CI drift gate green.
@@ -1166,8 +1161,7 @@ CI drift gate green.
       `Serialization::` / `Abstraction::`), designed with Iris-Codec's
       consumption in mind; legacy v1 API retired on a coordinated schedule
       (Phase 6). **Done:** the exported surface is `include/IrisFileExtension.hpp`
-      (entry points + `Abstraction::` structs, 4.4); v1 retired (6.1–6.7);
-      restyled 2026-08-21 to the single-argument `FileAccessInfo` form.
+      (entry points + `Abstraction::` structs, 4.4); v1 retired (6.1–6.7).
 - [x] **Tests:** unit tests per block; multi-threaded write stress (TSan);
       corrupted-input fuzzing of the validators; round-trip
       encode→validate→decode property tests. **Done except the carried
@@ -2158,15 +2152,14 @@ runtime fails both it and `ife_runtime_tests`.
 
 Three things the port forced that the task text did not anticipate:
 
-- **The two layers were mutually exclusive, at compile *and* link time.** Both
+- **The two layers were mutually exclusive at compile and link time.** Both
   defined `IrisCodec::Abstraction` and the same four entry points — which is
   exactly what made the cutover a one-line include change — so they could not
-  share a translation unit or a binary. The retired `IFE_Runtime.hpp` said so
-  with an `#error`, and `IFE_Runtime.cpp` stayed out of `IrisFileExtensionLib`
-  until Phase 6 removed v1; the guard died with the retirement (6.7), and
-  `IFE_Runtime.cpp` now compiles into the library. It is why the runtime tests
-  took their fixture from a separate *process* (`ife_v1_slide_writer`, itself
-  deleted by 6.3) rather than a linked function.
+  share a translation unit or a binary while v1 existed. An `#error` in the
+  header enforced the split, `IFE_Runtime.cpp` stayed out of
+  `IrisFileExtensionLib`, and the runtime tests took their fixture from a
+  separate *process* (`ife_v1_slide_writer`) rather than a linked function.
+  Both mechanisms were removed with v1 in 6.3/6.7.
 - **`FileMapEntry::datablock` could not carry over.** Its type was
   `Serialization::DATA_BLOCK`, a class that dies with v1, and there is nothing
   to `static_cast` to: a generated handle is *constructed* from an offset, not
@@ -2592,26 +2585,16 @@ custom preprocessor in the pipeline.
       coverage rather than replace it. Purpose-built `.test_slide` fixtures,
       hosted rather than committed, pinned by digest in a committed manifest.
 
-      **Standing (audited 2026-08-18).** The delivery half is live:
-      `tests/corpus/manifest.json` pins two hosted fixtures by SHA-256,
+      **Standing.** The delivery half is live:
+      `tests/corpus/manifest.json` pins the hosted fixtures by SHA-256,
       `tools/fetch_corpus.py` fetches them at configure into `.deps/corpus/`,
-      and CI caches by manifest digest. What does not exist is
-      `tests/ife_corpus_tests.cpp`: there is no corpus *target*. Four tests
-      (`ife_runtime_tests`, `ife_lifetime_tests`, `ife_v1_oracle_tests`,
-      `ife_large_file_tests`) consume the fetched bytes as a fixture, which is
-      not the same thing — nothing walks the manifest and asserts that the
-      coverage a fixture *claims* was actually observed. That is step 4 of the
-      harness, and the section below calls it the step that keeps the corpus
-      honest. Five of 18 block types remain unreached.
-
-      **Remaining:** write the harness (5 steps, §Conformance corpus →
-      Harness); encode fixtures for the five ⚠ blocks.
-
-      **Superseded (2026-08-19) — the harness is built (R-1/R-2):**
-      `tests/ife_corpus_tests.cpp` walks each fixture with `generate_file_map`
-      and `recover_file_structure` and compares reached against declared in
-      both directions, and the five-block gap closed with the `v1_1_witness`
-      and `cipher_iris` fixtures — 18 of 18 blocks, ctest 15/15.
+      and CI caches by manifest digest. `tests/ife_corpus_tests.cpp` walks each
+      fixture with `generate_file_map` and `recover_file_structure` and
+      compares reached against declared in both directions — the manifest
+      cannot claim coverage the walk did not observe. The corpus reaches 18 of
+      18 block types across the `v1_0_witness`, `v1_1_witness` and
+      `cipher_iris` fixtures; four other tests consume the fetched bytes as a
+      fixture as well.
 - [x] **Iris-Codec coordinated update — done (2026-08-18):** the primary
       consumer builds against the generated API, boundary unchanged (structure
       here, compression/API there). The consumer-facing namespace question
@@ -2652,11 +2635,10 @@ custom preprocessor in the pipeline.
       `validate_file_structure`, `abstract_file_structure`,
       `generate_file_map`, `recover_file_structure`, and the `Abstraction::`
       structs. Each entry point takes a single `const FileAccessInfo&`
-      (mapped pointer + size — the Vulkan-shaped info struct), which the
-      binding presents as one Python object rather than two arguments. That
-      is the same surface the C++ shared library exports, so the binding and
-      the linked library present one API in two languages rather than two
-      APIs.
+      (mapped pointer + size — the Vulkan-shaped info struct), bound as one
+      Python object. That is the same surface the C++ shared library exports,
+      so the binding and the linked library present one API in two languages
+      rather than two APIs.
 
       **This costs the C++ ABI nothing**, which is worth stating because it
       looks like it should. The export decision keeps `IFE::blocks` out of the
@@ -2953,18 +2935,6 @@ missing `INSTALL_INTERFACE` include dirs on the shared/static targets, and
 the header-only route's need for `IFE_Blocks.cpp` alongside the headers —
 the installed form of decision D, since the block layer is deliberately
 unexported and `IFE_HEADER_ONLY` folds that `.cpp` into the header.
-
-> **Follow-up (2026-08-21) — the fold went one step further.** `IFE_Runtime.hpp`
-> was folded into `IrisFileExtension.hpp` and deleted; the umbrella is now the
-> single public header, and the exported surface again has one home (the
-> 4-line passthrough earned nothing). In the same pass the entry points were
-> restyled to the Vulkan-shaped single-argument form — each takes
-> `const IrisCodec::FileAccessInfo&` (mapped pointer + size), call sites are
-> `func({ptr, size})` — and `is_Iris_Codec_file` became `is_iris_codec_file`,
-> returning `Iris::Result` and `noexcept` like `IrisCodecCore.hpp`'s.
-> Installed surface: `IrisFileExtension.hpp`, `IFE_Bytes.hpp`,
-> `IFE_Blocks.hpp`, `IrisTypes.hpp`, `IrisCodecTypes.hpp`. `IFE_Runtime.cpp`
-> keeps its name — it is the implementation.
 
 **Verified first in a scratch workspace, then shipped.** The
 `IrisCodec::Serialization` namespace round-trips all 18 block kinds through

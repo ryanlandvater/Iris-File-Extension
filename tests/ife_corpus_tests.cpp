@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
 
     // The standing coverage number, printed rather than asserted: it is a
     // fact about how far the corpus has grown, and it grows by adding
-    // fixtures (MIGRATION R-2), not by anything this test can do.
+    // fixtures, not by anything this test can do.
     //
     // TILE_FRAME is excluded from the count on purpose. It is the optional
     // 11-byte prefix on a tile stream, not one of the 18 blocks the

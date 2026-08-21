@@ -79,7 +79,14 @@
      std::uint8_t* ptr = nullptr;
      std::size_t size = 0;
      try {
-         arena = Iris::MemoryArena::create_from_file_read_only(source_path);
+         // Mapping reports through Iris::Result instead of throwing; the try
+         // block remains for the validation and abstraction calls below.
+         const Iris::Result mapped = Iris::create_memory_arena(
+             {.filepath = source_path, .read_only = true}, arena);
+         if (!mapped) {
+             std::cerr << "Failed to map the slide file: " << mapped.message << "\n";
+             return EXIT_FAILURE;
+         }
          ptr = arena.base();
          size = arena.capacity();
  

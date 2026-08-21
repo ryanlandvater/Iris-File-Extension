@@ -164,7 +164,12 @@ public:
     SparseFile(const std::string& __path, std::uint64_t __size)
         : _path(__path) {
         if (!create_empty_file(__path)) return;
-        _arena = Iris::MemoryArena::create_from_file(__path, __size);
+        // A mapping failure now leaves _arena empty, so ok() reports it. It
+        // used to escape this constructor as an uncaught std::system_error --
+        // ok() only ever covered the create_empty_file path above.
+        const Iris::Result made = Iris::create_memory_arena(
+            {.capacity = __size, .filepath = __path}, _arena);
+        if (!made) std::fprintf(stderr, "  arena: %s\n", made.message.c_str());
     }
 
     ~SparseFile() {

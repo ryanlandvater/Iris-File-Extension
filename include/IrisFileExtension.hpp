@@ -12,15 +12,12 @@
  * Everything below it (offsets, widths, validation, block navigation) comes
  * from the spec JSON through generated_source/.
  *
- * The `IrisCodec::Abstraction` structs below are structurally identical to the
- * ones the retired hand-written layer defined — they are the data model every
- * consumer reads, and a change to one is a change to all of them.
+ * The `IrisCodec::Abstraction` structs below are the data model every consumer
+ * reads — a change to one is a change to all of them.
  *
- * The entry points are deliberately *not* v1's. They carry the house API shape
- * instead: snake_case names, one `FileAccessInfo` in place of a (pointer, size)
- * pair, and `Result` rather than a bare bool. That is a source break by
- * construction, so Iris-Codec moves with it in the same change — the two
- * repositories version in lockstep, which is what makes such a break payable.
+ * The entry points carry the house API shape: snake_case names, a single
+ * `FileAccessInfo` argument (mapped pointer + size), and `Result` returns.
+ * Iris-Codec consumes this surface directly.
  */
 
 #ifndef IRIS_FILE_EXTENSION_HPP
@@ -41,11 +38,10 @@
 // CMakeLists.txt); consumers of a separately built shared library set
 // IFE_IMPORT_API=true.
 //
-// This lives here rather than in a header of its own: it was extracted from
-// the retired hand-written layer so both layers could share one definition,
-// but the generated layer never exports (decision D — the block layer is
-// deliberately out of the shared library), so IrisFileExtension.hpp — the
-// only header with exported symbols — is the single home that remains.
+// This lives here rather than in a header of its own: this is the only
+// header with exported symbols. The generated layer never exports (decision D
+// — the block layer is deliberately out of the shared library), so the
+// visibility scheme needs exactly one home.
 #ifndef IFE_EXPORT_API
 #define IFE_EXPORT_API      false
 #endif
@@ -383,12 +379,9 @@ enum IFE_EXPORT MapEntryType {
 /**
  * @brief A datablock within the IFE file structure system.
  *
- * **The one member that could not be carried over verbatim.** v1's entry held
- * a `Serialization::DATA_BLOCK` — a class that dies with the hand-written
- * layer — which a caller then `static_cast` to the concrete block type to read
- * it. There is no successor to cast to: a generated handle is constructed from
- * an offset, not downcast from a base. So the entry carries the offset and the
- * type, and a caller builds the handle it wants:
+ * The entry carries the offset and the type; a caller builds the handle it
+ * wants — a generated handle is constructed from an offset, not downcast from
+ * a base:
  *
  * ```cpp
  * case MAP_ENTRY_TILE_TABLE: {
@@ -396,10 +389,6 @@ enum IFE_EXPORT MapEntryType {
  *     if (table.validate()) ... // read through the handle
  * }
  * ```
- *
- * Strictly more capable than the v1 form, which could only produce a block at
- * the version the map was built with, and the only place in this header where
- * a consumer's code changes at the cutover.
  */
 struct IFE_EXPORT FileMapEntry {
     MapEntryType type   = MAP_ENTRY_UNDEFINED;

@@ -2,10 +2,9 @@
  * @file ife_runtime_tests.cpp
  * @brief The public API, against a file the shipped encoder wrote.
  *
- * The end-to-end the migration exists to make true: the snapshot the shipped
- * encoder wrote, and the whole new stack — generated handles over IFE_Bytes,
- * the semantic layer on top — reads it through the same four entry points
- * Iris-Codec calls today.
+ * End-to-end: the snapshot the shipped encoder wrote is read through the
+ * public entry points — generated handles over IFE_Bytes, the semantic layer
+ * on top — the same way Iris-Codec calls them.
  *
  * This translation unit includes IrisFileExtension.hpp and the type-free fixture
  * loader; the bytes come from the fetched corpus (tests/corpus/README.md).
@@ -265,7 +264,7 @@ void test_partial_nested_offset_is_rejected() {
 
 // The root attributes structure of a loaded snapshot, at the version the file
 // declares. Constructing at VERSION_WRITTEN instead would claim a version the
-// file does not have -- the trap MIGRATION records.
+// file does not have.
 ::IFE::blocks::ATTRIBUTES root_attributes(std::vector<BYTE>& __f) {
     namespace b = ::IFE::blocks;
     const b::FILE_HEADER boot{__f.data(), 0, __f.size(), UINT32_MAX};

@@ -161,17 +161,17 @@ def check_sal_annotations() -> list[str]:
     found: list[str] = []
     names = "|".join(re.escape(k) for k in sorted(_SAL_ANNOTATIONS, key=len, reverse=True))
     pattern = re.compile(rf"\b({names})\b")
-    # generated_source is scanned too: the emitter writes the same identifiers
-    # the hand-written layer does, and the generated layer is compiled by MSVC.
+    # generated_source is scanned too: the emitter writes the same identifiers,
+    # and the generated layer is compiled by MSVC.
     for directory in SOURCE_DIRS + ("generated_source",):
         base = ROOT / directory
         if not base.is_dir():
             # An absent generated_source is not a clean one. It is gitignored
             # and written at configure time, so on a fresh clone this check
             # would otherwise report the generated layer clean without having
-            # read a byte of it -- and the emitter writes the same identifiers
-            # the hand-written layer does, which is the whole reason it is
-            # scanned. Say so instead of passing.
+            # read a byte of it -- and the emitter writes the same identifiers,
+            # which is the whole reason it is scanned. Say so instead of
+            # passing.
             if directory == "generated_source":
                 found.append(
                     "generated_source/ does not exist, so the generated layer was not "

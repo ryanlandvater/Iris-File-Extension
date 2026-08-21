@@ -8,18 +8,7 @@
  * they must never contain a platform branch — `__EMSCRIPTEN__` appears zero
  * times anywhere in generated_source, and stays that way.
  *
- * This is the difference from v1, and it is worth stating precisely because
- * the v1 shape is the thing being deliberately not reproduced. There,
- * residency was injected into fifteen separate readers: each block carried a
- * `check_and_fetch_remote` that fetched its own header, re-pointed its own
- * `__offset` into the fetched buffer, re-fetched at full size, and then
- * rewrote the *caller's* `__base` through a `const_cast`
- * (`LAYER_EXTENTS::check_and_fetch_remote` and `FILE_HEADER`'s near-copy of
- * it, in the retired hand-written layer). Every reader began by calling it. The
- * hand-written pair carries 116 `__EMSCRIPTEN__` branches; sixteen generated
- * blocks would have carried more.
- *
- * Here, residency is resolved *before* a handle is constructed. The runtime
+ * Residency is resolved *before* a handle is constructed. The runtime
  * asks the Window for a range, gets a pointer good for exactly that range, and
  * builds a handle on it. One `#if defined(__EMSCRIPTEN__)`, in
  * IFE_Window.cpp, and no `const_cast` anywhere.
@@ -108,7 +97,7 @@ private:
     std::vector<Page> __pages;
 };
 
-/// The Emscripten transport: a ranged HTTP request, as v1 performs it.
+/// The Emscripten transport: a ranged HTTP request.
 /// Declared unconditionally so the header has no platform branch; defined only
 /// in the Emscripten build, where `__user` is the URL as a `const char*`.
 /// Linking against it elsewhere is a build error rather than a silent stub.

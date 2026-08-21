@@ -8,10 +8,6 @@
  * and validators — reaches the wire exclusively through these functions, so
  * the rules below are enforced once rather than at every field access.
  *
- * Successor to the LOAD_ and STORE_ family in the retired hand-written layer.
- * Coverage is the same; three defects in that family are deliberately not
- * carried forward, each noted at the function that replaces it.
- *
  * Invariants:
  *   - A load reads exactly the field's width and never a byte more.
  *   - Loads never branch on host byte order; stores branch at compile time,
@@ -36,10 +32,8 @@
 #include <type_traits>
 
 // Included directly rather than assumed from the includer: this header is
-// self-contained by design.  The retired hand-written layer's umbrella did
-// `using namespace Iris;` without including the headers that define those
-// types, and relied on its .cpp having included them first — a fragility the
-// generated layer does not inherit.
+// self-contained by design — it uses the Iris types only after including the
+// headers that define them.
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
 
@@ -89,18 +83,8 @@ namespace detail {
 /// **There is no big-endian branch, deliberately.** Wire byte `i` carries bits
 /// `8i..8i+7` of the value, which is the whole of what "little endian on disk,
 /// at every version" means; composing arithmetically makes that true on any
-/// host, so the host's own byte order never enters. v1 instead selected
-/// between two readers through `static std::function` objects
-/// — an indirect call per field access.
-///
-/// An earlier version of this header kept a compile-time branch: on a
-/// big-endian host it reversed the N wire bytes and memcpy'd them into the
-/// *front* of the integer. That is correct only when `N == sizeof(T)`. For
-/// `u24`/`u40` the field landed in the most-significant bytes, so a big-endian
-/// host loaded `value << 8` / `value << 24`, wrote `BB AA 00` where the wire
-/// wanted `CC BB AA`, and could not read back what it had just written. No
-/// available host executes that branch, so no test could catch it — which is
-/// the argument for having no branch rather than a fixed one.
+/// host, so the host's own byte order never enters and nothing can be wrong
+/// about a host that cannot be tested here.
 template <typename T, std::size_t N = sizeof(T)>
 [[nodiscard]] inline T load_bytes(const BYTE* __p) noexcept {
     static_assert(std::is_unsigned_v<T> && N <= sizeof(T));
@@ -140,9 +124,9 @@ template <typename T>
 ///
 /// **The swap is over the whole `T`, never over `N`.** The wire bytes are then
 /// the leading `N` bytes of the swapped value's representation. Swapping over
-/// `N` is the defect that shipped twice here: once in v1's `__BE_LOAD_U24`, and
-/// once in this header's original big-endian branch. If that distinction is
-/// ever unclear, the branch is not worth keeping — delete it and compose
+/// `N` puts a `u24`/`u40` field in the wrong bytes on a big-endian host; the
+/// distinction is the one thing that can be wrong about this branch, and if
+/// it is ever unclear, the branch is not worth keeping — compose
 /// arithmetically, which is correct on every host.
 ///
 /// This branch runs on no developer machine, so it is covered by the
@@ -195,15 +179,11 @@ inline void store(BYTE* __p, T v) noexcept {
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 // MARK: - Packed widths (u24, u40)
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
-// v1 read these by loading the next whole machine word and masking, which
+// Reading these by loading the next whole machine word and masking would
 // over-read the field by three bytes: a u24 loaded as a u32, a u40 as a u64.
 // For the final TILE_OFFSETS entry of a file — a u40 offset followed by a u24
 // size, ending at the last byte — that is a read past the end of the mapping.
-// These read exactly 3 and exactly 5.
-//
-// v1's big-endian u24 reader also masked with U40_MASK rather than U24_MASK
-// (:133), returning two spurious bytes on any big-endian host. Not carried
-// forward.
+// These read exactly 3 and exactly 5, and mask with their own width.
 
 inline constexpr std::uint32_t U24_MAX = 0x00FFFFFFu;         ///< 16,777,215
 inline constexpr std::uint64_t U40_MAX = 0x000000FFFFFFFFFFull;  ///< 1,099,511,627,775
@@ -238,8 +218,8 @@ inline void store_u40(BYTE* __p, std::uint64_t v) noexcept {
 // as float literals so a caller can compare an accessor result against them
 // directly. Both conversions are constexpr so that comparison can also happen
 // at compile time — tests/ife_bytes_tests.cpp pins the ORIENTATION_* literals
-// to the binary16 patterns v1 published, which is a static_assert only if the
-// rounding runs during constant evaluation.
+// to their binary16 patterns, which is a static_assert only if the rounding
+// runs during constant evaluation.
 
 /// Convert an IEEE binary16 bit pattern to `float`. Exact for every input,
 /// including subnormals, infinities and NaN payloads.

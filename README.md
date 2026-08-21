@@ -3,11 +3,9 @@
 This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This repository has a very limited scope; it provies the byte-offset vtables and enumerations referenced by the Iris Codec specification and validates files against the published IFE specification. This is an advanced repository. **If this is your first foray into Iris, the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) is a much better choice**. 
 
 > [!IMPORTANT]
-> **Schema-driven refactoring in progress.** The byte-offset vtables and
-> enumerations are being re-expressed as a JSON specification that generates
-> both the C++ serialization layer and the specification document itself
-> (LaTeX/HTML). The hand-written byte-offset tables will be retired when the
-> ecosystem (including Iris-Codec) cuts over.
+> **Schema-driven.** The byte-offset vtables and enumerations are expressed as
+> a JSON specification that generates both the C++ serialization layer and the
+> specification document itself (LaTeX/HTML).
 
 Example Iris slide files are hosted to test decoding are hosted at [the Iris-Example-Files repository](https://github.com/IrisDigitalPathology/Iris-Example-Files). 
 
