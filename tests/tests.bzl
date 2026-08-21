@@ -292,6 +292,27 @@ def ife_tests(
         args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
 
+    # The 1.1 witness: every 1.1 field present-and-correct on the 1.1 witness
+    # and absent on the 1.0 snapshot — the pair to the v1 oracle.
+    cc_test(
+        name = "ife_v11_witness_tests",
+        srcs = [
+            "tests/ife_v11_witness_tests.cpp",
+            "tests/ife_v11_fixture.cpp",
+            "tests/ife_v11_fixture.hpp",
+            "tests/ife_corpus_path.hpp",
+        ],
+        copts = copts,
+        size = "small",
+        deps = [ife, "@rules_cc//cc/runfiles"],
+        data = [
+            "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:v1_0_witness.test_slide",
+        ],
+        local_defines = ["IFE_BAZEL_RUNFILES"],
+        args = ["_main/tests/corpus/v1_1_witness.test_slide"],
+    )
+
     # A whole slide larger than 4 GiB. 64-bit hosts only, same as CMake.
     cc_test(
         name = "ife_large_file_tests",

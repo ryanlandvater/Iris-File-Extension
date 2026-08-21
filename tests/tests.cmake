@@ -346,6 +346,25 @@ if(IFE_BUILD_TESTS)
     )
     add_test(NAME ife_v1_oracle_tests COMMAND ife_v1_oracle_tests ${IFE_CORPUS_DIR})
 
+    # The 1.1 witness: every 1.1 field asserted present-and-correct on
+    # v1_1_witness.test_slide and absent on the 1.0 snapshot. The pair to the
+    # v1 oracle, for the version-gated fields a 1.0 file cannot prove. Reads
+    # the same fetched corpus; no generated sources here, for the same reason
+    # as the oracle.
+    add_executable(
+        ife_v11_witness_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_v11_witness_tests.cpp
+        ${PROJECT_SOURCE_DIR}/tests/ife_v11_fixture.cpp
+    )
+    target_include_directories(
+        ife_v11_witness_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+    )
+    target_compile_features(ife_v11_witness_tests PRIVATE cxx_std_20)
+    target_link_libraries(
+        ife_v11_witness_tests PRIVATE IrisFileExtensionLib ${IFE_Dependencies}
+    )
+    add_test(NAME ife_v11_witness_tests COMMAND ife_v11_witness_tests ${IFE_CORPUS_DIR})
+
     # Produces the corpus snapshot the tests above read. Not a test, and
     # deliberately not run by the build: the snapshot is hosted and pinned by
     # digest, so regenerating it is an explicit act with an upload attached.
@@ -460,7 +479,7 @@ if(IFE_BUILD_TESTS)
               ife_blocks_header_only_tests ife_window_tests
               ife_runtime_tests ife_lifetime_tests ife_version_gating_tests
               ife_version_gating_backward_tests ife_example_runtime
-              ife_validation_tests ife_v1_oracle_tests)
+              ife_validation_tests ife_v1_oracle_tests ife_v11_witness_tests)
         set_target_properties(${t} PROPERTIES FOLDER "Tests")
     endforeach()
 

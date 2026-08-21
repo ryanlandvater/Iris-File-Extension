@@ -83,7 +83,7 @@ if (NOT DEFINED irisheaders_SOURCE_DIR)
     FetchContent_Declare (
         IrisHeaders
         GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-Headers.git
-        GIT_TAG "origin/main"
+        GIT_TAG "main"
         GIT_SHALLOW ON
     )
     FetchContent_MakeAvailable(IrisHeaders)
@@ -249,10 +249,15 @@ set (
     IrisFileExtensionLib
 )
 if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
-    add_library(
-        IrisFileExtension SHARED 
-        $<TARGET_OBJECTS:IrisFileExtensionLib>
-    ) 
+    # The wrapper's sources are IrisFileExtensionLib's objects, linked via the
+    # object library (CMake >= 3.12) rather than listed through
+    # $<TARGET_OBJECTS:...> in the source list — the Xcode generator emits no
+    # Sources phase for either form, so no link is ever scheduled and the
+    # target "builds" to nothing. IFE_Library.cpp is the one real compiled
+    # source that gives the target a Sources phase and makes Xcode run the
+    # link; its symbol is hidden and carries no ABI.
+    add_library(IrisFileExtension SHARED ${IFE_SOURCE_DIR}/IFE_Library.cpp)
+    target_link_libraries(IrisFileExtension PRIVATE IrisFileExtensionLib)
     target_include_directories(
         IrisFileExtension INTERFACE
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Iris>
@@ -261,10 +266,8 @@ if(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
 endif(IFE_BUILD_SHARED AND NOT EMSCRIPTEN)
 
 if(IFE_BUILD_STATIC)
-    add_library(
-        IrisFileExtensionStatic STATIC 
-        $<TARGET_OBJECTS:IrisFileExtensionLib>
-    )
+    add_library(IrisFileExtensionStatic STATIC ${IFE_SOURCE_DIR}/IFE_Library.cpp)
+    target_link_libraries(IrisFileExtensionStatic PRIVATE IrisFileExtensionLib)
     target_include_directories(
         IrisFileExtensionStatic INTERFACE
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/Iris>
