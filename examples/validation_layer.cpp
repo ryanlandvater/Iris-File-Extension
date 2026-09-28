@@ -39,10 +39,10 @@
 #include <string>
 #include <vector>
 
-using ::IFE::BYTE;
+using ::Iris::File::BYTE;
 
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
 namespace {
 
@@ -146,7 +146,7 @@ int main() {
             hooks.diagnostic = &why;
 
             const b::FileHeaderCreateInfo bad{
-                .TILE_TABLE_OFFSET = ::IFE::constants::NULL_OFFSET,
+                .TILE_TABLE_OFFSET = ::Iris::File::constants::NULL_OFFSET,
                 .METADATA_OFFSET   = 128,
             };
             const auto status = b::store(f.data(), 0, bad, &hooks);
@@ -184,7 +184,7 @@ int main() {
             conformance.diagnostic = &why;
 
             b::ValidationHooks tracing{};
-            tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::IFE::Offset at,
+            tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::Iris::File::Offset at,
                                        const b::ValidationHooks* self) -> b::Status {
                 std::printf("    [trace] LAYER_EXTENTS at %llu, %zu entries\n",
                             static_cast<unsigned long long>(at), info.entries.size());

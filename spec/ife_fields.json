@@ -743,7 +743,7 @@
     "TILE_PIXEL_DATA": {
       "primitive": "TILE_FRAME",
       "recovery_tag": null,
-      "description": "Optional frame preceding a compressed tile byte-stream. The stream itself is unframed and is addressed exactly by its tile offsets entry; this block sits in the bytes immediately before it, so a decoder that ignores it reads the stream unchanged. It exists to make tile data recoverable when the tile offsets array is lost.",
+      "description": "Frame preceding a compressed tile byte-stream: optional, except that every stream of a Z-stacked layer is framed, because the frame is the only place a tile's plane count is recorded. The stream itself is unframed and is addressed exactly by its tile offsets entry; this block sits in the bytes immediately before it, so a decoder that ignores it reads the stream unchanged. It exists to make tile data recoverable when the tile offsets array is lost.",
       "fields": {
         "ife_version": {
           "1.1": [

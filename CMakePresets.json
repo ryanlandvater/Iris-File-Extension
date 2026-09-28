@@ -11,13 +11,47 @@
         "IFE_BUILD_TESTS": "ON",
         "IFE_RUN_GENERATOR": "ON"
       }
+    },
+    {
+      "name": "ninja",
+      "displayName": "Ninja, Debug (build-ninja)",
+      "description": "Command-line build with tests and examples; regenerates generated_source/ at configure.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "IFE_BUILD_TESTS": "ON",
+        "IFE_BUILD_EXAMPLES": "ON",
+        "IFE_RUN_GENERATOR": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Ninja + ASan/UBSan (build-asan)",
+      "description": "The sanitizer build. Run the whole suite here after any change to the read path or recovery (CLAUDE.md): the damage sweep's faults are invisible without it.",
+      "inherits": "ninja",
+      "binaryDir": "${sourceDir}/build-asan",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
     }
   ],
   "buildPresets": [
+    { "name": "xcode", "configurePreset": "xcode", "configuration": "Debug" },
+    { "name": "ninja", "configurePreset": "ninja" },
+    { "name": "asan",  "configurePreset": "asan" }
+  ],
+  "testPresets": [
     {
-      "name": "xcode",
-      "configurePreset": "xcode",
-      "configuration": "Debug"
+      "name": "ninja",
+      "configurePreset": "ninja",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": { "outputOnFailure": true }
     }
   ]
 }

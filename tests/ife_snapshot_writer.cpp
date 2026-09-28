@@ -40,12 +40,12 @@
 
 namespace {
 
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
-using ::IFE::BYTE;
-using ::IFE::Offset;
-using ::IFE::Size;
+using ::Iris::File::BYTE;
+using ::Iris::File::Offset;
+using ::Iris::File::Size;
 
 /// Every tile in the fixture addresses this many bytes of (dummy) pixel data.
 /// Real bytes rather than zero length because the entries must address a range

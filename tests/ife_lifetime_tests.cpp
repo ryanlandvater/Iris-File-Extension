@@ -77,8 +77,8 @@ void test_tree_reads_over_the_live_mapping(const std::string& corpus_dir) {
     // in production; the tree reads over it as a lens.
     std::vector<BYTE> bytes = load_slide(corpus_dir);
     if (bytes.empty()) return;  // failure already counted
-    const IrisCodec::Abstraction::File slide =
-        IrisCodec::abstract_file_structure({bytes.data(), bytes.size()});
+    const Iris::File::Abstraction::File slide =
+        Iris::File::abstract_file_structure({bytes.data(), bytes.size()});
 
     // ---- strings the tree keeps, read over the live mapping ------------- //
     IFE_CHECK(slide.header.fileSize != 0);

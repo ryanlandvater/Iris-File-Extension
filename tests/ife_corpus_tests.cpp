@@ -37,6 +37,7 @@
  * Self-contained; non-zero exit on failure.
  */
 #include "IrisFileExtension.hpp"
+#include "IFE_Advanced.hpp"   // generate_file_map / recover_file_structure + FileMap
 
 #include "corpus_manifest.hpp"
 #include "ife_corpus_path.hpp"
@@ -58,7 +59,7 @@ int g_failures = 0;
 } while (0)
 
 using ::Iris::BYTE;
-using ::IrisCodec::Abstraction::MapEntryType;
+using ::Iris::File::Abstraction::MapEntryType;
 
 /// The manifest's name for a mapped block.
 ///
@@ -74,26 +75,26 @@ using ::IrisCodec::Abstraction::MapEntryType;
 /// the published block list will look for.
 const char* manifest_name(MapEntryType type) {
     switch (type) {
-        case ::IrisCodec::Abstraction::MAP_ENTRY_UNDEFINED:              return nullptr;
-        case ::IrisCodec::Abstraction::MAP_ENTRY_FILE_HEADER:            return "FILE_HEADER";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_TILE_TABLE:             return "TILE_TABLE";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_CIPHER:                 return "CIPHER";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_METADATA:               return "METADATA";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ATTRIBUTES:             return "ATTRIBUTES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_LAYER_EXTENTS:          return "LAYER_EXTENTS";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_TILE_DATA:              return "TILE_PIXEL_DATA";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_TILE_OFFSETS:           return "TILE_OFFSETS";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES:        return "ATTRIBUTE_SIZES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ATTRIBUTES_BYTES:       return "ATTRIBUTE_BYTES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ASSOCIATED_IMAGES:      return "IMAGES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ASSOCIATED_IMAGE_BYTES: return "IMAGE_BYTES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ICC_PROFILE:            return "ICC_PROFILE";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ANNOTATIONS:            return "ANNOTATIONS";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ANNOTATION_BYTES:       return "ANNOTATION_BYTES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ANNOTATION_GROUP_SIZES: return "ANNOTATION_GROUP_SIZES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_ANNOTATION_GROUP_BYTES: return "ANNOTATION_GROUP_BYTES";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_CLINICAL_METADATA:      return "CLINICAL_METADATA";
-        case ::IrisCodec::Abstraction::MAP_ENTRY_TILE_FRAME:             return "TILE_FRAME";
+        case ::Iris::File::Abstraction::MAP_ENTRY_UNDEFINED:              return nullptr;
+        case ::Iris::File::Abstraction::MAP_ENTRY_FILE_HEADER:            return "FILE_HEADER";
+        case ::Iris::File::Abstraction::MAP_ENTRY_TILE_TABLE:             return "TILE_TABLE";
+        case ::Iris::File::Abstraction::MAP_ENTRY_CIPHER:                 return "CIPHER";
+        case ::Iris::File::Abstraction::MAP_ENTRY_METADATA:               return "METADATA";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ATTRIBUTES:             return "ATTRIBUTES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_LAYER_EXTENTS:          return "LAYER_EXTENTS";
+        case ::Iris::File::Abstraction::MAP_ENTRY_TILE_PIXEL_DATA:    return "TILE_PIXEL_DATA";
+        case ::Iris::File::Abstraction::MAP_ENTRY_TILE_OFFSETS:           return "TILE_OFFSETS";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES:        return "ATTRIBUTE_SIZES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ATTRIBUTE_BYTES:     return "ATTRIBUTE_BYTES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_IMAGES:               return "IMAGES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_IMAGE_BYTES:          return "IMAGE_BYTES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ICC_PROFILE:            return "ICC_PROFILE";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ANNOTATIONS:            return "ANNOTATIONS";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ANNOTATION_BYTES:       return "ANNOTATION_BYTES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ANNOTATION_GROUP_SIZES: return "ANNOTATION_GROUP_SIZES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_ANNOTATION_GROUP_BYTES: return "ANNOTATION_GROUP_BYTES";
+        case ::Iris::File::Abstraction::MAP_ENTRY_CLINICAL_METADATA:      return "CLINICAL_METADATA";
+        case ::Iris::File::Abstraction::MAP_ENTRY_TILE_FRAME:             return "TILE_FRAME";
     }
     return nullptr;
 }
@@ -131,7 +132,7 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
     std::set<std::string> observed;
 
     const auto result =
-        ::IrisCodec::validate_file_structure({bytes.data(), bytes.size()});
+        ::Iris::File::validate_file_structure({bytes.data(), bytes.size()});
     if (result != ::Iris::IRIS_SUCCESS) {
         std::fprintf(stderr, "FAIL: %s: validation failed: %s\n",
                      fixture.name, result.message.c_str());
@@ -141,9 +142,9 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
 
     // The offset graph, then the recovery scan; a block counts as reached if
     // either finds it. See the file comment for why both are needed.
-    auto map = ::IrisCodec::generate_file_map({bytes.data(), bytes.size()});
+    auto map = ::Iris::File::generate_file_map({bytes.data(), bytes.size()});
     const auto recovered =
-        ::IrisCodec::recover_file_structure({bytes.data(), bytes.size()});
+        ::Iris::File::recover_file_structure({bytes.data(), bytes.size()});
     for (const auto& [offset, entry] : recovered) map.emplace(offset, entry);
 
     for (const auto& [offset, entry] : map) {

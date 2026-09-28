@@ -49,10 +49,10 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-using ::IFE::Offset;
-namespace k  = ::IFE::constants;
-namespace b  = ::IFE::blocks;
+using ::Iris::File::BYTE;
+using ::Iris::File::Offset;
+namespace k  = ::Iris::File::constants;
+namespace b  = ::Iris::File::blocks;
 
 constexpr std::uint32_t V1_0   = (1u << 16) | 0u;
 constexpr std::uint32_t V200_0 = (200u << 16) | 0u;
@@ -93,47 +93,47 @@ constexpr Layout layout(Offset fh_size, std::uint16_t entry_stride, std::uint32_
 }
 
 void store_header(BYTE* p, Offset fh_end, Offset tt, Offset md, std::uint32_t version) {
-    ::IFE::store<std::uint32_t>(p + b::FILE_HEADER::offset::MAGIC, k::MAGIC_BYTES);
-    ::IFE::store<std::uint16_t>(p + b::FILE_HEADER::offset::RECOVERY,
+    ::Iris::File::store<std::uint32_t>(p + b::FILE_HEADER::offset::MAGIC, k::MAGIC_BYTES);
+    ::Iris::File::store<std::uint16_t>(p + b::FILE_HEADER::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_FILE_HEADER));
-    ::IFE::store<std::uint64_t>(p + b::FILE_HEADER::offset::FILE_SIZE, fh_end);
-    ::IFE::store<std::uint16_t>(p + b::FILE_HEADER::offset::EXTENSION_MAJOR,
+    ::Iris::File::store<std::uint64_t>(p + b::FILE_HEADER::offset::FILE_SIZE, fh_end);
+    ::Iris::File::store<std::uint16_t>(p + b::FILE_HEADER::offset::EXTENSION_MAJOR,
                                 static_cast<std::uint16_t>(version >> 16));
-    ::IFE::store<std::uint16_t>(p + b::FILE_HEADER::offset::EXTENSION_MINOR,
+    ::Iris::File::store<std::uint16_t>(p + b::FILE_HEADER::offset::EXTENSION_MINOR,
                                 static_cast<std::uint16_t>(version & 0xFFFF));
-    ::IFE::store<std::uint32_t>(p + b::FILE_HEADER::offset::FILE_REVISION, 7);
-    ::IFE::store<std::uint64_t>(p + b::FILE_HEADER::offset::TILE_TABLE_OFFSET, tt);
-    ::IFE::store<std::uint64_t>(p + b::FILE_HEADER::offset::METADATA_OFFSET, md);
+    ::Iris::File::store<std::uint32_t>(p + b::FILE_HEADER::offset::FILE_REVISION, 7);
+    ::Iris::File::store<std::uint64_t>(p + b::FILE_HEADER::offset::TILE_TABLE_OFFSET, tt);
+    ::Iris::File::store<std::uint64_t>(p + b::FILE_HEADER::offset::METADATA_OFFSET, md);
 }
 
 void store_tile_table(BYTE* p, Offset at, Offset le, Offset to) {
-    ::IFE::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::VALIDATION, at);
-    ::IFE::store<std::uint16_t>(p + at + b::TILE_TABLE::offset::RECOVERY,
+    ::Iris::File::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::VALIDATION, at);
+    ::Iris::File::store<std::uint16_t>(p + at + b::TILE_TABLE::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_TABLE));
-    ::IFE::store<std::uint8_t>(p + at + b::TILE_TABLE::offset::ENCODING,
+    ::Iris::File::store<std::uint8_t>(p + at + b::TILE_TABLE::offset::ENCODING,
                                static_cast<std::uint8_t>(k::TileEncodings::TILE_ENCODING_JPEG));
-    ::IFE::store<std::uint8_t>(p + at + b::TILE_TABLE::offset::FORMAT,
+    ::Iris::File::store<std::uint8_t>(p + at + b::TILE_TABLE::offset::FORMAT,
                                static_cast<std::uint8_t>(k::PixelFormats::FORMAT_R8G8B8A8));
-    ::IFE::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::CIPHER_OFFSET, k::NULL_OFFSET);
-    ::IFE::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::TILE_OFFSETS_OFFSET, to);
-    ::IFE::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET, le);
-    ::IFE::store<std::uint32_t>(p + at + b::TILE_TABLE::offset::X_EXTENT, 4096);
-    ::IFE::store<std::uint32_t>(p + at + b::TILE_TABLE::offset::Y_EXTENT, 2048);
+    ::Iris::File::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::CIPHER_OFFSET, k::NULL_OFFSET);
+    ::Iris::File::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::TILE_OFFSETS_OFFSET, to);
+    ::Iris::File::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET, le);
+    ::Iris::File::store<std::uint32_t>(p + at + b::TILE_TABLE::offset::X_EXTENT, 4096);
+    ::Iris::File::store<std::uint32_t>(p + at + b::TILE_TABLE::offset::Y_EXTENT, 2048);
 }
 
 void store_metadata(BYTE* p, Offset at) {
-    ::IFE::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::VALIDATION, at);
-    ::IFE::store<std::uint16_t>(p + at + b::TILE_TABLE::offset::RECOVERY,
+    ::Iris::File::store<std::uint64_t>(p + at + b::TILE_TABLE::offset::VALIDATION, at);
+    ::Iris::File::store<std::uint16_t>(p + at + b::TILE_TABLE::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_METADATA));
-    ::IFE::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_MAJOR, 2);
-    ::IFE::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_MINOR, 1);
-    ::IFE::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_BUILD, 3);
+    ::Iris::File::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_MAJOR, 2);
+    ::Iris::File::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_MINOR, 1);
+    ::Iris::File::store<std::uint16_t>(p + at + b::METADATA::offset::CODEC_BUILD, 3);
     for (auto field : {b::METADATA::offset::ATTRIBUTES_OFFSET, b::METADATA::offset::IMAGES_OFFSET,
                        b::METADATA::offset::ICC_COLOR_OFFSET, b::METADATA::offset::ANNOTATIONS_OFFSET,
                        b::METADATA::offset::CLINICAL_OFFSET})
-        ::IFE::store<std::uint64_t>(p + at + field, k::NULL_OFFSET);
-    ::IFE::store<float>(p + at + b::METADATA::offset::MICRONS_PIXEL, 0.25f);
-    ::IFE::store<float>(p + at + b::METADATA::offset::MAGNIFICATION, 40.0f);
+        ::Iris::File::store<std::uint64_t>(p + at + field, k::NULL_OFFSET);
+    ::Iris::File::store<float>(p + at + b::METADATA::offset::MICRONS_PIXEL, 0.25f);
+    ::Iris::File::store<float>(p + at + b::METADATA::offset::MAGNIFICATION, 40.0f);
 }
 
 /// A head-to-tail file: header of `fh_size` bytes, `entry_count` extents of
@@ -149,33 +149,33 @@ std::vector<BYTE> make_file(std::uint32_t version, Offset fh_size, std::uint16_t
 
     store_header(p, L.end, L.tile_table, L.metadata, version);
     if (with_200_fields)
-        ::IFE::store<std::uint32_t>(p + b::FILE_HEADER::offset::RUNTIME_FLAGS, RUNTIME_FLAGS_VALUE);
+        ::Iris::File::store<std::uint32_t>(p + b::FILE_HEADER::offset::RUNTIME_FLAGS, RUNTIME_FLAGS_VALUE);
 
     store_tile_table(p, L.tile_table, L.layer_extents, L.tile_offsets);
 
-    ::IFE::store<std::uint64_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::VALIDATION, L.layer_extents);
-    ::IFE::store<std::uint16_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::RECOVERY,
+    ::Iris::File::store<std::uint64_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::VALIDATION, L.layer_extents);
+    ::Iris::File::store<std::uint16_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_LAYER_EXTENTS));
-    ::IFE::store<std::uint16_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::STRIDE, entry_stride);
-    ::IFE::store<std::uint32_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::COUNT, entry_count);
+    ::Iris::File::store<std::uint16_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::STRIDE, entry_stride);
+    ::Iris::File::store<std::uint32_t>(p + L.layer_extents + b::LAYER_EXTENTS::offset::COUNT, entry_count);
     for (std::uint32_t i = 0; i < entry_count; ++i) {
         BYTE* e = p + L.layer_extents + b::LAYER_EXTENTS::header_size + static_cast<Offset>(i) * entry_stride;
-        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 8u << i);
-        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::Y_TILES, 8);
-        ::IFE::store<float>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::SCALE, static_cast<float>(i + 1));
+        ::Iris::File::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 8u << i);
+        ::Iris::File::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::Y_TILES, 8);
+        ::Iris::File::store<float>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::SCALE, static_cast<float>(i + 1));
         if (with_200_fields)
-            ::IFE::store<std::uint16_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::RESERVED_EXTENT,
+            ::Iris::File::store<std::uint16_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::RESERVED_EXTENT,
                                         static_cast<std::uint16_t>(RESERVED_EXTENT_VALUE + i));
     }
 
-    ::IFE::store<std::uint64_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::VALIDATION, L.tile_offsets);
-    ::IFE::store<std::uint16_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::RECOVERY,
+    ::Iris::File::store<std::uint64_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::VALIDATION, L.tile_offsets);
+    ::Iris::File::store<std::uint16_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_OFFSETS));
-    ::IFE::store<std::uint16_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::STRIDE, b::TILE_OFFSETS::TILE_OFFSET::entry_size);
-    ::IFE::store<std::uint32_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::COUNT, 1);
+    ::Iris::File::store<std::uint16_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::STRIDE, b::TILE_OFFSETS::TILE_OFFSET::entry_size);
+    ::Iris::File::store<std::uint32_t>(p + L.tile_offsets + b::LAYER_EXTENTS::offset::COUNT, 1);
     BYTE* te = p + L.tile_offsets + b::TILE_OFFSETS::header_size;
-    ::IFE::store_u40(te + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, 0xFEDCBA98ull);
-    ::IFE::store_u24(te + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, 0x00ABCDu);
+    ::Iris::File::store_u40(te + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, 0xFEDCBA98ull);
+    ::Iris::File::store_u24(te + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, 0x00ABCDu);
 
     store_metadata(p, L.metadata);
     return f;

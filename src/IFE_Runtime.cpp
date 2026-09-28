@@ -14,17 +14,20 @@
  */
 
 #include "IrisFileExtension.hpp"
+#include "IFE_Primitives.hpp"
+#include "IFE_Recovery.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 
-namespace IrisCodec {
+namespace Iris::File {
 
-namespace k  = ::IFE::constants;
-namespace b  = ::IFE::blocks;
+namespace k  = ::Iris::File::constants;
+namespace b  = ::Iris::File::blocks;
 
 namespace {
 
@@ -78,6 +81,14 @@ Result to_result(const b::Status& __status) noexcept try {
                                   "-byte offsets"};
         case b::Check::CONFORMANCE:
             return {IRIS_FAILURE, where + " violates a normative requirement of the specification"};
+        case b::Check::PAYLOAD_OVERRUN:
+            return {IRIS_FAILURE, where + " declares " + std::to_string(__status.found) +
+                                  " bytes of header and payload but only " +
+                                  std::to_string(__status.expected) + " remain in the file"};
+        case b::Check::VALUE_TOO_WIDE:
+            return {IRIS_FAILURE, where + " was given " + std::to_string(__status.found) +
+                                  ", wider than the field holds (at most " +
+                                  std::to_string(__status.expected) + "); nothing was written"};
         case b::Check::OK: break;
     }
     return {IRIS_FAILURE, where + " failed validation"};
@@ -90,22 +101,20 @@ Result to_result(const b::Status& __status) noexcept try {
     throw std::runtime_error(to_result(__status).message);
 }
 
-/// The root handle. Its own version is unknowable until it has been read, so
-/// it is constructed with UINT32_MAX — every gate open for exactly one block —
-/// which lets it read its own version field.
-b::FILE_HEADER root_at(const BYTE* __base, size_t __size) noexcept {
-    return b::FILE_HEADER{__base, 0, __size, UINT32_MAX};
-}
-
-/// Compose the file's version the way v1 does: major << 16 | minor, read once
-/// at the root and propagated to every child by construction.
-uint32_t version_of(const b::FILE_HEADER& __header) noexcept {
-    return (static_cast<uint32_t>(__header.extension_major()) << 16) | __header.extension_minor();
-}
-
-b::FILE_HEADER versioned_root(const BYTE* __base, size_t __size) noexcept {
-    const b::FILE_HEADER bootstrap = root_at(__base, __size);
-    return b::FILE_HEADER{__base, 0, __size, version_of(bootstrap)};
+/// An OPTIONAL slot on the read path. NULL_OFFSET is absence and reads as
+/// absence; anything else must be the block it claims to be, or the read
+/// fails -- exactly as a required slot does.
+///
+/// The `if (const auto x = slot())` form this replaces tests the handle's
+/// bool, which demands validate() since RC-10.1. On its own that would turn a
+/// present block that fails into an ABSENT one, silently: the caller gets a
+/// slide with no ICC profile and no sign anything was lost. A missing block
+/// that is reported is honest; one that quietly vanishes is not.
+template <class Handle>
+bool present(const Handle& __h) {
+    if (__h.__offset == k::NULL_OFFSET) return false;
+    if (!__h) fail(__h.validate());
+    return true;
 }
 
 // MARK: - Attribute slicing
@@ -159,7 +168,7 @@ SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
     const auto bytes = __attrs.bytes_offset();
     if (!sizes || !bytes) return SliceError::UNREADABLE;
 
-    const ::IFE::ByteSpan blob = bytes.bytes();
+    const ::Iris::File::ByteSpan blob = bytes.bytes();
     Size cursor = 0;
     for (uint32_t i = 0; i < sizes.count(); ++i) {
         if (__at) *__at = i;
@@ -398,6 +407,73 @@ Abstraction::AttributeSet lift_attributes(const b::ATTRIBUTES& __attrs, b::Visit
     return set;
 }
 
+// MARK: - Tile entries
+//
+// A tile entry is (OFFSET, SIZE): a claim about where a compressed stream lies.
+// It is the one edge the generated walk does not follow — a stream has no
+// header of its own to validate — so nothing checked it, and a consumer doing
+// `base + OFFSET` for SIZE bytes read wherever the entry said (2026-09-28: a
+// 294-byte file with a 16 MiB tile validated). Like any length on the wire it
+// is a claim, checked before anyone reads through it.
+
+/// Why a tile entry cannot be read through, or nullptr when it can.
+///
+/// NULL_TILE is "no tile at this grid position": always legal, whatever SIZE
+/// holds, since the spec does not constrain SIZE for it. A stream may not start
+/// inside the FILE_HEADER (`__header_end` is the header's version-aware extent),
+/// and may not run past the end of the file.
+const char* tile_entry_error(Offset __offset, std::uint32_t __size, Size __file_size,
+                             Size __header_end) noexcept {
+    if (__offset == k::NULL_TILE) return nullptr;
+    if (__offset < __header_end) return "starts inside the file header";
+    // Never `__offset + __size <= __file_size`: that sum can wrap.
+    if (__offset > __file_size || __file_size - __offset < __size)
+        return "runs past the end of the file";
+    return nullptr;
+}
+
+/// Every entry of a validated tile offsets array, checked: each lies inside the
+/// file, and each stream of a Z-stacked layer is framed (tile_frame_error). The
+/// arrays' own extents are already known to fit (validate_deep), so `count()`
+/// is safe to walk.
+Result check_tile_entries(const b::FILE_HEADER& __header, Size __file_size) {
+    const auto table   = __header.tile_table_offset();
+    const auto offsets = table.tile_offsets_offset();
+    const auto extents = table.layer_extents_offset();
+    const Size header_end = __header.extent();
+    const auto describe = [&](std::uint32_t __i, const auto& __entry, const char* __why) {
+        return Result{IRIS_FAILURE, "TILE_OFFSETS entry " + std::to_string(__i) +
+                                    " (OFFSET " + std::to_string(__entry.offset()) +
+                                    ", SIZE " + std::to_string(__entry.size_field()) + ") " + __why};
+    };
+    for (std::uint32_t i = 0; i < offsets.count(); ++i) {
+        const auto entry = offsets.entry(i);
+        if (const char* why = tile_entry_error(entry.offset(), entry.size_field(),
+                                               __file_size, header_end))
+            return describe(i, entry, why);
+    }
+    // Global indices ascend by layer, so a layer's entries are one run.
+    std::uint64_t first = 0;
+    for (std::uint32_t l = 0; l < extents.count(); ++l) {
+        const auto layer = extents.entry(l);
+        const std::uint64_t tiles  = static_cast<std::uint64_t>(layer.x_tiles()) * layer.y_tiles();
+        const std::uint16_t planes = layer.z_planes().value_or(0);
+        if (planes > 1) {
+            const std::uint64_t end = std::min<std::uint64_t>(first + tiles, offsets.count());
+            for (std::uint64_t g = first; g < end; ++g) {
+                const auto entry = offsets.entry(static_cast<std::uint32_t>(g));
+                if (entry.offset() == k::NULL_TILE) continue;
+                if (const char* why = tile_frame_error(__header.__base, __file_size,
+                                                       __header.__version, entry.offset(),
+                                                       g, planes))
+                    return describe(static_cast<std::uint32_t>(g), entry, why);
+            }
+        }
+        first += tiles;
+    }
+    return IRIS_SUCCESS;
+}
+
 }  // namespace
 
 // MARK: - Entry points
@@ -417,9 +493,14 @@ Result IFE_EXPORT validate_file_structure(const FileAccessInfo& __info) noexcept
     // block headers.
     if (const b::Status status = header.validate_deep(); !status) return to_result(status);
 
-    // Then the one part of the graph the generated walk cannot see: the
-    // structures nested inside attribute values.
+    // Then the parts of the graph the generated walk cannot see: the tile
+    // streams, which have no header, and the structures nested inside
+    // attribute values.
     try {
+        if (Result tiles = check_tile_entries(header, __info.file_size);
+            tiles.flag != IRIS_SUCCESS)
+            return tiles;
+
         const auto metadata = header.metadata_offset();
         if (!metadata) return to_result(metadata.validate());
         if (const auto attributes = metadata.attributes_offset()) {
@@ -428,7 +509,7 @@ Result IFE_EXPORT validate_file_structure(const FileAccessInfo& __info) noexcept
             return to_result(validate_nested_attributes(attributes, path, seen, 0));
         }
     } catch (const std::bad_alloc&) {
-        return {IRIS_FAILURE, "validation failed (out of memory walking nested attributes)"};
+        return {IRIS_FAILURE, "validation failed (out of memory walking tiles or nested attributes)"};
     }
     return to_result(b::Status{});
 }
@@ -441,7 +522,8 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
     if (!header) fail(header.validate());
 
     abstraction.header = {.fileSize   = header.file_size(),
-                          .extVersion = version_of(header),
+                          .extVersion = ::Iris::File::primitives::compose_version(
+                              header.extension_major(), header.extension_minor()),
                           .revision   = header.file_revision()};
 
     // ---- tile table ------------------------------------------------------ //
@@ -494,15 +576,30 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
             ") does not match the tile offset array (" + std::to_string(offsets.count()) + ")");
 
     abstraction.tileTable.layers.resize(abstraction.tileTable.extent.layers.size());
+    const Size header_end = header.extent();
     uint32_t tile = 0;
     for (size_t li = 0; li < abstraction.tileTable.extent.layers.size(); ++li) {
         const auto& extent = abstraction.tileTable.extent.layers[li];
         auto&       layer  = abstraction.tileTable.layers[li];
         layer.resize(static_cast<size_t>(extent.xTiles) * extent.yTiles);
-        for (auto& entry : layer) {
+        for (size_t ti = 0; ti < layer.size(); ++ti) {
             const auto stored = offsets.entry(tile++);
-            entry.offset = stored.offset();
-            entry.size   = stored.size_field();
+            // Checked before it is handed out: the abstraction's promise is that
+            // every offset in it can be read through.
+            const char* why = tile_entry_error(stored.offset(), stored.size_field(),
+                                               __info.file_size, header_end);
+            // A Z-stacked layer frames every stream (the spec, Focal Planes).
+            if (!why && abstraction.tileTable.planes[li] > 1 && stored.offset() != k::NULL_TILE)
+                why = tile_frame_error(__info.file_ptr, __info.file_size, header.__version,
+                                       stored.offset(), tile - 1,
+                                       abstraction.tileTable.planes[li]);
+            if (why)
+                throw std::runtime_error(
+                    "Layer " + std::to_string(li) + ", tile " + std::to_string(ti) +
+                    " (OFFSET " + std::to_string(stored.offset()) + ", SIZE " +
+                    std::to_string(stored.size_field()) + ") " + why);
+            layer[ti].offset = stored.offset();
+            layer[ti].size   = stored.size_field();
         }
     }
 
@@ -517,7 +614,7 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
     meta.micronsPerPixel = metadata.microns_pixel();
     meta.magnification   = metadata.magnification();
 
-    if (const auto attributes = metadata.attributes_offset()) {
+    if (const auto attributes = metadata.attributes_offset(); present(attributes)) {
         meta.attributes.type    = static_cast<MetadataType>(attributes.format());
         meta.attributes.version = attributes.version();
 
@@ -541,7 +638,7 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
             if (!node.nested) meta.attributes[node.key] = node.value;
     }
 
-    if (const auto images = metadata.images_offset()) {
+    if (const auto images = metadata.images_offset(); present(images)) {
         for (uint32_t i = 0; i < images.count(); ++i) {
             const auto entry = images.entry(i);
             const auto bytes = entry.bytes_offset();
@@ -561,20 +658,29 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
             image.info.height       = entry.height();
             image.info.encoding     = static_cast<ImageEncoding>(entry.encoding());
             image.info.sourceFormat = static_cast<Format>(entry.format());
-            image.info.orientation  =
-                static_cast<AssociatedImageInfo::Orientation>(entry.orientation());
+            // The RAW sixteen bits, never orientation(): that accessor decodes
+            // the half to degrees, while this enum's values ARE the half's bit
+            // patterns (ORIENTATION_90 is 0x55A0, not 90). Casting the float
+            // made a clean 90-degree image read back as enum 90 -- no named
+            // orientation -- and a damaged negative angle undefined behaviour.
+            // Iris-Codec's encoder decodes bits to degrees going in; this is
+            // the matching step coming out. Any 16 bits are a defined value
+            // of a uint16_t-backed enum, so no damage can make this UB.
+            image.info.orientation  = static_cast<AssociatedImageInfo::Orientation>(
+                ::Iris::File::load<std::uint16_t>(entry.__base + entry.__offset +
+                                           b::IMAGES::IMAGE_ENTRY::offset::ORIENTATION));
 
             meta.associatedImages.insert(label);
             abstraction.images[std::move(label)] = std::move(image);
         }
     }
 
-    if (const auto profile = metadata.icc_color_offset()) {
-        const ::IFE::ByteSpan bytes = profile.bytes();
+    if (const auto profile = metadata.icc_color_offset(); present(profile)) {
+        const ::Iris::File::ByteSpan bytes = profile.bytes();
         meta.ICC_profile.assign(reinterpret_cast<const char*>(bytes.data), bytes.size);
     }
 
-    if (const auto clinical = metadata.clinical_offset()) {
+    if (const auto clinical = metadata.clinical_offset(); present(clinical)) {
         abstraction.clinicalOffset = clinical.__offset + b::CLINICAL_METADATA::header_size;
         abstraction.clinicalSize   = clinical.count();
         abstraction.clinicalEncoding = static_cast<uint8_t>(
@@ -583,7 +689,7 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
 
     if (const auto plane = metadata.microns_plane()) abstraction.micronsPerPlane = *plane;
 
-    if (const auto annotations = metadata.annotations_offset()) {
+    if (const auto annotations = metadata.annotations_offset(); present(annotations)) {
         for (uint32_t i = 0; i < annotations.count(); ++i) {
             const auto entry = annotations.entry(i);
             const auto bytes = entry.bytes_offset();
@@ -610,8 +716,8 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
         // attributes are; each group's member identifiers follow its title.
         const auto sizes = annotations.group_sizes_offset();
         const auto blob  = annotations.group_bytes_offset();
-        if (sizes && blob) {
-            const ::IFE::ByteSpan titles = blob.bytes();
+        if (present(sizes) && present(blob)) {
+            const ::Iris::File::ByteSpan titles = blob.bytes();
             Size cursor = 0;
             for (uint32_t i = 0; i < sizes.count(); ++i) {
                 const auto entry      = sizes.entry(i);
@@ -643,23 +749,6 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
 
 namespace {
 
-/// Record one block, keyed by offset. `size` is what the block occupies,
-/// header and payload together.
-void note(Abstraction::FileMap& __map, Abstraction::MapEntryType __type,
-          Offset __offset, Size __size) {
-    __map[__offset] = {.type = __type, .offset = __offset, .size = __size};
-}
-
-template <typename Block>
-Size array_span(const Block& __b) noexcept {
-    return Block::header_size + static_cast<Size>(__b.stride()) * __b.count();
-}
-
-template <typename Block>
-Size blob_span(const Block& __b) noexcept {
-    return Block::header_size + __b.count();
-}
-
 /// Record one attributes structure and every structure nested inside it.
 ///
 /// The nested blocks have to appear in the map or the map is unsafe for what
@@ -676,14 +765,14 @@ void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
     // only how long the map takes to build.
     if (!__seen.insert(__attrs.__offset).second) return;
     note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES, __attrs.__offset,
-         b::ATTRIBUTES::header_size);
+         __attrs.extent());
 
     const auto sizes = __attrs.sizes_offset();
     const auto bytes = __attrs.bytes_offset();
-    if (sizes) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES, sizes.__offset,
-                    array_span(sizes));
-    if (bytes) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES_BYTES, bytes.__offset,
-                    blob_span(bytes));
+    if (sizes.in_bounds()) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES, sizes.__offset,
+                    sizes.extent());
+    if (bytes.in_bounds()) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_BYTES, bytes.__offset,
+                    bytes.extent());
 
     std::vector<AttributeSlice> slices;
     // Best-effort: the map is built over files that may already be damaged, so
@@ -694,7 +783,7 @@ void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
         for (Size i = 0, n = slice.item_count(); i < n; ++i) {
             const b::ATTRIBUTES child{__attrs.__base, slice.item(i), __attrs.__size,
                                       __attrs.__version};
-            if (child) note_attributes(__map, child, __seen, __depth + 1);
+            if (child.in_bounds()) note_attributes(__map, child, __seen, __depth + 1);
         }
     }
 }
@@ -705,64 +794,68 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(const FileAccessInfo& __info) 
     using namespace Abstraction;
     FileMap map;
     map.file_size = __info.file_size;
+    // Every handle test here is in_bounds(), not the bool. The map records
+    // what the offset graph CLAIMS, over files that may already be damaged,
+    // so a block whose witnesses fail still belongs in it -- the bool would
+    // drop it, and the map exists to warn a writer off live bytes.
 
     const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
-    if (!header) fail(header.validate());
-    note(map, MAP_ENTRY_FILE_HEADER, header.__offset, b::FILE_HEADER::header_size);
+    if (!header.in_bounds()) fail(header.validate());
+    note(map, MAP_ENTRY_FILE_HEADER, header.__offset, header.extent());
 
     const auto table = header.tile_table_offset();
-    if (!table) fail(table.validate());
-    note(map, MAP_ENTRY_TILE_TABLE, table.__offset, b::TILE_TABLE::header_size);
+    if (!table.in_bounds()) fail(table.validate());
+    note(map, MAP_ENTRY_TILE_TABLE, table.__offset, table.extent());
 
-    if (const auto cipher = table.cipher_offset())
-        note(map, MAP_ENTRY_CIPHER, cipher.__offset, b::CIPHER::header_size);
+    if (const auto cipher = table.cipher_offset(); cipher.in_bounds())
+        note(map, MAP_ENTRY_CIPHER, cipher.__offset, cipher.extent());
 
-    if (const auto extents = table.layer_extents_offset())
-        note(map, MAP_ENTRY_LAYER_EXTENTS, extents.__offset, array_span(extents));
+    if (const auto extents = table.layer_extents_offset(); extents.in_bounds())
+        note(map, MAP_ENTRY_LAYER_EXTENTS, extents.__offset, extents.extent());
 
-    if (const auto offsets = table.tile_offsets_offset()) {
-        note(map, MAP_ENTRY_TILE_OFFSETS, offsets.__offset, array_span(offsets));
+    if (const auto offsets = table.tile_offsets_offset(); offsets.in_bounds()) {
+        note(map, MAP_ENTRY_TILE_OFFSETS, offsets.__offset, offsets.extent());
         // The tile data itself is unframed -- it carries no block header, so
         // it can only be located through the entries that address it.
-        for (uint32_t i = 0; i < offsets.count(); ++i) {
+        for (uint32_t i = 0, n = readable_entries(offsets); i < n; ++i) {
             const auto entry = offsets.entry(i);
             if (entry.offset() != k::NULL_TILE && entry.size_field() != 0)
-                note(map, MAP_ENTRY_TILE_DATA, entry.offset(), entry.size_field());
+                note(map, MAP_ENTRY_TILE_PIXEL_DATA, entry.offset(), entry.size_field());
         }
     }
 
     const auto metadata = header.metadata_offset();
-    if (!metadata) fail(metadata.validate());
-    note(map, MAP_ENTRY_METADATA, metadata.__offset, b::METADATA::header_size);
+    if (!metadata.in_bounds()) fail(metadata.validate());
+    note(map, MAP_ENTRY_METADATA, metadata.__offset, metadata.extent());
 
-    if (const auto attributes = metadata.attributes_offset()) {
+    if (const auto attributes = metadata.attributes_offset(); attributes.in_bounds()) {
         VisitedBlocks seen;
         note_attributes(map, attributes, seen, 0);
     }
 
-    if (const auto images = metadata.images_offset()) {
-        note(map, MAP_ENTRY_ASSOCIATED_IMAGES, images.__offset, array_span(images));
-        for (uint32_t i = 0; i < images.count(); ++i)
-            if (const auto bytes = images.entry(i).bytes_offset())
-                note(map, MAP_ENTRY_ASSOCIATED_IMAGE_BYTES, bytes.__offset,
-                     b::IMAGE_BYTES::header_size + bytes.title_size() + bytes.image_size());
+    if (const auto images = metadata.images_offset(); images.in_bounds()) {
+        note(map, MAP_ENTRY_IMAGES, images.__offset, images.extent());
+        for (uint32_t i = 0, n = readable_entries(images); i < n; ++i)
+            if (const auto bytes = images.entry(i).bytes_offset(); bytes.in_bounds())
+                note(map, MAP_ENTRY_IMAGE_BYTES, bytes.__offset,
+                     bytes.extent());
     }
 
-    if (const auto profile = metadata.icc_color_offset())
-        note(map, MAP_ENTRY_ICC_PROFILE, profile.__offset, blob_span(profile));
+    if (const auto profile = metadata.icc_color_offset(); profile.in_bounds())
+        note(map, MAP_ENTRY_ICC_PROFILE, profile.__offset, profile.extent());
 
-    if (const auto clinical = metadata.clinical_offset())
-        note(map, MAP_ENTRY_CLINICAL_METADATA, clinical.__offset, blob_span(clinical));
+    if (const auto clinical = metadata.clinical_offset(); clinical.in_bounds())
+        note(map, MAP_ENTRY_CLINICAL_METADATA, clinical.__offset, clinical.extent());
 
-    if (const auto annotations = metadata.annotations_offset()) {
-        note(map, MAP_ENTRY_ANNOTATIONS, annotations.__offset, array_span(annotations));
-        for (uint32_t i = 0; i < annotations.count(); ++i)
-            if (const auto bytes = annotations.entry(i).bytes_offset())
-                note(map, MAP_ENTRY_ANNOTATION_BYTES, bytes.__offset, blob_span(bytes));
-        if (const auto sizes = annotations.group_sizes_offset())
-            note(map, MAP_ENTRY_ANNOTATION_GROUP_SIZES, sizes.__offset, array_span(sizes));
-        if (const auto blob = annotations.group_bytes_offset())
-            note(map, MAP_ENTRY_ANNOTATION_GROUP_BYTES, blob.__offset, blob_span(blob));
+    if (const auto annotations = metadata.annotations_offset(); annotations.in_bounds()) {
+        note(map, MAP_ENTRY_ANNOTATIONS, annotations.__offset, annotations.extent());
+        for (uint32_t i = 0, n = readable_entries(annotations); i < n; ++i)
+            if (const auto bytes = annotations.entry(i).bytes_offset(); bytes.in_bounds())
+                note(map, MAP_ENTRY_ANNOTATION_BYTES, bytes.__offset, bytes.extent());
+        if (const auto sizes = annotations.group_sizes_offset(); sizes.in_bounds())
+            note(map, MAP_ENTRY_ANNOTATION_GROUP_SIZES, sizes.__offset, sizes.extent());
+        if (const auto blob = annotations.group_bytes_offset(); blob.in_bounds())
+            note(map, MAP_ENTRY_ANNOTATION_GROUP_BYTES, blob.__offset, blob.extent());
     }
 
     return map;
@@ -770,95 +863,14 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(const FileAccessInfo& __info) 
 
 // MARK: - Recovery
 
-namespace {
-
-/// Every block type, by tag, with the map entry it becomes. Derived from the
-/// generated enumeration rather than a second literal table: the tag values
-/// live in IFE_Blocks.hpp and are stated once.
-Abstraction::MapEntryType entry_for(k::RecoveryCodes __tag) noexcept {
-    using namespace Abstraction;
-    switch (__tag) {
-        case k::RecoveryCodes::RECOVER_FILE_HEADER:            return MAP_ENTRY_FILE_HEADER;
-        case k::RecoveryCodes::RECOVER_TILE_TABLE:             return MAP_ENTRY_TILE_TABLE;
-        case k::RecoveryCodes::RECOVER_CIPHER:                 return MAP_ENTRY_CIPHER;
-        case k::RecoveryCodes::RECOVER_METADATA:               return MAP_ENTRY_METADATA;
-        case k::RecoveryCodes::RECOVER_ATTRIBUTES:             return MAP_ENTRY_ATTRIBUTES;
-        case k::RecoveryCodes::RECOVER_LAYER_EXTENTS:          return MAP_ENTRY_LAYER_EXTENTS;
-        case k::RecoveryCodes::RECOVER_TILE_OFFSETS:           return MAP_ENTRY_TILE_OFFSETS;
-        case k::RecoveryCodes::RECOVER_ATTRIBUTE_SIZES:        return MAP_ENTRY_ATTRIBUTE_SIZES;
-        case k::RecoveryCodes::RECOVER_ATTRIBUTE_BYTES:        return MAP_ENTRY_ATTRIBUTES_BYTES;
-        case k::RecoveryCodes::RECOVER_IMAGES:                 return MAP_ENTRY_ASSOCIATED_IMAGES;
-        case k::RecoveryCodes::RECOVER_IMAGE_BYTES:            return MAP_ENTRY_ASSOCIATED_IMAGE_BYTES;
-        case k::RecoveryCodes::RECOVER_ICC_PROFILE:            return MAP_ENTRY_ICC_PROFILE;
-        case k::RecoveryCodes::RECOVER_ANNOTATIONS:            return MAP_ENTRY_ANNOTATIONS;
-        case k::RecoveryCodes::RECOVER_ANNOTATION_BYTES:       return MAP_ENTRY_ANNOTATION_BYTES;
-        case k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_SIZES: return MAP_ENTRY_ANNOTATION_GROUP_SIZES;
-        case k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_BYTES: return MAP_ENTRY_ANNOTATION_GROUP_BYTES;
-        case k::RecoveryCodes::RECOVER_CLINICAL_METADATA:      return MAP_ENTRY_CLINICAL_METADATA;
-        case k::RecoveryCodes::RECOVER_UNDEFINED:              break;
-    }
-    return MAP_ENTRY_UNDEFINED;
-}
-
-}  // namespace
-
+// The scan-only census moved to Recovery::scan() (IFE_Recovery.cpp) when the
+// two-witness reconciliation landed; this entry point is kept as the thin
+// wrapper so the corpus harness and existing tests keep one call site.
+// Deliberately at IFE scope, not in an anonymous namespace: the header
+// declares it externally, and internal linkage here would leave every other
+// translation unit with an undefined reference.
 Abstraction::FileMap IFE_EXPORT recover_file_structure(const FileAccessInfo& __info) {
-    using namespace Abstraction;
-    FileMap map;
-    map.file_size = __info.file_size;
-
-    // A block's signature is its VALIDATION field: a u64 holding the block's
-    // own offset, immediately followed by a u16 recovery tag. Scanning for
-    // "a u64 equal to where it was found" is what makes VALIDATION worth its
-    // eight bytes, and the shared 0x55 high byte on every tag is what keeps
-    // the false-positive rate of the second test negligible.
-    constexpr Size SIGNATURE = 8 + 2;
-
-    // A tile frame has no tag: what identifies it is that its VALIDATION is
-    // forty bits rather than sixty-four, which no other structure in the
-    // format does. So the same pass tests both widths at each position.
-    constexpr Size FRAME_SIGNATURE = 5;
-    constexpr Size SMALLEST = SIGNATURE < FRAME_SIGNATURE ? SIGNATURE : FRAME_SIGNATURE;
-    if (__info.file_size < SMALLEST) return map;
-
-    // The scan has no file header to read a version from -- that header may be
-    // the very thing that was lost -- so frames are read at the version this
-    // build writes. Reading a frame from a *later* file still works: its
-    // fields are laid out backward from the stream, so the ones this build
-    // knows sit where they have always sat and the rest lie further back.
-    for (Offset at = 0; at < __info.file_size; ++at) {
-        if (at + SIGNATURE <= __info.file_size && ::IFE::load<uint64_t>(__info.file_ptr + at) == at) {
-            const auto tag = static_cast<k::RecoveryCodes>(::IFE::load<uint16_t>(__info.file_ptr + at + 8));
-            if (const MapEntryType type = entry_for(tag); type != MAP_ENTRY_UNDEFINED) {
-                // Size is unknown without trusting fields the corruption may
-                // have reached, so record the header only. A caller builds the
-                // handle for the type and asks it, having validated it first.
-                note(map, type, at, 0);
-                continue;
-            }
-        }
-
-        if (at + FRAME_SIGNATURE > __info.file_size) continue;
-        if (::IFE::load_u40(__info.file_ptr + at) != at) continue;
-
-        // The frame must fit behind the stream it precedes; a match too near
-        // the start of file is a coincidence, not a frame.
-        const Offset stream_at = at + FRAME_SIGNATURE;
-        const b::TILE_PIXEL_DATA frame{__info.file_ptr, stream_at, __info.file_size, b::VERSION_WRITTEN};
-        if (!frame.validate()) continue;
-
-        // Recorded with the stream's extent left at zero, as every other type
-        // here is. The frame does not carry a length and deliberately does not
-        // -- how far a compressed stream runs is a question its codec answers,
-        // and this layer knows nothing about codecs. What the frame supplies
-        // is TILE_INDEX, which no amount of reading the stream can recover,
-        // because streams may be written in any order.
-        note(map, MAP_ENTRY_TILE_FRAME, stream_at - b::TILE_PIXEL_DATA::header_size,
-             b::TILE_PIXEL_DATA::header_size);
-        note(map, MAP_ENTRY_TILE_DATA, stream_at, 0);
-    }
-
-    return map;
+    return Recovery{__info}.scan();
 }
 
-}  // namespace IrisCodec
+}  // namespace Iris::File

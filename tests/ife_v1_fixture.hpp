@@ -3,7 +3,7 @@
  * @brief The bytes the SHIPPED encoder wrote, for tests that read them back.
  *
  * Deliberately free of both layers' types — the generated runtime and the
- * retired hand-written layer both define IrisCodec::Abstraction, so a header
+ * retired hand-written layer both define Iris::File::Abstraction, so a header
  * consumed from either side must not name either. The seam survives because
  * what crosses it is bytes, not types: v1 wrote the snapshot once; it is
  * hosted, pinned by digest in tests/corpus/manifest.json, and fetched into

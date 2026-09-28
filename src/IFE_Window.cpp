@@ -13,7 +13,7 @@
 
 #include <cstring>
 
-namespace IFE {
+namespace Iris::File {
 
 Window Window::resident(const BYTE* __base, Size __size) noexcept {
     Window window;
@@ -66,7 +66,7 @@ const BYTE* Window::map(Offset __offset, Size __request) {
     return __pages.back().bytes.get();
 }
 
-}  // namespace IFE
+}  // namespace Iris::File
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ //
 // MARK: - The only platform branch in the project's residency path
@@ -103,7 +103,7 @@ EM_ASYNC_JS(int, ife_fetch_range_async,
     }
 });
 
-namespace IFE {
+namespace Iris::File {
 
 bool fetch_http_range(void* __url, Offset __offset, Size __size, BYTE* __dst) {
     if (__url == nullptr || __size == 0) return __size == 0;
@@ -126,6 +126,6 @@ bool fetch_http_range(void* __url, Offset __offset, Size __size, BYTE* __dst) {
     return ok;
 }
 
-}  // namespace IFE
+}  // namespace Iris::File
 
 #endif  // __EMSCRIPTEN__

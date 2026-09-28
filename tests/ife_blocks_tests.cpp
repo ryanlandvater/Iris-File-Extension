@@ -35,10 +35,10 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-using ::IFE::Offset;
-namespace k  = ::IFE::constants;
-namespace b  = ::IFE::blocks;
+using ::Iris::File::BYTE;
+using ::Iris::File::Offset;
+namespace k  = ::Iris::File::constants;
+namespace b  = ::Iris::File::blocks;
 
 // Byte offsets of each block in the synthetic file, laid out head to tail.
 //
@@ -70,69 +70,69 @@ std::vector<BYTE> make_file() {
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
 
     // ---- FILE_HEADER ---------------------------------------------------- //
-    ::IFE::store<std::uint32_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
-    ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::RECOVERY),
+    ::Iris::File::store<std::uint32_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::MAGIC), k::MAGIC_BYTES);
+    ::Iris::File::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_FILE_HEADER));
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
-    ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::EXTENSION_MAJOR), 1);
-    ::IFE::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::EXTENSION_MINOR), 0);
-    ::IFE::store<std::uint32_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_REVISION), 7);
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::TILE_TABLE_OFFSET), TILE_TABLE_AT);
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::METADATA_OFFSET), METADATA_AT);
+    ::Iris::File::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_SIZE), END_OFFSET);
+    ::Iris::File::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::EXTENSION_MAJOR), 1);
+    ::Iris::File::store<std::uint16_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::EXTENSION_MINOR), 0);
+    ::Iris::File::store<std::uint32_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_REVISION), 7);
+    ::Iris::File::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::TILE_TABLE_OFFSET), TILE_TABLE_AT);
+    ::Iris::File::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::METADATA_OFFSET), METADATA_AT);
 
     // ---- TILE_TABLE ----------------------------------------------------- //
-    ::IFE::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::VALIDATION), TILE_TABLE_AT);
-    ::IFE::store<std::uint16_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::VALIDATION), TILE_TABLE_AT);
+    ::Iris::File::store<std::uint16_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_TABLE));
-    ::IFE::store<std::uint8_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::ENCODING),
+    ::Iris::File::store<std::uint8_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::ENCODING),
                                static_cast<std::uint8_t>(k::TileEncodings::TILE_ENCODING_JPEG));
-    ::IFE::store<std::uint8_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::FORMAT),
+    ::Iris::File::store<std::uint8_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::FORMAT),
                                static_cast<std::uint8_t>(k::PixelFormats::FORMAT_R8G8B8A8));
-    ::IFE::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::CIPHER_OFFSET), k::NULL_OFFSET);
-    ::IFE::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::TILE_OFFSETS_OFFSET), TILE_OFFSETS_AT);
-    ::IFE::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET), LAYER_EXTENTS_AT);
-    ::IFE::store<std::uint32_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::X_EXTENT), 4096);
-    ::IFE::store<std::uint32_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::Y_EXTENT), 2048);
+    ::Iris::File::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::CIPHER_OFFSET), k::NULL_OFFSET);
+    ::Iris::File::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::TILE_OFFSETS_OFFSET), TILE_OFFSETS_AT);
+    ::Iris::File::store<std::uint64_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET), LAYER_EXTENTS_AT);
+    ::Iris::File::store<std::uint32_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::X_EXTENT), 4096);
+    ::Iris::File::store<std::uint32_t>(at(TILE_TABLE_AT, b::TILE_TABLE::offset::Y_EXTENT), 2048);
 
     // ---- LAYER_EXTENTS: two entries ------------------------------------- //
-    ::IFE::store<std::uint64_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::VALIDATION), LAYER_EXTENTS_AT);
-    ::IFE::store<std::uint16_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::VALIDATION), LAYER_EXTENTS_AT);
+    ::Iris::File::store<std::uint16_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_LAYER_EXTENTS));
-    ::IFE::store<std::uint16_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::STRIDE),
+    ::Iris::File::store<std::uint16_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::STRIDE),
                                 b::LAYER_EXTENTS::LAYER_EXTENT::entry_size);
-    ::IFE::store<std::uint32_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::COUNT), LAYER_EXTENT_COUNT);
+    ::Iris::File::store<std::uint32_t>(at(LAYER_EXTENTS_AT, b::LAYER_EXTENTS::offset::COUNT), LAYER_EXTENT_COUNT);
     for (std::uint32_t i = 0; i < 2; ++i) {
         BYTE* e = p + LAYER_EXTENTS_AT + b::LAYER_EXTENTS::header_size + i * b::LAYER_EXTENTS::LAYER_EXTENT::entry_size;
-        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 8u << i);
-        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::Y_TILES, 4u << i);
-        ::IFE::store<float>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::SCALE, 1.0f * static_cast<float>(i + 1));
+        ::Iris::File::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 8u << i);
+        ::Iris::File::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::Y_TILES, 4u << i);
+        ::Iris::File::store<float>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::SCALE, 1.0f * static_cast<float>(i + 1));
     }
 
     // ---- TILE_OFFSETS: one entry, exercising the packed widths ---------- //
-    ::IFE::store<std::uint64_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::VALIDATION), TILE_OFFSETS_AT);
-    ::IFE::store<std::uint16_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::VALIDATION), TILE_OFFSETS_AT);
+    ::Iris::File::store<std::uint16_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_TILE_OFFSETS));
-    ::IFE::store<std::uint16_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::STRIDE),
+    ::Iris::File::store<std::uint16_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::STRIDE),
                                 b::TILE_OFFSETS::TILE_OFFSET::entry_size);
-    ::IFE::store<std::uint32_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::COUNT), TILE_OFFSET_COUNT);
+    ::Iris::File::store<std::uint32_t>(at(TILE_OFFSETS_AT, b::LAYER_EXTENTS::offset::COUNT), TILE_OFFSET_COUNT);
     {
         BYTE* e = p + TILE_OFFSETS_AT + b::TILE_OFFSETS::header_size;
-        ::IFE::store_u40(e + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, 0xFEDCBA98ull);
-        ::IFE::store_u24(e + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, 0x00ABCDu);
+        ::Iris::File::store_u40(e + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, 0xFEDCBA98ull);
+        ::Iris::File::store_u24(e + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, 0x00ABCDu);
     }
 
     // ---- METADATA: every optional offset absent ------------------------- //
-    ::IFE::store<std::uint64_t>(at(METADATA_AT, b::TILE_TABLE::offset::VALIDATION), METADATA_AT);
-    ::IFE::store<std::uint16_t>(at(METADATA_AT, b::TILE_TABLE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(METADATA_AT, b::TILE_TABLE::offset::VALIDATION), METADATA_AT);
+    ::Iris::File::store<std::uint16_t>(at(METADATA_AT, b::TILE_TABLE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_METADATA));
-    ::IFE::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_MAJOR), 2);
-    ::IFE::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_MINOR), 1);
-    ::IFE::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_BUILD), 3);
+    ::Iris::File::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_MAJOR), 2);
+    ::Iris::File::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_MINOR), 1);
+    ::Iris::File::store<std::uint16_t>(at(METADATA_AT, b::METADATA::offset::CODEC_BUILD), 3);
     for (auto field : {b::METADATA::offset::ATTRIBUTES_OFFSET, b::METADATA::offset::IMAGES_OFFSET,
                        b::METADATA::offset::ICC_COLOR_OFFSET, b::METADATA::offset::ANNOTATIONS_OFFSET})
-        ::IFE::store<std::uint64_t>(at(METADATA_AT, field), k::NULL_OFFSET);
-    ::IFE::store<float>(at(METADATA_AT, b::METADATA::offset::MICRONS_PIXEL), 0.25f);
-    ::IFE::store<float>(at(METADATA_AT, b::METADATA::offset::MAGNIFICATION), 40.0f);
+        ::Iris::File::store<std::uint64_t>(at(METADATA_AT, field), k::NULL_OFFSET);
+    ::Iris::File::store<float>(at(METADATA_AT, b::METADATA::offset::MICRONS_PIXEL), 0.25f);
+    ::Iris::File::store<float>(at(METADATA_AT, b::METADATA::offset::MAGNIFICATION), 40.0f);
 
     return f;
 }
@@ -207,22 +207,22 @@ void test_corruption_is_caught() {
     };
     const Case cases[] = {
         {"magic clobbered", b::Check::BAD_CONSTANT, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint32_t>(f.data() + b::FILE_HEADER::offset::MAGIC, 0xDEADBEEF);
+            ::Iris::File::store<std::uint32_t>(f.data() + b::FILE_HEADER::offset::MAGIC, 0xDEADBEEF);
         }},
         {"root recovery tag wrong", b::Check::BAD_RECOVERY, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint16_t>(f.data() + b::FILE_HEADER::offset::RECOVERY, 0x5599);
+            ::Iris::File::store<std::uint16_t>(f.data() + b::FILE_HEADER::offset::RECOVERY, 0x5599);
         }},
         {"tile table self-offset wrong", b::Check::BAD_VALIDATION, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint64_t>(f.data() + TILE_TABLE_AT + b::TILE_TABLE::offset::VALIDATION, 99);
+            ::Iris::File::store<std::uint64_t>(f.data() + TILE_TABLE_AT + b::TILE_TABLE::offset::VALIDATION, 99);
         }},
         {"array stride zero", b::Check::BAD_STRIDE, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint16_t>(f.data() + LAYER_EXTENTS_AT + b::LAYER_EXTENTS::offset::STRIDE, 0);
+            ::Iris::File::store<std::uint16_t>(f.data() + LAYER_EXTENTS_AT + b::LAYER_EXTENTS::offset::STRIDE, 0);
         }},
         {"array count past EOF", b::Check::ARRAY_OVERRUN, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint32_t>(f.data() + LAYER_EXTENTS_AT + b::LAYER_EXTENTS::offset::COUNT, 100000);
+            ::Iris::File::store<std::uint32_t>(f.data() + LAYER_EXTENTS_AT + b::LAYER_EXTENTS::offset::COUNT, 100000);
         }},
         {"required offset points past EOF", b::Check::OUT_OF_BOUNDS, [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint64_t>(f.data() + b::FILE_HEADER::offset::TILE_TABLE_OFFSET, 1u << 20);
+            ::Iris::File::store<std::uint64_t>(f.data() + b::FILE_HEADER::offset::TILE_TABLE_OFFSET, 1u << 20);
         }},
         // Pointing an offset at a block of the wrong type is caught by the
         // recovery tag before anything else can go wrong. Note what this
@@ -234,7 +234,7 @@ void test_corruption_is_caught() {
         // through a crafted file.
         {"offset points at a block of the wrong type", b::Check::BAD_RECOVERY,
          [](std::vector<BYTE>& f) {
-            ::IFE::store<std::uint64_t>(
+            ::Iris::File::store<std::uint64_t>(
                 f.data() + TILE_TABLE_AT + b::TILE_TABLE::offset::LAYER_EXTENTS_OFFSET, TILE_TABLE_AT);
         }},
     };
@@ -265,14 +265,14 @@ void test_wider_stride_is_read_not_rejected() {
     constexpr std::uint16_t WIDE = 16;   // 1.0 entry is 12
     std::vector<BYTE> f(LAYER_EXTENTS_AT + b::LAYER_EXTENTS::header_size + 2 * WIDE, 0);
     BYTE* p = f.data() + LAYER_EXTENTS_AT;
-    ::IFE::store<std::uint64_t>(p + b::LAYER_EXTENTS::offset::VALIDATION, LAYER_EXTENTS_AT);
-    ::IFE::store<std::uint16_t>(p + b::LAYER_EXTENTS::offset::RECOVERY,
+    ::Iris::File::store<std::uint64_t>(p + b::LAYER_EXTENTS::offset::VALIDATION, LAYER_EXTENTS_AT);
+    ::Iris::File::store<std::uint16_t>(p + b::LAYER_EXTENTS::offset::RECOVERY,
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_LAYER_EXTENTS));
-    ::IFE::store<std::uint16_t>(p + b::LAYER_EXTENTS::offset::STRIDE, WIDE);
-    ::IFE::store<std::uint32_t>(p + b::LAYER_EXTENTS::offset::COUNT, 2);
+    ::Iris::File::store<std::uint16_t>(p + b::LAYER_EXTENTS::offset::STRIDE, WIDE);
+    ::Iris::File::store<std::uint32_t>(p + b::LAYER_EXTENTS::offset::COUNT, 2);
     for (std::uint32_t i = 0; i < 2; ++i) {
         BYTE* e = p + b::LAYER_EXTENTS::header_size + i * WIDE;
-        ::IFE::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 100 + i);
+        ::Iris::File::store<std::uint32_t>(e + b::LAYER_EXTENTS::LAYER_EXTENT::offset::X_TILES, 100 + i);
     }
     const b::LAYER_EXTENTS le{f.data(), LAYER_EXTENTS_AT, f.size(), VERSION_1_0};
     IFE_CHECK(static_cast<bool>(le.validate()));
@@ -346,75 +346,75 @@ std::vector<BYTE> make_extended_file() {
     auto at = [p](Offset block, std::size_t field) { return p + block + field; };
 
     // ---- IMAGES: one entry -> IMAGE_BYTES ------------------------------- //
-    ::IFE::store<std::uint64_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::VALIDATION), IMAGES_AT);
-    ::IFE::store<std::uint16_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::VALIDATION), IMAGES_AT);
+    ::Iris::File::store<std::uint16_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_IMAGES));
-    ::IFE::store<std::uint16_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::STRIDE), b::IMAGES::IMAGE_ENTRY::entry_size);
-    ::IFE::store<std::uint32_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::COUNT), 1);
+    ::Iris::File::store<std::uint16_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::STRIDE), b::IMAGES::IMAGE_ENTRY::entry_size);
+    ::Iris::File::store<std::uint32_t>(at(IMAGES_AT, b::LAYER_EXTENTS::offset::COUNT), 1);
     BYTE* ie = p + IMAGES_AT + b::IMAGES::header_size;
-    ::IFE::store<std::uint64_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::BYTES_OFFSET, IMAGE_BYTES_AT);
-    ::IFE::store<std::uint32_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::WIDTH, 256);
-    ::IFE::store<std::uint32_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::HEIGHT, 512);
-    ::IFE::store<std::uint8_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::ENCODING,
+    ::Iris::File::store<std::uint64_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::BYTES_OFFSET, IMAGE_BYTES_AT);
+    ::Iris::File::store<std::uint32_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::WIDTH, 256);
+    ::Iris::File::store<std::uint32_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::HEIGHT, 512);
+    ::Iris::File::store<std::uint8_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::ENCODING,
                                static_cast<std::uint8_t>(k::ImageEncodings::IMAGE_ENCODING_JPEG));
-    ::IFE::store<std::uint8_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::FORMAT,
+    ::Iris::File::store<std::uint8_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::FORMAT,
                                static_cast<std::uint8_t>(k::PixelFormats::FORMAT_R8G8B8A8));
-    ::IFE::store<std::uint16_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::ORIENTATION, 0x55A0);  // 90.0f
+    ::Iris::File::store<std::uint16_t>(ie + b::IMAGES::IMAGE_ENTRY::offset::ORIENTATION, 0x55A0);  // 90.0f
 
     // ---- IMAGE_BYTES: 300 B label + 500 B stream (sum, not product) ----- //
-    ::IFE::store<std::uint64_t>(at(IMAGE_BYTES_AT, b::TILE_TABLE::offset::VALIDATION), IMAGE_BYTES_AT);
-    ::IFE::store<std::uint16_t>(at(IMAGE_BYTES_AT, b::TILE_TABLE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(IMAGE_BYTES_AT, b::TILE_TABLE::offset::VALIDATION), IMAGE_BYTES_AT);
+    ::Iris::File::store<std::uint16_t>(at(IMAGE_BYTES_AT, b::TILE_TABLE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_IMAGE_BYTES));
-    ::IFE::store<std::uint16_t>(at(IMAGE_BYTES_AT, b::IMAGE_BYTES::offset::TITLE_SIZE), IMG_TITLE);
-    ::IFE::store<std::uint32_t>(at(IMAGE_BYTES_AT, b::IMAGE_BYTES::offset::IMAGE_SIZE), IMG_DATA);
+    ::Iris::File::store<std::uint16_t>(at(IMAGE_BYTES_AT, b::IMAGE_BYTES::offset::TITLE_SIZE), IMG_TITLE);
+    ::Iris::File::store<std::uint32_t>(at(IMAGE_BYTES_AT, b::IMAGE_BYTES::offset::IMAGE_SIZE), IMG_DATA);
     std::memset(p + IMAGE_BYTES_AT + b::IMAGE_BYTES::header_size, 'L', IMG_TITLE);
     std::memset(p + IMAGE_BYTES_AT + b::IMAGE_BYTES::header_size + IMG_TITLE, 0xAB, IMG_DATA);
 
     // ---- ANNOTATIONS: one entry -> ANNOTATION_BYTES, two groups --------- //
-    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::VALIDATION), ANNOTATIONS_AT);
-    ::IFE::store<std::uint16_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::VALIDATION), ANNOTATIONS_AT);
+    ::Iris::File::store<std::uint16_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATIONS));
-    ::IFE::store<std::uint16_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::STRIDE), b::ANNOTATIONS::ANNOTATION_ENTRY::entry_size);
-    ::IFE::store<std::uint32_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::COUNT), 1);
-    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, b::ANNOTATIONS::offset::GROUP_SIZES_OFFSET), GROUP_SIZES_AT);
-    ::IFE::store<std::uint64_t>(at(ANNOTATIONS_AT, b::ANNOTATIONS::offset::GROUP_BYTES_OFFSET), GROUP_BYTES_AT);
+    ::Iris::File::store<std::uint16_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::STRIDE), b::ANNOTATIONS::ANNOTATION_ENTRY::entry_size);
+    ::Iris::File::store<std::uint32_t>(at(ANNOTATIONS_AT, b::LAYER_EXTENTS::offset::COUNT), 1);
+    ::Iris::File::store<std::uint64_t>(at(ANNOTATIONS_AT, b::ANNOTATIONS::offset::GROUP_SIZES_OFFSET), GROUP_SIZES_AT);
+    ::Iris::File::store<std::uint64_t>(at(ANNOTATIONS_AT, b::ANNOTATIONS::offset::GROUP_BYTES_OFFSET), GROUP_BYTES_AT);
     BYTE* ae = p + ANNOTATIONS_AT + b::ANNOTATIONS::header_size;
-    ::IFE::store_u24(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::IDENTIFIER, 42);
-    ::IFE::store<std::uint64_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::BYTES_OFFSET, ANNOTATION_BYTES_AT);
-    ::IFE::store<std::uint8_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::FORMAT,
+    ::Iris::File::store_u24(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::IDENTIFIER, 42);
+    ::Iris::File::store<std::uint64_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::BYTES_OFFSET, ANNOTATION_BYTES_AT);
+    ::Iris::File::store<std::uint8_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::FORMAT,
                                static_cast<std::uint8_t>(k::AnnotationTypes::ANNOTATION_PNG));
-    ::IFE::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::X_LOCATION, 1.5f);
-    ::IFE::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::Y_LOCATION, 2.5f);
-    ::IFE::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::X_SIZE, 3.5f);
-    ::IFE::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::Y_SIZE, 4.5f);
-    ::IFE::store<std::uint32_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PIXEL_WIDTH, 100);
-    ::IFE::store<std::uint32_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PIXEL_HEIGHT, 200);
-    ::IFE::store_u24(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PARENT_ID, 0xFFFFFF);
+    ::Iris::File::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::X_LOCATION, 1.5f);
+    ::Iris::File::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::Y_LOCATION, 2.5f);
+    ::Iris::File::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::X_SIZE, 3.5f);
+    ::Iris::File::store<float>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::Y_SIZE, 4.5f);
+    ::Iris::File::store<std::uint32_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PIXEL_WIDTH, 100);
+    ::Iris::File::store<std::uint32_t>(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PIXEL_HEIGHT, 200);
+    ::Iris::File::store_u24(ae + b::ANNOTATIONS::ANNOTATION_ENTRY::offset::PARENT_ID, 0xFFFFFF);
 
     // ---- ANNOTATION_BYTES: 12 B stream ---------------------------------- //
-    ::IFE::store<std::uint64_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::VALIDATION), ANNOTATION_BYTES_AT);
-    ::IFE::store<std::uint16_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::VALIDATION), ANNOTATION_BYTES_AT);
+    ::Iris::File::store<std::uint16_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_BYTES));
-    ::IFE::store<std::uint32_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::COUNT), ANNOTATION_BYTES_COUNT);
+    ::Iris::File::store<std::uint32_t>(at(ANNOTATION_BYTES_AT, b::ICC_PROFILE::offset::COUNT), ANNOTATION_BYTES_COUNT);
     std::memset(p + ANNOTATION_BYTES_AT + b::ANNOTATION_BYTES::header_size, 0xCD, ANNOTATION_BYTES_COUNT);
 
     // ---- GROUP_SIZES: two entries ('A' + 2 members, "ZEBRA" + 1 member) - //
-    ::IFE::store<std::uint64_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::VALIDATION), GROUP_SIZES_AT);
-    ::IFE::store<std::uint16_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::VALIDATION), GROUP_SIZES_AT);
+    ::Iris::File::store<std::uint16_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_SIZES));
-    ::IFE::store<std::uint16_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::STRIDE), b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size);
-    ::IFE::store<std::uint32_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::COUNT), 2);
+    ::Iris::File::store<std::uint16_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::STRIDE), b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size);
+    ::Iris::File::store<std::uint32_t>(at(GROUP_SIZES_AT, b::LAYER_EXTENTS::offset::COUNT), 2);
     BYTE* g0 = p + GROUP_SIZES_AT + b::ANNOTATION_GROUP_SIZES::header_size;
-    ::IFE::store<std::uint16_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::TITLE_SIZE, 1);
-    ::IFE::store<std::uint32_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::MEMBER_COUNT, 2);
-    ::IFE::store<std::uint16_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::TITLE_SIZE, 5);
-    ::IFE::store<std::uint32_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::MEMBER_COUNT, 1);
+    ::Iris::File::store<std::uint16_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::TITLE_SIZE, 1);
+    ::Iris::File::store<std::uint32_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::MEMBER_COUNT, 2);
+    ::Iris::File::store<std::uint16_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::TITLE_SIZE, 5);
+    ::Iris::File::store<std::uint32_t>(g0 + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::entry_size + b::ANNOTATION_GROUP_SIZES::ANNOTATION_GROUP_SIZE::offset::MEMBER_COUNT, 1);
 
     // ---- GROUP_BYTES: 'A' + 2 members, "ZEBRA" + 1 member = 15 B ------- //
-    ::IFE::store<std::uint64_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::VALIDATION), GROUP_BYTES_AT);
-    ::IFE::store<std::uint16_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::VALIDATION), GROUP_BYTES_AT);
+    ::Iris::File::store<std::uint16_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ANNOTATION_GROUP_BYTES));
-    ::IFE::store<std::uint32_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::COUNT), GROUP_PAYLOAD);
+    ::Iris::File::store<std::uint32_t>(at(GROUP_BYTES_AT, b::ICC_PROFILE::offset::COUNT), GROUP_PAYLOAD);
     BYTE* gb = p + GROUP_BYTES_AT + b::ANNOTATION_GROUP_BYTES::header_size;
     *gb = 'A';
     std::memset(gb + 1, 1, 6);          // two 3-byte member identifiers
@@ -422,20 +422,20 @@ std::vector<BYTE> make_extended_file() {
     std::memset(gb + 12, 2, 3);         // one 3-byte member identifier
 
     // ---- ICC_PROFILE: 70,000 B (the u16-truncation class) -------------- //
-    ::IFE::store<std::uint64_t>(at(ICC_AT, b::ICC_PROFILE::offset::VALIDATION), ICC_AT);
-    ::IFE::store<std::uint16_t>(at(ICC_AT, b::ICC_PROFILE::offset::RECOVERY),
+    ::Iris::File::store<std::uint64_t>(at(ICC_AT, b::ICC_PROFILE::offset::VALIDATION), ICC_AT);
+    ::Iris::File::store<std::uint16_t>(at(ICC_AT, b::ICC_PROFILE::offset::RECOVERY),
                                 static_cast<std::uint16_t>(k::RecoveryCodes::RECOVER_ICC_PROFILE));
-    ::IFE::store<std::uint32_t>(at(ICC_AT, b::ICC_PROFILE::offset::COUNT), ICC_BYTE_COUNT);
+    ::Iris::File::store<std::uint32_t>(at(ICC_AT, b::ICC_PROFILE::offset::COUNT), ICC_BYTE_COUNT);
     std::memset(p + ICC_AT + b::ICC_PROFILE::header_size, 0xEE, ICC_BYTE_COUNT);
 
     // ---- point METADATA at the new blocks, fix the file size ------------ //
-    ::IFE::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::IMAGES_OFFSET), IMAGES_AT);
-    ::IFE::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::ICC_COLOR_OFFSET), ICC_AT);
-    ::IFE::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::ANNOTATIONS_OFFSET), ANNOTATIONS_AT);
+    ::Iris::File::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::IMAGES_OFFSET), IMAGES_AT);
+    ::Iris::File::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::ICC_COLOR_OFFSET), ICC_AT);
+    ::Iris::File::store<std::uint64_t>(at(METADATA_AT, b::METADATA::offset::ANNOTATIONS_OFFSET), ANNOTATIONS_AT);
     // EXTENDED_END_OFFSET, not make_file()'s END_OFFSET: handles bound against the buffer
     // length today, but the runtime validates against this field, and a header
     // declaring 202 bytes over an 86 KB file would fail there instead of here.
-    ::IFE::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_SIZE), EXTENDED_END_OFFSET);
+    ::Iris::File::store<std::uint64_t>(at(FILE_HEADER_AT, b::FILE_HEADER::offset::FILE_SIZE), EXTENDED_END_OFFSET);
     return f;
 }
 
@@ -494,7 +494,7 @@ void test_annotation_groups_read_from_entries() {
 
 // ---- generated writers ------------------------------------------------- //
 //
-// Every other fixture in this file hand-assembles bytes with ::IFE::store<>,
+// Every other fixture in this file hand-assembles bytes with ::Iris::File::store<>,
 // which tests the readers against a buffer the test itself laid out. This one
 // builds a whole file through the generated store() functions instead -- all
 // sixteen blocks, every offset edge connected -- then deep-validates it and
@@ -555,7 +555,7 @@ void test_generated_writers_round_trip() {
 
     // ---- place every block head to tail, using size_of alone -------------- //
     Offset at = 0;
-    auto place = [&at](::IFE::Size bytes) { const Offset here = at; at += bytes; return here; };
+    auto place = [&at](::Iris::File::Size bytes) { const Offset here = at; at += bytes; return here; };
 
     const Offset header_at      = place(b::size_of(header));
     const Offset table_at       = place(b::size_of(table));
@@ -593,7 +593,7 @@ void test_generated_writers_round_trip() {
     const Offset images_at      = place(b::size_of(images) + b::IMAGES::IMAGE_ENTRY::entry_size);
     const Offset annotations_at = place(b::size_of(annotations) + b::ANNOTATIONS::ANNOTATION_ENTRY::
 entry_size);
-    const ::IFE::Size file_size = at;
+    const ::Iris::File::Size file_size = at;
 
     header = {.FILE_SIZE = file_size, .EXTENSION_MAJOR = 1, .EXTENSION_MINOR = 0,
               .FILE_REVISION = 7, .TILE_TABLE_OFFSET = table_at, .METADATA_OFFSET = meta_at};
@@ -713,7 +713,7 @@ template <typename CreateInfo>
 void check_writes_exactly(const char* what, const CreateInfo& info) {
     constexpr BYTE   POISON = 0xA5;
     constexpr Offset PAD    = 64;
-    const ::IFE::Size span  = b::size_of(info);
+    const ::Iris::File::Size span  = b::size_of(info);
 
     std::vector<BYTE> buf(PAD + span + PAD, POISON);
     const auto status = b::store(buf.data(), PAD, info);
@@ -794,7 +794,7 @@ void test_nested_attribute_values_round_trip() {
 
     std::vector<BYTE> f(1024, 0);
     Offset at = 0;
-    auto place = [&at](::IFE::Size bytes) { const Offset here = at; at += bytes; return here; };
+    auto place = [&at](::Iris::File::Size bytes) { const Offset here = at; at += bytes; return here; };
 
     b::AttributeSizesCreateInfo i0_sizes{.entries = item0};
     b::AttributeBytesCreateInfo i0_blob{.entries = item0};
@@ -846,13 +846,13 @@ void test_nested_attribute_values_round_trip() {
     IFE_CHECK(static_cast<bool>(root_h.validate_deep()));
     IFE_CHECK(sizes_h.count() == 3);
 
-    const ::IFE::ByteSpan blob = blob_h.bytes();
-    ::IFE::Size cursor = 0;
+    const ::Iris::File::ByteSpan blob = blob_h.bytes();
+    ::Iris::File::Size cursor = 0;
     std::vector<Offset> resolved;
     for (std::uint32_t i = 0; i < sizes_h.count(); ++i) {
         const auto entry = sizes_h.entry(i);
-        const ::IFE::Size key_size   = entry.key_size();
-        const ::IFE::Size value_size = entry.value_size();
+        const ::Iris::File::Size key_size   = entry.key_size();
+        const ::Iris::File::Size value_size = entry.value_size();
         const std::string key(reinterpret_cast<const char*>(blob.data + cursor), key_size);
         cursor += key_size;
 
@@ -860,7 +860,7 @@ void test_nested_attribute_values_round_trip() {
             // VALUE_SIZE is the slice length at every kind, so the item count
             // is what the slice holds rather than a separate field.
             IFE_CHECK(b::nested_size_is_whole(value_size));
-            for (::IFE::Size n = 0; n < b::nested_count(value_size); ++n)
+            for (::Iris::File::Size n = 0; n < b::nested_count(value_size); ++n)
                 resolved.push_back(b::nested_offset(blob.data + cursor, n));
         } else {
             IFE_CHECK(key == "SCANNER");
@@ -886,7 +886,7 @@ void test_nested_attribute_values_round_trip() {
             IFE_CHECK(item_sizes.count() == 1);
             const auto e = item_sizes.entry(0);
             IFE_CHECK(e.kind() == k::AttributeKinds::ATTRIBUTE_STRING);
-            const ::IFE::ByteSpan span = item_blob.bytes();
+            const ::Iris::File::ByteSpan span = item_blob.bytes();
             IFE_CHECK(std::string(reinterpret_cast<const char*>(span.data), e.key_size())
                       == "0008,0100");
             IFE_CHECK(std::string(reinterpret_cast<const char*>(span.data + e.key_size()),
@@ -956,7 +956,7 @@ void test_nested_payload_must_agree_with_its_kind() {
 // dispatch point has.
 int g_hook_calls = 0;
 
-b::Status reject_tile_table(const b::TileTableCreateInfo& __info, ::IFE::Offset __at,
+b::Status reject_tile_table(const b::TileTableCreateInfo& __info, ::Iris::File::Offset __at,
                             const b::ValidationHooks*) noexcept {
     ++g_hook_calls;
     // A conformance rule the structural validator has no business knowing.
@@ -1023,9 +1023,9 @@ void test_tile_frame_reads_backward_from_the_stream() {
     BYTE* p = f.data();
     for (std::uint32_t i = 0; i < STREAM_SIZE; ++i) p[STREAM_AT + i] = BYTE(i & 0xFF);
 
-    ::IFE::store_u40(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::VALIDATION, VALIDATION_AT);
-    ::IFE::store<std::uint32_t>(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::TILE_INDEX, TILE_INDEX);
-    ::IFE::store<std::uint16_t>(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::Z_PLANES, Z_PLANES);
+    ::Iris::File::store_u40(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::VALIDATION, VALIDATION_AT);
+    ::Iris::File::store<std::uint32_t>(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::TILE_INDEX, TILE_INDEX);
+    ::Iris::File::store<std::uint16_t>(p + STREAM_AT + b::TILE_PIXEL_DATA::offset::Z_PLANES, Z_PLANES);
 
     // Anchored at the stream, not at the frame: no arithmetic at the call site.
     const b::TILE_PIXEL_DATA frame{p, STREAM_AT, f.size(), b::VERSION_WRITTEN};
@@ -1041,18 +1041,21 @@ void test_tile_frame_reads_backward_from_the_stream() {
 
     // Detection is by self-reference at a fixed distance behind the stream, so
     // it keeps working however far back a later version extends the frame.
-    IFE_CHECK(::IFE::load_u40(p + VALIDATION_AT) == VALIDATION_AT);
+    IFE_CHECK(::Iris::File::load_u40(p + VALIDATION_AT) == VALIDATION_AT);
     std::vector<BYTE> unframed(STREAM_AT + STREAM_SIZE, 0xCD);
-    IFE_CHECK(::IFE::load_u40(unframed.data() + VALIDATION_AT) != VALIDATION_AT);
+    IFE_CHECK(::Iris::File::load_u40(unframed.data() + VALIDATION_AT) != VALIDATION_AT);
 
     // Bounds run the other way too: a stream with fewer than header_size bytes
     // behind it cannot carry a frame, and asking must not read past the file.
     const b::TILE_PIXEL_DATA too_early{p, b::TILE_PIXEL_DATA::header_size - 1, f.size(),
                                        b::VERSION_WRITTEN};
-    IFE_CHECK(!static_cast<bool>(too_early));
+    // in_bounds(), not the bool: this pins the BOUNDS, and since RC-10.1 the
+    // bool also demands both witnesses, which a handle at an arbitrary
+    // position in this buffer does not carry.
+    IFE_CHECK(!too_early.in_bounds());
     const b::TILE_PIXEL_DATA exactly_fits{p, b::TILE_PIXEL_DATA::header_size, f.size(),
                                           b::VERSION_WRITTEN};
-    IFE_CHECK(static_cast<bool>(exactly_fits));
+    IFE_CHECK(exactly_fits.in_bounds());
 
     // A 1.0 file cannot hold a frame, so every field of one reads as absent
     // rather than as five bytes that mean something else. validate() still
@@ -1082,7 +1085,7 @@ void test_appended_offset_field_is_version_gated() {
     const Offset field_at = METADATA_AT + b::METADATA::offset::CLINICAL_OFFSET;
     IFE_CHECK(field_at >= METADATA_AT + b::METADATA::header_size_v1_0);
     f.resize(std::max<std::size_t>(f.size(), field_at + 8), 0);
-    ::IFE::store<std::uint64_t>(f.data() + field_at, 0x40);  // not NULL_OFFSET
+    ::Iris::File::store<std::uint64_t>(f.data() + field_at, 0x40);  // not NULL_OFFSET
 
     const b::FILE_HEADER as_1_0{f.data(), FILE_HEADER_AT, f.size(), VERSION_1_0};
     const auto clinical = as_1_0.metadata_offset().clinical_offset();
@@ -1129,7 +1132,7 @@ void test_no_arg_validate_deep_on_every_block() {
 
     // ---- place the six appended blocks head to tail ---------------------- //
     Offset at = EXTENDED_END_OFFSET;
-    auto place = [&at](::IFE::Size bytes) { const Offset here = at; at += bytes; return here; };
+    auto place = [&at](::Iris::File::Size bytes) { const Offset here = at; at += bytes; return here; };
     const Offset cipher_at     = place(b::size_of(cipher));
     const Offset attr_sizes_at = place(b::size_of(attr_sizes));
     const Offset attr_blob_at  = place(b::size_of(attr_blob));
@@ -1203,6 +1206,34 @@ void test_no_arg_validate_deep_on_every_block() {
 // The snapshot and every fixture write JPEG; AVIF (=3) never appears in
 // committed bytes, and a reader that mishandled it would pass every other
 // test. Regression: the generated store/read path for a non-JPEG value.
+/// A packed field (u24/u40) is narrower than the C++ integer the CreateInfo
+/// carries it in. store() refuses a value that does not fit — before writing a
+/// byte — instead of truncating it: a u40 OFFSET of 1<<40 used to store as 0,
+/// and a u24 SIZE of 0xFFFFFFFF as 0xFFFFFF, with an OK status.
+void test_packed_fields_refuse_values_too_wide() {
+    struct Case { const char* field; b::TileOffsetEntry entry; };
+    const Case cases[] = {
+        {"OFFSET", {.OFFSET = 1ULL << 40, .SIZE = 16}},
+        {"SIZE",   {.OFFSET = 64,         .SIZE = 0x1000000}},
+    };
+    for (const Case& c : cases) {
+        const std::vector<b::TileOffsetEntry> tiles = {{.OFFSET = 64, .SIZE = 16}, c.entry};
+        const b::TileOffsetsCreateInfo info{.entries = tiles};
+        std::vector<BYTE> f(b::size_of(info), 0xAA);
+        const b::Status status = b::store(f.data(), 0, info);
+        IFE_CHECK(!status);
+        IFE_CHECK(status.code == b::Check::VALUE_TOO_WIDE);
+        IFE_CHECK(std::strcmp(status.field, c.field) == 0);
+        // Refused before the first byte: the destination is untouched.
+        IFE_CHECK(std::all_of(f.begin(), f.end(), [](BYTE x) { return x == 0xAA; }));
+    }
+    // The widest values that do fit still store — NULL_TILE is the u40 maximum.
+    const std::vector<b::TileOffsetEntry> edge = {{.OFFSET = k::NULL_TILE, .SIZE = 0xFFFFFF}};
+    const b::TileOffsetsCreateInfo ok{.entries = edge};
+    std::vector<BYTE> f(b::size_of(ok), 0);
+    IFE_CHECK(static_cast<bool>(b::store(f.data(), 0, ok)));
+}
+
 void test_tile_encoding_avif_round_trips() {
     // header_size, not header_size_v1_0: the handle's __size is the buffer
     // length, and fits() requires the newest header (46 B with TILE_LENGTH).
@@ -1235,6 +1266,7 @@ int main() {
     test_generated_writers_round_trip();
     test_no_arg_validate_deep_on_every_block();
     test_tile_encoding_avif_round_trips();
+    test_packed_fields_refuse_values_too_wide();
     test_writers_stay_within_size_of();
     test_nested_attribute_values_round_trip();
     test_nested_payload_must_agree_with_its_kind();

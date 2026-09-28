@@ -33,9 +33,9 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+using ::Iris::File::BYTE;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
 std::vector<BYTE> read_whole_file(const std::string& __path) {
     std::FILE* in = std::fopen(__path.c_str(), "rb");
@@ -250,12 +250,12 @@ void test_11_fields_present(const std::vector<BYTE>& f, const v11_fixture::Expec
     IFE_CHECK(gs.entry(0).title_size()   == e.group.title.size());
     IFE_CHECK(gs.entry(0).member_count() == e.group.members.size());
     const auto    group_run = gb.bytes();
-    ::IFE::Size   run_at    = 0;
+    ::Iris::File::Size   run_at    = 0;
     IFE_CHECK(std::memcmp(group_run.data + run_at, e.group.title.data(),
                           e.group.title.size()) == 0);
     run_at += e.group.title.size();
     for (const std::uint32_t id : e.group.members) {
-        const ::IFE::BYTE* m = group_run.data + run_at;
+        const ::Iris::File::BYTE* m = group_run.data + run_at;
         const std::uint32_t decoded =
             static_cast<std::uint32_t>(m[0]) |
             (static_cast<std::uint32_t>(m[1]) << 8) |

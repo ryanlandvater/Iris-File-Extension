@@ -12,6 +12,7 @@
  * Self-contained; non-zero exit on failure.
  */
 #include "IrisFileExtension.hpp"
+#include "IFE_Advanced.hpp"   // generate_file_map + MapEntryType (advanced tier)
 
 // The corruption test below has to reach one field of one entry to break it.
 // Included for the generated offsets rather than to test the block layer,
@@ -85,24 +86,24 @@ void test_validate_accepts_a_v1_file() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
 
-    IFE_CHECK(IrisCodec::is_iris_codec_file({f.data(), f.size()}));
+    IFE_CHECK(Iris::File::is_iris_codec_file({f.data(), f.size()}));
 
-    const auto result = IrisCodec::validate_file_structure({f.data(), f.size()});
+    const auto result = Iris::File::validate_file_structure({f.data(), f.size()});
     IFE_CHECK(result == Iris::IRIS_SUCCESS);
     if (result != Iris::IRIS_SUCCESS) std::fprintf(stderr, "  %s\n", result.message.c_str());
 
     // Not an Iris file, and not a crash: the first four bytes decide.
     std::vector<BYTE> noise(64, 0x00);
-    IFE_CHECK(!IrisCodec::is_iris_codec_file({noise.data(), noise.size()}));
+    IFE_CHECK(!Iris::File::is_iris_codec_file({noise.data(), noise.size()}));
     // Nor is a file too short to hold a header.
-    IFE_CHECK(!IrisCodec::is_iris_codec_file({f.data(), 4}));
+    IFE_CHECK(!Iris::File::is_iris_codec_file({f.data(), 4}));
 }
 
 void test_abstraction_matches_what_was_encoded() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
 
-    const auto slide = IrisCodec::abstract_file_structure({f.data(), f.size()});
+    const auto slide = Iris::File::abstract_file_structure({f.data(), f.size()});
 
     // ---- header ---------------------------------------------------------- //
     IFE_CHECK(slide.header.fileSize == expected.file_size);
@@ -224,23 +225,23 @@ void test_abstraction_matches_what_was_encoded() {
 void test_partial_nested_offset_is_rejected() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
-    IFE_CHECK(static_cast<bool>(IrisCodec::validate_file_structure({f.data(), f.size()})));
+    IFE_CHECK(static_cast<bool>(Iris::File::validate_file_structure({f.data(), f.size()})));
 
     // Find the root attributes' sizes array through the public map, then the
     // nested entry within it, rather than hard-coding either position.
-    namespace b = ::IFE::blocks;
-    const auto map = IrisCodec::generate_file_map({f.data(), f.size()});
+    namespace b = ::Iris::File::blocks;
+    const auto map = Iris::File::generate_file_map({f.data(), f.size()});
     bool corrupted = false;
     for (const auto& [offset, entry] : map) {
-        if (entry.type != IrisCodec::Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES) continue;
+        if (entry.type != Iris::File::Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES) continue;
         const b::ATTRIBUTE_SIZES sizes{f.data(), offset, f.size(), b::VERSION_WRITTEN};
         for (std::uint32_t i = 0; i < sizes.count() && !corrupted; ++i) {
             const auto e = sizes.entry(i);
-            if (e.kind() != ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED) continue;
+            if (e.kind() != ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED) continue;
             if (e.value_size() == 0) continue;   // an empty sequence is already whole
             // One byte short of a whole offset: the file still fits, the run
             // still has room, and only the divisibility rule is broken.
-            ::IFE::store<std::uint32_t>(
+            ::Iris::File::store<std::uint32_t>(
                 f.data() + e.__offset + b::ATTRIBUTE_SIZES::ATTRIBUTE_SIZE::offset::VALUE_SIZE,
                 e.value_size() - 1);
             corrupted = true;
@@ -250,14 +251,14 @@ void test_partial_nested_offset_is_rejected() {
     IFE_CHECK(corrupted);   // the fixture must contain a nested value to corrupt
 
     // Validation rejects it, and says which rule was broken.
-    const auto result = IrisCodec::validate_file_structure({f.data(), f.size()});
+    const auto result = Iris::File::validate_file_structure({f.data(), f.size()});
     IFE_CHECK(result != Iris::IRIS_SUCCESS);
     IFE_CHECK(std::string(result.message).find("whole number") != std::string::npos);
 
     // And the abstraction refuses to lift it rather than reading a partial
     // offset and inventing a structure the encoder never wrote.
     bool threw = false;
-    try { (void)IrisCodec::abstract_file_structure({f.data(), f.size()}); }
+    try { (void)Iris::File::abstract_file_structure({f.data(), f.size()}); }
     catch (const std::runtime_error&) { threw = true; }
     IFE_CHECK(threw);
 }
@@ -265,8 +266,8 @@ void test_partial_nested_offset_is_rejected() {
 // The root attributes structure of a loaded snapshot, at the version the file
 // declares. Constructing at VERSION_WRITTEN instead would claim a version the
 // file does not have.
-::IFE::blocks::ATTRIBUTES root_attributes(std::vector<BYTE>& __f) {
-    namespace b = ::IFE::blocks;
+::Iris::File::blocks::ATTRIBUTES root_attributes(std::vector<BYTE>& __f) {
+    namespace b = ::Iris::File::blocks;
     const b::FILE_HEADER boot{__f.data(), 0, __f.size(), UINT32_MAX};
     const std::uint32_t declared =
         (static_cast<std::uint32_t>(boot.extension_major()) << 16) | boot.extension_minor();
@@ -276,12 +277,12 @@ void test_partial_nested_offset_is_rejected() {
 
 /// Address of the first non-empty nested value slice in an attributes
 /// structure, so a test can repoint where it leads. Null when there is none.
-BYTE* first_nested_value(std::vector<BYTE>& __f, const ::IFE::blocks::ATTRIBUTES& __a) {
-    namespace b = ::IFE::blocks;
-    namespace k = ::IFE::constants;
+BYTE* first_nested_value(std::vector<BYTE>& __f, const ::Iris::File::blocks::ATTRIBUTES& __a) {
+    namespace b = ::Iris::File::blocks;
+    namespace k = ::Iris::File::constants;
     const auto sizes = __a.sizes_offset();
     const auto bytes = __a.bytes_offset();
-    ::IFE::Size cursor = 0;
+    ::Iris::File::Size cursor = 0;
     for (std::uint32_t i = 0; i < sizes.count(); ++i) {
         const auto e = sizes.entry(i);
         cursor += e.key_size();
@@ -301,7 +302,7 @@ BYTE* first_nested_value(std::vector<BYTE>& __f, const ::IFE::blocks::ATTRIBUTES
 void test_attribute_cycle_is_rejected() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
-    IFE_CHECK(static_cast<bool>(IrisCodec::validate_file_structure({f.data(), f.size()})));
+    IFE_CHECK(static_cast<bool>(Iris::File::validate_file_structure({f.data(), f.size()})));
 
     const auto attrs = root_attributes(f);
     BYTE* value = first_nested_value(f, attrs);
@@ -309,14 +310,14 @@ void test_attribute_cycle_is_rejected() {
     if (!value) return;
 
     // Point the first sequence item at the structure that names it.
-    ::IFE::store<std::uint64_t>(value, attrs.__offset);
+    ::Iris::File::store<std::uint64_t>(value, attrs.__offset);
 
-    const auto result = IrisCodec::validate_file_structure({f.data(), f.size()});
+    const auto result = Iris::File::validate_file_structure({f.data(), f.size()});
     IFE_CHECK(result != Iris::IRIS_SUCCESS);
     IFE_CHECK(std::string(result.message).find("returns to a block") != std::string::npos);
 
     bool threw = false;
-    try { (void)IrisCodec::abstract_file_structure({f.data(), f.size()}); }
+    try { (void)Iris::File::abstract_file_structure({f.data(), f.size()}); }
     catch (const std::runtime_error&) { threw = true; }
     IFE_CHECK(threw);
 }
@@ -334,28 +335,28 @@ void test_attribute_cycle_is_rejected() {
 // Fan-out is what separates the two uses: one offset per level is a chain and
 // tests the depth bound; many offsets per level is a DAG whose every path is
 // distinct, which is what a walk without memory pays for exponentially.
-::IFE::Offset append_attribute_chain(std::vector<BYTE>& __f, std::size_t __levels,
+::Iris::File::Offset append_attribute_chain(std::vector<BYTE>& __f, std::size_t __levels,
                                      std::size_t __fanout) {
-    namespace b = ::IFE::blocks;
-    namespace k = ::IFE::constants;
-    const ::IFE::Offset base = __f.size();
+    namespace b = ::Iris::File::blocks;
+    namespace k = ::Iris::File::constants;
+    const ::Iris::File::Offset base = __f.size();
     __f.resize(base + __levels * (128 + __fanout * b::NESTED_OFFSET_SIZE));
 
-    ::IFE::Offset cursor = base, child = 0;
+    ::Iris::File::Offset cursor = base, child = 0;
     for (std::size_t i = 0; i < __levels; ++i) {
         std::vector<b::AttributeSizeEntry> e(1);
         if (i == 0) {
             e[0] = {.key = "k", .value = "leaf"};
         } else {
             e[0] = {.key    = "k",
-                    .nested = std::vector<::IFE::Offset>(__fanout, child),
+                    .nested = std::vector<::Iris::File::Offset>(__fanout, child),
                     .KIND   = k::AttributeKinds::ATTRIBUTE_NESTED};
         }
         const b::AttributeSizesCreateInfo si{.entries = e};
         const b::AttributeBytesCreateInfo bi{.entries = e};
-        const ::IFE::Offset s_at = cursor; cursor += b::size_of(si);
-        const ::IFE::Offset b_at = cursor; cursor += b::size_of(bi);
-        const ::IFE::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
+        const ::Iris::File::Offset s_at = cursor; cursor += b::size_of(si);
+        const ::Iris::File::Offset b_at = cursor; cursor += b::size_of(bi);
+        const ::Iris::File::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
         IFE_CHECK(static_cast<bool>(b::store(__f.data(), s_at, si)));
         IFE_CHECK(static_cast<bool>(b::store(__f.data(), b_at, bi)));
         IFE_CHECK(static_cast<bool>(b::store(__f.data(), a_at, b::AttributesCreateInfo{
@@ -364,7 +365,7 @@ void test_attribute_cycle_is_rejected() {
         child = a_at;
     }
     __f.resize(cursor);
-    ::IFE::store<std::uint64_t>(__f.data() + b::FILE_HEADER::offset::FILE_SIZE, __f.size());
+    ::Iris::File::store<std::uint64_t>(__f.data() + b::FILE_HEADER::offset::FILE_SIZE, __f.size());
     return child;
 }
 
@@ -379,41 +380,41 @@ void test_attribute_cycle_is_rejected() {
 // If that memory is ever removed this test does not fail, it hangs; the target
 // carries a ctest TIMEOUT so the hang is reported rather than waited on.
 void test_shared_nested_structures_are_validated_once() {
-    namespace b = ::IFE::blocks;
+    namespace b = ::Iris::File::blocks;
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
 
-    const ::IFE::Offset head = append_attribute_chain(f, b::MAX_BLOCK_DEPTH - 4, 40);
+    const ::Iris::File::Offset head = append_attribute_chain(f, b::MAX_BLOCK_DEPTH - 4, 40);
     BYTE* value = first_nested_value(f, root_attributes(f));
     IFE_CHECK(value != nullptr);
     if (!value) return;
-    ::IFE::store<std::uint64_t>(value, head);
+    ::Iris::File::store<std::uint64_t>(value, head);
 
     // Accepted, not merely survived: the file is well formed, and a reader
     // that rejected sharing would be refusing something the format allows.
-    const auto result = IrisCodec::validate_file_structure({f.data(), f.size()});
+    const auto result = Iris::File::validate_file_structure({f.data(), f.size()});
     IFE_CHECK(result == Iris::IRIS_SUCCESS);
     if (result != Iris::IRIS_SUCCESS) std::fprintf(stderr, "  %s\n", result.message.c_str());
 
     // The map walks the same edges on files with no validated graph behind
     // them, so it carries the same memory.
-    const auto map = IrisCodec::generate_file_map({f.data(), f.size()});
+    const auto map = Iris::File::generate_file_map({f.data(), f.size()});
     IFE_CHECK(map.size() > 0);
 }
 
 void test_attribute_nesting_depth_is_bounded() {
-    namespace b = ::IFE::blocks;
-    namespace k = ::IFE::constants;
+    namespace b = ::Iris::File::blocks;
+    namespace k = ::Iris::File::constants;
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
 
     // Longer than the runtime's own bound, which is derived from the block
     // graph's limit -- so this cannot drift from the constant it tests.
     const std::size_t chain = b::MAX_BLOCK_DEPTH;
-    const ::IFE::Offset base = f.size();
+    const ::Iris::File::Offset base = f.size();
     f.resize(base + chain * 128);
 
-    ::IFE::Offset cursor = base, child = 0;
+    ::Iris::File::Offset cursor = base, child = 0;
     for (std::size_t i = 0; i < chain; ++i) {
         std::vector<b::AttributeSizeEntry> e(1);
         if (i == 0) e[0] = {.key = "k", .value = "leaf"};
@@ -421,9 +422,9 @@ void test_attribute_nesting_depth_is_bounded() {
                             .KIND = k::AttributeKinds::ATTRIBUTE_NESTED};
         const b::AttributeSizesCreateInfo si{.entries = e};
         const b::AttributeBytesCreateInfo bi{.entries = e};
-        const ::IFE::Offset s_at = cursor; cursor += b::size_of(si);
-        const ::IFE::Offset b_at = cursor; cursor += b::size_of(bi);
-        const ::IFE::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
+        const ::Iris::File::Offset s_at = cursor; cursor += b::size_of(si);
+        const ::Iris::File::Offset b_at = cursor; cursor += b::size_of(bi);
+        const ::Iris::File::Offset a_at = cursor; cursor += b::ATTRIBUTES::header_size;
         IFE_CHECK(static_cast<bool>(b::store(f.data(), s_at, si)));
         IFE_CHECK(static_cast<bool>(b::store(f.data(), b_at, bi)));
         IFE_CHECK(static_cast<bool>(b::store(f.data(), a_at, b::AttributesCreateInfo{
@@ -432,16 +433,16 @@ void test_attribute_nesting_depth_is_bounded() {
         child = a_at;
     }
     f.resize(cursor);
-    ::IFE::store<std::uint64_t>(f.data() + b::FILE_HEADER::offset::FILE_SIZE, f.size());
+    ::Iris::File::store<std::uint64_t>(f.data() + b::FILE_HEADER::offset::FILE_SIZE, f.size());
 
     // Hang the chain off the root, replacing the fixture's own first item.
     const auto attrs = root_attributes(f);
     BYTE* value = first_nested_value(f, attrs);
     IFE_CHECK(value != nullptr);
     if (!value) return;
-    ::IFE::store<std::uint64_t>(value, child);
+    ::Iris::File::store<std::uint64_t>(value, child);
 
-    const auto result = IrisCodec::validate_file_structure({f.data(), f.size()});
+    const auto result = Iris::File::validate_file_structure({f.data(), f.size()});
     IFE_CHECK(result != Iris::IRIS_SUCCESS);
     // Named specifically, on both axes. Nothing here repeats on the path, so
     // reporting a cycle would be wrong; and the attribute bound must be what
@@ -456,7 +457,7 @@ void test_attribute_nesting_depth_is_bounded() {
               == std::string::npos);
 
     bool threw = false;
-    try { (void)IrisCodec::abstract_file_structure({f.data(), f.size()}); }
+    try { (void)Iris::File::abstract_file_structure({f.data(), f.size()}); }
     catch (const std::runtime_error&) { threw = true; }
     IFE_CHECK(threw);
 }
@@ -465,30 +466,30 @@ void test_file_map_finds_every_block() {
     v1_fixture::Expected expected;
     auto f = v1_slide(expected);
 
-    const auto map = IrisCodec::generate_file_map({f.data(), f.size()});
+    const auto map = Iris::File::generate_file_map({f.data(), f.size()});
     IFE_CHECK(map.file_size == expected.file_size);
 
     // Ordered by offset, which is the property the whole API exists for:
     // "what lies after the byte I am about to overwrite".
     IFE_CHECK(map.count(0) == 1);
-    IFE_CHECK(map.at(0).type == IrisCodec::Abstraction::MAP_ENTRY_FILE_HEADER);
+    IFE_CHECK(map.at(0).type == Iris::File::Abstraction::MAP_ENTRY_FILE_HEADER);
 
-    auto has = [&map](IrisCodec::Abstraction::MapEntryType type) {
+    auto has = [&map](Iris::File::Abstraction::MapEntryType type) {
         for (const auto& [offset, entry] : map) if (entry.type == type) return true;
         return false;
     };
-    using namespace IrisCodec::Abstraction;
+    using namespace Iris::File::Abstraction;
     for (auto type : {MAP_ENTRY_TILE_TABLE, MAP_ENTRY_METADATA, MAP_ENTRY_LAYER_EXTENTS,
                       MAP_ENTRY_TILE_OFFSETS, MAP_ENTRY_ATTRIBUTES, MAP_ENTRY_ATTRIBUTE_SIZES,
-                      MAP_ENTRY_ATTRIBUTES_BYTES, MAP_ENTRY_ICC_PROFILE,
-                      MAP_ENTRY_ASSOCIATED_IMAGES, MAP_ENTRY_ASSOCIATED_IMAGE_BYTES,
+                      MAP_ENTRY_ATTRIBUTE_BYTES, MAP_ENTRY_ICC_PROFILE,
+                      MAP_ENTRY_IMAGES, MAP_ENTRY_IMAGE_BYTES,
                       MAP_ENTRY_ANNOTATIONS, MAP_ENTRY_ANNOTATION_BYTES})
         IFE_CHECK(has(type));
 
     int blocks = 0, tile_data = 0;
     for (const auto& [offset, entry] : map) {
         IFE_CHECK(offset + entry.size <= expected.file_size);
-        if (entry.type == IrisCodec::Abstraction::MAP_ENTRY_TILE_DATA) ++tile_data;
+        if (entry.type == Iris::File::Abstraction::MAP_ENTRY_TILE_PIXEL_DATA) ++tile_data;
         else ++blocks;
     }
     // Header, tile table, extents, offsets, metadata, attributes, sizes,
@@ -523,20 +524,21 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     // cannot get past this; the recovery scan does not use the graph at all.
     std::memset(f.data() + 22, 0xFF, 16);   // TILE_TABLE_OFFSET + METADATA_OFFSET
 
-    const auto recovered = IrisCodec::recover_file_structure({f.data(), f.size()});
+    const auto recovered = Iris::File::recover_file_structure({f.data(), f.size()});
 
-    // Every block except the root, which has no VALIDATION field to find:
-    // it lives at byte 0, where that field could only ever store zero.
-    auto found = [&recovered](IrisCodec::Abstraction::MapEntryType type) {
+    // Every block is found — including the root, which has no VALIDATION
+    // field to find by signature and is therefore noted explicitly by scan()
+    // (an unnoted root would read as a Hole on every clean file, RC-2.3).
+    auto found = [&recovered](Iris::File::Abstraction::MapEntryType type) {
         for (const auto& [offset, entry] : recovered) if (entry.type == type) return true;
         return false;
     };
-    using namespace IrisCodec::Abstraction;
+    using namespace Iris::File::Abstraction;
     IFE_CHECK(found(MAP_ENTRY_TILE_TABLE));
     IFE_CHECK(found(MAP_ENTRY_METADATA));
     IFE_CHECK(found(MAP_ENTRY_LAYER_EXTENTS));
     IFE_CHECK(found(MAP_ENTRY_ICC_PROFILE));
-    IFE_CHECK(recovered.count(0) == 0);   // the root has no VALIDATION to find
+    IFE_CHECK(recovered.count(0) == 1);   // the root, noted by construction
 
     IFE_CHECK(found(MAP_ENTRY_ANNOTATIONS));
     IFE_CHECK(found(MAP_ENTRY_ANNOTATION_BYTES));
@@ -555,10 +557,15 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
     int nested_blocks = 0;
     for (const auto& sequence : expected.nested_attributes)
         nested_blocks += 3 * static_cast<int>(sequence.items.size());
-    // 13, not 11: as above, the two group arrays are tagged blocks and a
-    // scan finds them without the ANNOTATIONS block that names them.
+    // 14, not 12: as above, the two group arrays are tagged blocks and a
+    // scan finds them without the ANNOTATIONS block that names them. The
+    // tile streams are charged too (RC-2.1): the scan found the
+    // self-validating TILE_OFFSETS array even though the root pointers are
+    // gone, and each surviving entry sizes the stream it addresses — a
+    // stream without its entry would read as a hole instead. The 14th is
+    // the FILE_HEADER itself, noted by construction (no VALIDATION to find).
     IFE_CHECK(recovered.size() ==
-              13 + nested_blocks + expected.annotations.size());
+              14 + nested_blocks + expected.annotations.size() + expected.tiles);
 
     // What a scan cannot do is tell the root attributes structure from an
     // item: they are structurally identical, and only the reference from a
@@ -571,7 +578,7 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
 
     // And the graph walk really is defeated, so the comparison is meaningful.
     bool threw = false;
-    try { (void)IrisCodec::generate_file_map({f.data(), f.size()}); }
+    try { (void)Iris::File::generate_file_map({f.data(), f.size()}); }
     catch (const std::runtime_error&) { threw = true; }
     IFE_CHECK(threw);
 }
@@ -589,8 +596,8 @@ void test_recovery_finds_blocks_without_the_offset_graph() {
 /// free (spec 2.4.3), so a scan that inferred an index from file position would
 /// pass a tidy fixture and be wrong on a real one written in parallel.
 void test_recovery_finds_tile_frames_and_rebuilds_entries() {
-    using namespace IrisCodec::Abstraction;
-    namespace b  = ::IFE::blocks;
+    using namespace Iris::File::Abstraction;
+    namespace b  = ::Iris::File::blocks;
 
     struct Tile { std::uint32_t index; std::uint32_t size; };
     const Tile tiles[] = {{7, 300}, {2, 145}, {19, 64}};
@@ -598,24 +605,24 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
     // A run of framed streams, nothing else -- no header, no arrays. Recovery
     // has to work from the frames alone.
     std::vector<Iris::BYTE> f(64, 0xA5);   // leading junk, so nothing sits at 0
-    std::vector<IFE::Offset> stream_at;
+    std::vector<Iris::File::Offset> stream_at;
     for (const auto& t : tiles) {
         f.resize(f.size() + b::TILE_PIXEL_DATA::header_size);
-        const IFE::Offset at = f.size();
+        const Iris::File::Offset at = f.size();
         stream_at.push_back(at);
-        ::IFE::store_u40(f.data() + at + b::TILE_PIXEL_DATA::offset::VALIDATION,
+        ::Iris::File::store_u40(f.data() + at + b::TILE_PIXEL_DATA::offset::VALIDATION,
                          at + b::TILE_PIXEL_DATA::offset::VALIDATION);
-        ::IFE::store<std::uint32_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
-        ::IFE::store<std::uint16_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
+        ::Iris::File::store<std::uint32_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
+        ::Iris::File::store<std::uint16_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
         f.resize(f.size() + t.size, 0x5A);
     }
 
-    const auto recovered = IrisCodec::recover_file_structure({f.data(), f.size()});
+    const auto recovered = Iris::File::recover_file_structure({f.data(), f.size()});
 
     int frames = 0, data = 0;
     for (const auto& [offset, entry] : recovered) {
         if (entry.type == MAP_ENTRY_TILE_FRAME) ++frames;
-        if (entry.type == MAP_ENTRY_TILE_DATA)  ++data;
+        if (entry.type == MAP_ENTRY_TILE_PIXEL_DATA) ++data;
     }
     IFE_CHECK(frames == 3);
     IFE_CHECK(data == 3);
@@ -634,7 +641,7 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
         const auto it = recovered.find(stream_at[i]);
         IFE_CHECK(it != recovered.end());
         if (it != recovered.end()) {
-            IFE_CHECK(it->second.type == MAP_ENTRY_TILE_DATA);
+            IFE_CHECK(it->second.type == MAP_ENTRY_TILE_PIXEL_DATA);
             IFE_CHECK(it->second.size == 0);
         }
     }
@@ -653,10 +660,10 @@ void test_recovery_finds_tile_frames_and_rebuilds_entries() {
     // over a 2 GB file is an expected 0.002 false frames; the caller sees one
     // extra entry whose tile index is nonsense, and nothing worse.
     auto poisoned = f;
-    constexpr IFE::Offset FAKE = 2;   // anchor would be 7, short of the 11 a frame needs
-    ::IFE::store_u40(poisoned.data() + FAKE, FAKE);
-    IFE_CHECK(::IFE::load_u40(poisoned.data() + FAKE) == FAKE);   // the bait is set
-    IFE_CHECK(IrisCodec::recover_file_structure({poisoned.data(), poisoned.size()}).size() == 6);
+    constexpr Iris::File::Offset FAKE = 2;   // anchor would be 7, short of the 11 a frame needs
+    ::Iris::File::store_u40(poisoned.data() + FAKE, FAKE);
+    IFE_CHECK(::Iris::File::load_u40(poisoned.data() + FAKE) == FAKE);   // the bait is set
+    IFE_CHECK(Iris::File::recover_file_structure({poisoned.data(), poisoned.size()}).size() == 6);
 }
 
 }  // namespace

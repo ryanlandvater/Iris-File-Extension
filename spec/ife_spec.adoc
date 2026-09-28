@@ -513,9 +513,11 @@ byte-stream per tile, not as several, and the tile's OFFSET and SIZE
 
 * Z_PLANES *shall* encode the greatest number of focal planes any one tile of
   the layer carries. An individual tile *may* carry fewer.
-* A decoder *shall* obtain the number of planes a particular tile carries from
-  that tile's byte-stream, or from its frame where one is present
-  (<<ife-tile-frame>>). This specification does not record it per tile.
+* Every byte-stream of a layer whose Z_PLANES exceeds one *shall* be preceded
+  by a tile frame (<<ife-tile-frame>>), whose Z_PLANES is the number of planes
+  that tile carries. A decoder *shall* read the count from the frame. The frame
+  is the only place the format records it: this specification never
+  interprets a byte-stream, so it cannot defer the count to one.
 
 Z_PLANES is a per-layer maximum rather than a per-tile count for two reasons:
 focal depth is a property of the acquisition, and a pyramid is normally
@@ -625,7 +627,9 @@ offsets entry.
 [[ife-tile-frame]]
 ===== The Tile Frame
 
-An encoder *may* precede a tile byte-stream with the __optional__ frame below.
+An encoder *may* precede a tile byte-stream with the frame below, and *shall*
+precede every byte-stream of a Z-stacked layer with one (<<ife-focal-planes>>).
+On any other layer the frame is __optional__.
 Its fields are placed *backward* from the first byte the tile offsets entry
 addresses: the offsets in the table are displacements behind that byte, so
 VALIDATION ends where the stream begins and the frame extends towards the
@@ -649,8 +653,9 @@ include::{generated}/layout/TILE_PIXEL_DATA.adoc[]
 The frame is a recovery structure. It records which tile a stream belongs to,
 which position alone cannot supply because tile ordering is free. It does not
 record the stream's length; that is the codec's to determine, and a second
-copy would only be a value to keep in agreement. Where the tile offsets array
-is intact the frame is redundant and *may* be omitted.
+copy would only be a value to keep in agreement. On a layer that is not
+Z-stacked, where the tile offsets array is intact the frame is redundant and
+*may* be omitted.
 
 NOTE: VALIDATION is 40 bits here rather than the 64 of the universal block
 header (<<ife-block-header>>). No other structure in the format stores its own

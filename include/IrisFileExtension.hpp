@@ -12,7 +12,7 @@
  * Everything below it (offsets, widths, validation, block navigation) comes
  * from the spec JSON through generated_source/.
  *
- * The `IrisCodec::Abstraction` structs below are the data model every consumer
+ * The `Iris::File::Abstraction` structs below are the data model every consumer
  * reads — a change to one is a change to all of them.
  *
  * The entry points carry the house API shape: snake_case names, a single
@@ -24,8 +24,12 @@
 #define IRIS_FILE_EXTENSION_HPP
 
 
+#include <cstdint>
+#include <filesystem>
 #include <map>
+#include <memory>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -74,19 +78,27 @@
 #include "IrisCodecTypes.hpp"
 
 #include "IFE_Blocks.hpp"
-// IFE::Window is the Emscripten windowed fetch (remote file ranges over
+// Iris::File::Window is the Emscripten windowed fetch (remote file ranges over
 // HTTP). Native builds never use it; gating keeps it out of native
 // consumers' translation units and out of the native install.
 #ifdef __EMSCRIPTEN__
 #include "IFE_Window.hpp"
 #endif
 
-namespace IrisCodec {
-using namespace Iris;
+// The hierarchy is the namespace: `Iris::` is the core (Iris-Headers — Result,
+// Buffer, Memory, …), `Iris::File::` is this repository, and a codec builds on
+// both. Nesting is why this layer sees `Iris::` names without a using-directive.
+namespace Iris::File {
+// IFE also composes the Iris-Headers vocabulary that still lives in its
+// `IrisCodec` namespace — `Encoding`, `Metadata`, `AssociatedImageInfo`,
+// `MetadataType`, … (IrisCodecTypes.hpp). Those types describe what is in the
+// file, and IFE depends on Iris-Headers, not on the Iris-Codec repository; the
+// namespace name is historical. Narrow this to explicit `using IrisCodec::X;`
+// declarations if the breadth is ever a problem.
+using namespace IrisCodec;
 
 namespace Abstraction {
 struct File;
-struct FileMap;
 }  // namespace Abstraction
 
 // MARK: - ENTRY METHODS
@@ -122,10 +134,21 @@ Result               IFE_EXPORT is_iris_codec_file      (const FileAccessInfo&) 
 Result               IFE_EXPORT validate_file_structure (const FileAccessInfo&) noexcept;
 
 /**
- * @brief Abstract the Iris file structure into memory for quick data access. This does NOT validate.
+ * @brief Abstract the Iris file structure into memory for quick data access.
+ *
+ * Validates what it reads, and never repairs. Every block it follows must pass
+ * validate() -- both witnesses agree, and every length the block declares fits
+ * the file -- or this throws std::runtime_error naming the block and the check
+ * that failed. A structurally damaged file is therefore refused here, not
+ * opened. To reopen one, run Iris::File::Recovery (recover(), then apply()) and
+ * call this again. validate_file_structure() checks the whole graph without
+ * building anything; this checks the blocks it lifts, as it lifts them.
+ *
+ * Until RC-10.1 this read the bytes it was pointed at without checking them:
+ * one flipped bit in a length field read a gigabyte past an 832-byte file.
  *
  * This is a convenience function that maps the entire file structure into memory using the below
- * defined obejcts within the IrisCodec::Abstraction namespace. These objects will allow quick lookup
+ * defined obejcts within the Iris::File::Abstraction namespace. These objects will allow quick lookup
  * of data. Please note: Abstractions will lift object parameters but not object data (for example,
  * if an image is abstracted, the encoding algorithm (JPEG/PNG/AVIF), width, height, byte offset location,
  * and number of bytes will be lifted; however the actual image bytes will remain untouched and must be
@@ -134,51 +157,244 @@ Result               IFE_EXPORT validate_file_structure (const FileAccessInfo&) 
 // START HERE: THIS IS THE MAIN ENTRY FUNCTION TO THE FILE
 Abstraction::File    IFE_EXPORT abstract_file_structure (const FileAccessInfo&);
 
-/**
- * @brief Generate a file map showing the offset locations of header and array blocks with their respective
- * types and sizes detailed. This is not a cheap method and does not need to be routinely done; only when
- * recovering or modifying a file.
- *
- * File mapping is an extremely valuable tool for performing file updates to avoid overwriting important data.
- * Fortunately it is very simple to do. Before writing, perform the \ref FileMap::upper_bound (Offset write_offset) method
- * to identify what data exists after your proposed write location. These data will need to be rewritten or,
- * alternatively, shifted and all references to them and their validations updated as well. For this reason, it's usually
- * easier to simply read them into memory and then rewrite them back to disk following the update.
- */
-// ALWAYS CREATE A FILE MAP BEFORE PERFORMING AN UPDATE TO A FILE
-Abstraction::FileMap IFE_EXPORT generate_file_map       (const FileAccessInfo&);
+// MARK: - READ (PARSER)
+
+class Parser_t;   ///< the read BODY — defined in "IFE_Parser.hpp"
 
 /**
- * @brief Recover the block structure of a damaged file by scanning for block signatures.
+ * @brief The public READ handle for a mapped Iris file.
  *
- * New in the generated layer. Where generate_file_map walks the offset graph — and therefore
- * finds nothing below a corrupted pointer — this ignores the graph entirely and scans for the
- * two signatures a block can carry.
+ * Derives from `std::shared_ptr<Parser_t>`, so it IS the pointer it stands for:
+ * copy it freely, pass it by value, test it with `if (parser)`. The `.` methods
+ * are the read API a consumer uses; the body (`Parser_t`) is reached with `->`
+ * when you include "IFE_Parser.hpp" — where the recovery / modification surface
+ * (generate_file_map, recover_file_structure) lives. This mirrors the write
+ * handle `Builder` beside it and FastFHIR's own `Parser` / `Builder` pair.
  *
- * Most blocks carry a u64 equal to their own offset followed by a u16 in the recovery-tag set;
- * the 0x55 high byte those tags share is what keeps that scan's false-positive rate negligible.
- * A tile frame carries no tag at all, and is instead identified by a *forty*-bit value equal to
- * its own position, which nothing else in the format writes. Frames are reported as
- * MAP_ENTRY_TILE_FRAME alongside the MAP_ENTRY_TILE_DATA stream each one describes.
+ * Two ways to bind one. `Parser::open(path)` maps the file read-only and OWNS
+ * the mapping: it stays mapped for as long as any copy of the handle lives, so
+ * a reader that keeps the Parser keeps its bytes. `Parser(FileAccessInfo)`
+ * BORROWS a mapping the caller owns, exactly as `FileAccessInfo` documents.
+ * Binding is nearly free — nothing is lifted until the abstraction is asked
+ * for, and then it is lifted once.
  *
- * A frame supplies the part of a tile offsets entry that reading the slide cannot: its global
- * tile index. Position cannot supply it, because streams may be written in any order. The
- * stream's *length* is not in the frame and is not reported — that is a question its codec
- * answers, and this layer knows nothing about codecs. FileMapEntry carries no index field, so as
- * with every other type a caller builds the handle and asks it:
- *
- * ```cpp
- * case MAP_ENTRY_TILE_FRAME: {
- *     const auto stream_at = entry.offset + entry.size;   // the frame ends where the stream starts
- *     IFE::blocks::TILE_PIXEL_DATA frame {base, stream_at, file_size, version};
- *     if (frame.validate()) rebuilt[*frame.tile_index()] = stream_at;
- * }
- * ```
- *
- * The FILE_HEADER is not recoverable this way and is not reported: it is the one block with no
- * VALIDATION field, because it lives at byte 0 where that field could only ever store zero.
+ * THE SPLIT. A parser owns access to the file: the mapping, validation, the
+ * lifted structure, and bounds-checked byte spans. It never decodes a stream;
+ * that is the application's (a codec's) job.
  */
-Abstraction::FileMap IFE_EXPORT recover_file_structure  (const FileAccessInfo&);
+class Parser : public std::shared_ptr<Parser_t>
+{
+    using Base = std::shared_ptr<Parser_t>;
+public:
+    using Base::Base;      // every shared_ptr constructor
+    using Base::reset;     // keep reset() beside the body's reset forwarders
+
+    Parser() noexcept = default;
+    Parser(std::nullptr_t) noexcept {}
+    Parser(std::shared_ptr<Parser_t> body) noexcept : Base(std::move(body)) {}
+
+    /// Bind to a mapping the caller owns (borrowed). Defined in the cpp (it
+    /// needs the complete body).
+    explicit Parser(const FileAccessInfo& info);
+
+    /// Map @p path read-only and bind to it; the parser owns the mapping. The
+    /// file is not validated here — `validate_file_structure()` does that, and
+    /// `abstraction()` checks what it lifts. @throws std::runtime_error if the
+    /// file cannot be mapped (missing, unreadable, or empty).
+    static Parser open(const std::filesystem::path& path);
+
+    /// Quick header check (magic, recovery tag, header fits). Does not validate.
+    Result is_iris_codec_file() const noexcept;
+    /// Deep structural validation of every offset in the graph.
+    Result validate_file_structure() const noexcept;
+    /// Lift the file structure into memory for quick data access (a fresh
+    /// copy on each call; `abstraction()` lifts once and keeps it).
+    Abstraction::File abstract_file_structure() const;
+
+    /// The lifted structure, lifted once on first use and kept. Thread-safe.
+    /// @throws std::runtime_error as `abstract_file_structure` does, on every
+    ///         call, if the file is structurally damaged.
+    const Abstraction::File& abstraction() const;
+
+    /// The compressed stream of one tile, zero-copy. Empty for a NULL_TILE
+    /// entry — "no tile at this grid position", not an error; a real tile is
+    /// never empty. @throws std::out_of_range for a bad layer or tile.
+    std::span<const BYTE> tile(uint32_t layer, uint32_t tile) const;
+
+    /// How many focal planes the tile's stream carries: 1 on a single-plane
+    /// layer, 0 for a NULL_TILE entry, otherwise the count its tile frame
+    /// records (every stream of a Z-stacked layer is framed; the abstraction
+    /// has already refused a file where one is not).
+    /// @throws std::out_of_range for a bad layer or tile.
+    uint16_t tile_planes(uint32_t layer, uint32_t tile) const;
+
+    /// The compressed stream of one associated image, zero-copy.
+    /// @throws std::out_of_range if no image carries @p label.
+    std::span<const BYTE> image(const std::string& label) const;
+
+    /// The borrowed mapping this parser reads.
+    const FileAccessInfo& info() const noexcept;
+    /// Pointer to the first mapped byte.
+    const BYTE* data() const noexcept;
+    /// Bytes available at @ref data.
+    Size size() const noexcept;
+};
+
+// MARK: - WRITE (BUILDER)
+
+/// Parameters for creating a writer over a fresh arena.
+struct IFE_EXPORT BuilderCreateInfo {
+    /// Reserved address range: sparse, so only touched pages cost RAM or disk,
+    /// and never remapped — the base must not move under lock-free writers — so
+    /// exhausting it is terminal. A caller writing a larger file passes more.
+    /// Tile streams cannot be addressed past 2^40 (the u40 tile OFFSET), so a
+    /// reservation beyond that buys nothing for tiles.
+    Size                  capacity = Size{8} << 30;   // 8 GiB
+    /// Where to write, created if absent. The caller chooses it — naming and
+    /// moving files is the application's job; the builder writes where it is
+    /// told and leaves the file complete and closed at `finalize`. Empty selects
+    /// an anonymous arena (for a stream never destined for disk).
+    std::filesystem::path filepath = {};
+    /// Precede each tile stream with a tile frame (11 bytes: its global tile
+    /// index and plane count, laid out backward from the stream's first byte).
+    /// Optional on a single-plane layer, and encouraged — the frame is what
+    /// lets recovery put a stream back in the right place — but it costs bytes.
+    /// Ignored for a Z-stacked layer, where every stream is framed regardless:
+    /// the frame is the only place the format records a tile's plane count.
+    bool                  tile_frames = true;
+};
+
+/// The tile pyramid, declared once before any tile is appended. The same shape
+/// `Abstraction::TileTable` reads back, minus the tile placements the builder
+/// records itself.
+struct IFE_EXPORT BuilderTileTableInfo {
+    Encoding              encoding   = TILE_ENCODING_UNDEFINED;
+    Format                format     = FORMAT_UNDEFINED;
+    /// Width, height, and per layer the tile grid and scale. Layer 0 is the
+    /// lowest-resolution layer.
+    Extent                extent;
+    /// Per layer, the greatest number of focal planes any one tile carries.
+    /// Empty, 0 and 1 all mean single-plane; more than 1 makes the layer
+    /// Z-stacked, and every stream of it is then framed.
+    std::vector<uint16_t> planes;
+    /// Edge length in pixels of the slide's square tiles.
+    uint16_t              tileLength = 256;
+};
+
+/// What `Builder::finalize` needs beyond what was appended: the inverse of the
+/// metadata `abstract_file_structure` reads back.
+struct IFE_EXPORT BuilderFinalizeInfo {
+    /// Codec version, attributes, ICC profile, microns per pixel, magnification.
+    /// `associatedImages`, `annotations` and `annotationGroups` are not read:
+    /// images are appended with `append_image`, and annotations are not written
+    /// yet.
+    Metadata metadata;
+    /// Microns between adjacent focal planes of a Z-stacked slide; zero when it
+    /// is not Z-stacked or the spacing is unknown.
+    float    micronsPerPlane = 0.f;
+    /// FILE_REVISION.
+    uint32_t revision        = 0;
+};
+
+class Builder_t;   ///< the write BODY — defined in "IFE_Builder.hpp"
+
+/**
+ * @brief The public WRITE handle for an Iris file.
+ *
+ * Derives from `std::shared_ptr<Builder_t>`, so it IS the pointer it stands
+ * for: copy it freely, pass it by value, test it with `if (builder)`. The `.`
+ * methods are the API a producer uses; the body (`Builder_t`) is reached with
+ * `->` when you include "IFE_Builder.hpp", where the block-level tier lives
+ * (`claim`, `append(XxxCreateInfo)`, `seal`). This mirrors FastFHIR's
+ * `Builder` / `Builder_t` and the read handle `Parser` beside it.
+ *
+ * THE SPLIT. A builder lays bytes down; it does not run the application. It
+ * claims space and writes every block, records where each tile landed, frames
+ * the tiles, checks every tile was accounted for, and at `finalize` leaves a
+ * complete file. It starts no threads and schedules no work — `append_tile`
+ * is safe to call from many threads at once, but which thread encodes which
+ * tile is the caller's business. It does not choose or move files: the caller
+ * names the file and moves it once `finalize` returns.
+ *
+ * Usage: `create` → `set_tile_table` → `append_tile` / `append_null_tile` for
+ * every tile (any order, any threads) and `append_image` for each associated
+ * image → `finalize`.
+ */
+class Builder : public std::shared_ptr<Builder_t>
+{
+    using Base = std::shared_ptr<Builder_t>;
+public:
+    using Base::Base;      // every shared_ptr constructor
+    using Base::reset;     // keep reset() beside the body's reset forwarders
+
+    Builder() noexcept = default;
+    Builder(std::nullptr_t) noexcept {}
+    Builder(std::shared_ptr<Builder_t> body) noexcept : Base(std::move(body)) {}
+
+    /** @brief Create a writer over a fresh arena. Throws if the arena cannot
+     *         be mapped. */
+    static Builder create(const BuilderCreateInfo& info);
+
+    /** @brief Declare the tile pyramid. Once, before any tile is appended.
+     *  @throws std::logic_error if called twice or after `finalize`;
+     *          std::invalid_argument for no layers, or `planes` of the wrong
+     *          length. */
+    void set_tile_table(const BuilderTileTableInfo& info) const;
+
+    /**
+     * @brief Write one compressed tile stream and record where it landed.
+     *
+     * Thread-safe. @p layer and @p tile address the grid (row-major within the
+     * layer); @p z_planes is the number of focal planes this stream carries (0
+     * or 1 on a single-plane layer, at most the layer's `planes` on a
+     * Z-stacked one). Returns the stream's offset — the anchor the tile
+     * offsets entry names; a frame, when written, sits just before it.
+     *
+     * @throws std::logic_error before `set_tile_table` or after `finalize`, or
+     *         if the tile was already appended; std::out_of_range for a bad
+     *         layer or tile; std::invalid_argument for an empty stream, one of
+     *         16 MiB or more, or a plane count the layer does not allow.
+     */
+    Offset append_tile(uint32_t layer, uint32_t tile, const BYTE* data, Size size,
+                       uint16_t z_planes = 0) const;
+
+    /** @brief Record that there is no tile at this grid position (NULL_TILE).
+     *         Thread-safe; writes no bytes. Same errors as `append_tile`. */
+    void append_null_tile(uint32_t layer, uint32_t tile) const;
+
+    /** @brief Write one associated image (label + compressed stream) and record
+     *         its entry. Returns the IMAGE_BYTES block's offset.
+     *  @throws std::invalid_argument for an empty stream, a label longer than
+     *          65535 bytes, or a label already appended. */
+    Offset append_image(const AssociatedImageInfo& info, const BYTE* data, Size size) const;
+
+    /**
+     * @brief Write the file's structure and seal it.
+     *
+     * Every input is checked before anything is written, so a refused
+     * `finalize` leaves no half-written structure: every tile must have been
+     * appended (or appended null) — a tile nobody accounted for is reported,
+     * never published as "no tile here" — and the attributes, if any, must
+     * declare a format. Then the tile offsets, layer extents, tile table, ICC
+     * profile, images array, attributes and metadata are written, and the file
+     * header last. A file-backed builder releases its mapping and truncates
+     * the file to its written size, leaving it closed for the caller to move.
+     * After this the builder accepts no more writes. Call it once every append
+     * has joined.
+     */
+    void finalize(const BuilderFinalizeInfo& info) const;
+
+    /** @brief The committed write head — the offset the next block lands at. */
+    ::Iris::File::Offset head() const noexcept;
+
+    /** @brief The arena's reserved extent in bytes. */
+    Size capacity() const noexcept;
+};
+
+// The ADVANCED tier — generate_file_map / recover_file_structure and their
+// file-map / verdict value types (FileMap, BlockVerdict, ...) — lives in
+// "IFE_Advanced.hpp". A consumer that only READS a slide includes this header
+// alone and never sees the recovery apparatus.
 
 // MARK: - FILE ABSTRACTIONS
 // The file abstractions pull light-weight
@@ -196,12 +412,12 @@ struct IFE_EXPORT Header {
 
 /// RESERVED FOR FUTURE IRIS CODEC IMPLEMENTATION.
 struct IFE_EXPORT Cipher {
-    Offset offset = ::IFE::constants::NULL_OFFSET;
+    Offset offset = ::Iris::File::constants::NULL_OFFSET;
 };
 
 /// Compressed tile data byte offset and size within the slide file.
 struct IFE_EXPORT TileEntry {
-    Offset   offset = ::IFE::constants::NULL_OFFSET;
+    Offset   offset = ::Iris::File::constants::NULL_OFFSET;
     uint32_t size   = 0;
 };
 
@@ -233,7 +449,7 @@ struct IFE_EXPORT TileTable {
 /// Abstraction of non-tile and named associated images within the slide file.
 struct IFE_EXPORT AssociatedImage {
     using Info = AssociatedImageInfo;
-    Offset offset   = ::IFE::constants::NULL_OFFSET;
+    Offset offset   = ::Iris::File::constants::NULL_OFFSET;
     Size   byteSize = 0;
     Info   info;
 };
@@ -247,7 +463,7 @@ struct IFE_EXPORT Annotation {
     static constexpr uint32_t NULL_ID = 16777215U;
 
     using Type = AnnotationTypes;
-    Offset   offset    = ::IFE::constants::NULL_OFFSET;
+    Offset   offset    = ::Iris::File::constants::NULL_OFFSET;
     Size     byteSize  = 0;
     Type     type      = ANNOTATION_UNDEFINED;
     float    xLocation = 0.f;
@@ -267,7 +483,7 @@ struct IFE_EXPORT Annotation {
 };
 
 struct IFE_EXPORT AnnotationGroup {
-    Offset   offset = ::IFE::constants::NULL_OFFSET;
+    Offset   offset = ::Iris::File::constants::NULL_OFFSET;
     uint32_t number = 0;
     Size     byteSize() { return number * 3; }
 };
@@ -326,7 +542,7 @@ struct IFE_EXPORT File {
     /// A range rather than a copy, unlike Metadata::ICC_profile. A colour
     /// profile is a few kilobytes; this is a whole resource graph and can be
     /// megabytes, and lifting payloads into the abstraction is the one thing
-    /// this abstraction exists not to do. Read it with IFE::Window, or hand
+    /// this abstraction exists not to do. Read it with Iris::File::Window, or hand
     /// base + clinicalOffset straight to the reader for whatever format the
     /// stream's leading bytes identify.
     ///
@@ -337,12 +553,12 @@ struct IFE_EXPORT File {
     /// Held on File rather than on Metadata beside ICC_profile only because
     /// IrisCodec::Metadata is defined in Iris-Headers rather than in this
     /// repository. Move it there when that header gains the field.
-    Offset           clinicalOffset = ::IFE::constants::NULL_OFFSET;
+    Offset           clinicalOffset = ::Iris::File::constants::NULL_OFFSET;
     Size             clinicalSize   = 0;
     /// Which parser the clinical stream needs. Declared by the file rather
     /// than sniffed from the bytes; undefined when no stream is present.
     /// A `clinical_encodings` value, held as its underlying type rather than
-    /// as IFE::constants::ClinicalEncodings. Naming the generated enum here
+    /// as Iris::File::constants::ClinicalEncodings. Naming the generated enum here
     /// would put it in the exported ABI -- and with it every
     /// std::optional<ClinicalEncodings> instantiation the runtime makes --
     /// which decision 4.0-D keeps out. Zero is CLINICAL_UNDEFINED.
@@ -352,55 +568,40 @@ struct IFE_EXPORT File {
     float            micronsPerPlane = 0.f;
 };
 
-/// Which kind of block a file-map entry describes.
-enum IFE_EXPORT MapEntryType {
-    MAP_ENTRY_UNDEFINED = 0,
-    MAP_ENTRY_FILE_HEADER,
-    MAP_ENTRY_TILE_TABLE,
-    MAP_ENTRY_CIPHER,
-    MAP_ENTRY_METADATA,
-    MAP_ENTRY_ATTRIBUTES,
-    MAP_ENTRY_LAYER_EXTENTS,
-    MAP_ENTRY_TILE_DATA,
-    MAP_ENTRY_TILE_OFFSETS,
-    MAP_ENTRY_ATTRIBUTE_SIZES,
-    MAP_ENTRY_ATTRIBUTES_BYTES,
-    MAP_ENTRY_ASSOCIATED_IMAGES,
-    MAP_ENTRY_ASSOCIATED_IMAGE_BYTES,
-    MAP_ENTRY_ICC_PROFILE,
-    MAP_ENTRY_ANNOTATIONS,
-    MAP_ENTRY_ANNOTATION_BYTES,
-    MAP_ENTRY_ANNOTATION_GROUP_SIZES,
-    MAP_ENTRY_ANNOTATION_GROUP_BYTES,
-    MAP_ENTRY_CLINICAL_METADATA,
-    MAP_ENTRY_TILE_FRAME,
-};
-
-/**
- * @brief A datablock within the IFE file structure system.
- *
- * The entry carries the offset and the type; a caller builds the handle it
- * wants — a generated handle is constructed from an offset, not downcast from
- * a base:
- *
- * ```cpp
- * case MAP_ENTRY_TILE_TABLE: {
- *     IFE::blocks::TILE_TABLE table {base, entry.offset, file_size, version};
- *     if (table.validate()) ... // read through the handle
- * }
- * ```
- */
-struct IFE_EXPORT FileMapEntry {
-    MapEntryType type   = MAP_ENTRY_UNDEFINED;
-    Offset       offset = ::IFE::constants::NULL_OFFSET;
-    Size         size   = 0;
-};
-
-struct IFE_EXPORT FileMap : public std::map<Offset, FileMapEntry> {
-    Size file_size = 0;
-};
+// The file-map and recovery value types (MapEntryType, GapClass/Gap,
+// FileMapEntry, FileMap, ProducerFailure(Kind), BlockRef, RepairClass,
+// BlockVerdict, RecoveryReport) and the ADVANCED entry points moved out of
+// this header into the advanced tier — see "IFE_Advanced.hpp". This header is
+// the READ surface only: a consumer that opens a slide includes it alone.
 
 }  // namespace Abstraction
-}  // namespace IrisCodec
+}  // namespace Iris::File
+
+// =====================================================================
+// GLOBAL C-STYLE ALIASES — the READ tier
+// =====================================================================
+// Inside the namespace every type carries its plain C++ name; these
+// IFE_-prefixed names are that type's *global* spelling, for a consumer that
+// does not want to qualify with Iris::File:: on every line. The IFE_ prefix is
+// the namespace spelled out — the same convention FastFHIR's FF_ aliases use
+// (../FastFHIR/include/FastFHIR.hpp). Alias only: nothing here renames a
+// namespaced symbol, so existing consumers (Iris-Codec) are unaffected.
+//
+// The ADVANCED tier's aliases (FileMap, BlockRef, RecoveryReport, ...) live in
+// "IFE_Advanced.hpp" beside those types.
+//
+// Freeze: tests/ife_api_contract_tests.cpp asserts each of these resolves to
+// its namespaced type, so a rename on either side fails that build.
+using IFE_FileAccessInfo      = Iris::File::FileAccessInfo;
+using IFE_File                = Iris::File::Abstraction::File;
+using IFE_TileTable           = Iris::File::Abstraction::TileTable;
+using IFE_TileEntry           = Iris::File::Abstraction::TileEntry;
+using IFE_Header              = Iris::File::Abstraction::Header;
+using IFE_AssociatedImage     = Iris::File::Abstraction::AssociatedImage;
+using IFE_AssociatedImages    = Iris::File::Abstraction::AssociatedImages;
+using IFE_Annotation          = Iris::File::Abstraction::Annotation;
+using IFE_Annotations         = Iris::File::Abstraction::Annotations;
+using IFE_AttributeNode       = Iris::File::Abstraction::AttributeNode;
+using IFE_AttributeSet        = Iris::File::Abstraction::AttributeSet;
 
 #endif  // IRIS_FILE_EXTENSION_HPP

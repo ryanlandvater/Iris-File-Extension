@@ -37,7 +37,7 @@
 #include "IrisTypes.hpp"
 #include "IrisCodecTypes.hpp"
 
-namespace IFE {
+namespace Iris::File {
 
 using Iris::BYTE;
 using IrisCodec::Offset;
@@ -286,6 +286,6 @@ inline void store_f16(BYTE* __p, float v) noexcept {
     detail::store_bytes<std::uint16_t>(__p, float_to_half(v));
 }
 
-}  // namespace IFE
+}  // namespace Iris::File
 
 #endif  // IFE_Bytes_hpp

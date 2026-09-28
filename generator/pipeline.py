@@ -28,6 +28,7 @@ from .emit.cpp import (
     emit_validation_source,
     emit_blocks_header,
     emit_blocks_source,
+    emit_map_header,
 )
 from .emit.docs import emit_documents
 from .model.layout import RECOVERY_PREFIX, LayoutResult, derive_layout
@@ -63,6 +64,7 @@ def _render(
         f"{_CPP_ROOT}/IFE_Validation.cpp": emit_validation_source(
             layout, constants_doc, fields_doc.get("types", {}), header, witness_hash
         ),
+        f"{_CPP_ROOT}/IFE_Map.hpp": emit_map_header(layout, header, witness_hash),
     }
     # The specification document's generated half: one AsciiDoc file per item,
     # so the narrative includes exactly what it needs where it needs it.

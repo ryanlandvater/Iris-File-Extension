@@ -10,7 +10,7 @@
  *
  * So this is mostly a LINK test. Its assertions are almost beside the point --
  * the failure it exists to catch happens before main() is reached, and shows
- * up as "duplicate symbol IFE::blocks::size_of(...)" from the linker.
+ * up as "duplicate symbol Iris::File::blocks::size_of(...)" from the linker.
  *
  * It covers three ways the header and its folded translation unit can meet:
  *
@@ -41,12 +41,12 @@
 #include <string>
 #include <vector>
 
-namespace b = ::IFE::blocks;
+namespace b = ::Iris::File::blocks;
 
 // Defined in ife_header_only_odr_second.cpp, which folds the layer in too.
 // (1) The link is the test: two TUs, one binary, one set of symbols.
-::IFE::Size size_of_from_other_tu();
-::IFE::Offset store_from_other_tu(::IFE::BYTE* base);
+::Iris::File::Size size_of_from_other_tu();
+::Iris::File::Offset store_from_other_tu(::Iris::File::BYTE* base);
 
 int main() {
     int failures = 0;
@@ -63,8 +63,8 @@ int main() {
     check(b::size_of(info) == size_of_from_other_tu(),
           "size_of disagrees across translation units");
 
-    std::vector<::IFE::BYTE> f(512, 0);
-    const ::IFE::Offset wrote = store_from_other_tu(f.data());
+    std::vector<::Iris::File::BYTE> f(512, 0);
+    const ::Iris::File::Offset wrote = store_from_other_tu(f.data());
     check(wrote != 0, "the other translation unit could not store");
 
     // Read back through this TU's copy: the bytes one TU wrote are the bytes
@@ -73,7 +73,7 @@ int main() {
     check(static_cast<bool>(read.validate()), "the stored block does not validate");
     check(read.count() == 1, "count did not survive the crossing");
     if (read.count() == 1)
-        check(read.entry(0).kind() == ::IFE::constants::AttributeKinds::ATTRIBUTE_STRING,
+        check(read.entry(0).kind() == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_STRING,
               "KIND did not survive the crossing");
 
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }

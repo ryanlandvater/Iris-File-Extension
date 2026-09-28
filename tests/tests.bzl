@@ -1,7 +1,7 @@
 # tests/tests.bzl — the IFE test suite, declared from one macro.
 #
 # Everything `bazel test //...` needs: the future-version fixture genrules,
-# the header-only input library and the twelve cc_test targets. They live
+# the header-only input library and the cc_test targets. They live
 # here rather than inline in BUILD.bazel so the root BUILD file reads as the
 # library graph plus one call; the macro expands in the CALLING package (the
 # root), so relative labels like "tests/ife_bytes_tests.cpp" and the fixture
@@ -119,6 +119,7 @@ def ife_tests(
         outs = [
             "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
             "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
+            "tests/fixtures/future_versioning/generated/IFE_Map.hpp",
             "tests/fixtures/future_versioning/generated/IFE_Validation.hpp",
             "tests/fixtures/future_versioning/generated/IFE_Validation.cpp",
         ],
@@ -239,6 +240,123 @@ def ife_tests(
         # tree (manifest-only mode) — so pass the manifest-style path and
         # resolve it through the runfiles library in ife_corpus_dir().
         # "_main" is the main repo's runfiles directory name under bzlmod.
+        local_defines = ["IFE_BAZEL_RUNFILES"],
+        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
+    )
+
+    # Phase 0 of the FastFHIR → IFE migration: the surface Iris-Codec consumes.
+    cc_test(
+        name = "ife_api_contract_tests",
+        srcs = ["tests/ife_api_contract_tests.cpp"],
+        copts = copts,
+        size = "small",
+        deps = [ife],
+    )
+
+    # The ADVANCED tier (IFE_Advanced.hpp): the recovery / modification API.
+    cc_test(
+        name = "ife_advanced_api_tests",
+        srcs = ["tests/ife_advanced_api_tests.cpp"],
+        copts = copts,
+        size = "small",
+        deps = [ife],
+    )
+
+    # The write handle (Iris::File::Builder): build then read back.
+    cc_test(
+        name = "ife_builder_tests",
+        srcs = ["tests/ife_builder_tests.cpp"],
+        copts = copts,
+        size = "small",
+        deps = [ife],
+    )
+
+    # The Builder's application tier: tile table, threaded tile appends,
+    # null tiles, images, finalize — read back.
+    cc_test(
+        name = "ife_builder_layered_tests",
+        srcs = ["tests/ife_builder_layered_tests.cpp"],
+        copts = copts,
+        size = "small",
+        deps = [ife],
+    )
+
+    # The READ handle: open() owns the mapping, spans, tile_planes — on the
+    # frozen 1.1 witness.
+    cc_test(
+        name = "ife_parser_tests",
+        srcs = [
+            "tests/ife_parser_tests.cpp",
+            "tests/ife_corpus_path.hpp",
+        ],
+        copts = copts,
+        size = "small",
+        deps = [ife, "@rules_cc//cc/runfiles"],
+        data = ["//tests/corpus:v1_1_witness.test_slide"],
+        local_defines = ["IFE_BAZEL_RUNFILES"],
+        args = ["_main/tests/corpus/v1_1_witness.test_slide"],
+    )
+
+    # RC-3: the two-witness reconciliation against damaged bytes — clean
+    # baselines, one witness per repair class, both-witness orphaning per
+    # shape, the frame-survival tile rebuild, and the never-silent gates.
+    # Loads three corpus witnesses by name from the runfiles directory.
+    cc_test(
+        name = "ife_recovery_tests",
+        srcs = [
+            "tests/ife_recovery_tests.cpp",
+            "tests/ife_corpus_path.hpp",
+        ],
+        copts = copts,
+        size = "small",
+        deps = [ife, "@rules_cc//cc/runfiles"],
+        data = [
+            "//tests/corpus:v1_0_witness.test_slide",
+            "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:cipher_iris.test_slide",
+        ],
+        local_defines = ["IFE_BAZEL_RUNFILES"],
+        args = ["_main/tests/corpus/cipher_iris.test_slide"],
+    )
+
+    # The exhaustive counterpart to ife_recovery_tests: every byte of every
+    # corpus witness damaged three ways. Meant to be run under a sanitizer,
+    # where it is the gate a hand-written suite cannot be.
+    cc_test(
+        name = "ife_damage_sweep_tests",
+        srcs = [
+            "tests/ife_damage_sweep_tests.cpp",
+            "tests/ife_corpus_path.hpp",
+        ],
+        copts = copts,
+        size = "medium",
+        deps = [ife, "@rules_cc//cc/runfiles"],
+        data = [
+            "//tests/corpus:v1_0_witness.test_slide",
+            "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:cipher_iris.test_slide",
+        ],
+        local_defines = ["IFE_BAZEL_RUNFILES"],
+        args = ["_main/tests/corpus/cipher_iris.test_slide"],
+    )
+
+    # Bits flipped -> percent recovered: the FastFHIR-benchmark Test 5 curve,
+    # run as an assertion. Registered on BOTH build systems on purpose --
+    # FastFHIR shipped a recovery engine Bazel was not compiling at all, so a
+    # defect reachable only through one of them was invisible for a week.
+    cc_test(
+        name = "ife_recovery_bench_tests",
+        srcs = [
+            "tests/ife_recovery_bench_tests.cpp",
+            "tests/ife_corpus_path.hpp",
+        ],
+        copts = copts,
+        size = "medium",
+        deps = [ife, "@rules_cc//cc/runfiles"],
+        data = [
+            "//tests/corpus:v1_0_witness.test_slide",
+            "//tests/corpus:v1_1_witness.test_slide",
+        ],
         local_defines = ["IFE_BAZEL_RUNFILES"],
         args = ["_main/tests/corpus/v1_0_witness.test_slide"],
     )
@@ -369,6 +487,11 @@ def ife_tests(
             "tests/fixtures/future_versioning/ife_fixture_layout.hpp",
             "tests/fixtures/future_versioning/generated/IFE_Blocks.hpp",
             "tests/fixtures/future_versioning/generated/IFE_Blocks.cpp",
+            # Declared as an input so include-scanning searches its directory:
+            # IrisFileExtension.hpp (pulled via IFE_Primitives.hpp) includes
+            # IFE_Map.hpp, and the fixture layer is this test's only generated
+            # dir on purpose.
+            "tests/fixtures/future_versioning/generated/IFE_Map.hpp",
         ],
         copts = copts,
         size = "small",

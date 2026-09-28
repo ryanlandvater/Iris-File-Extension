@@ -23,7 +23,7 @@
 
 #include "IFE_Bytes.hpp"
 
-namespace IFE {
+namespace Iris::File {
 
 /// A view of a slide file's bytes, wherever they physically are.
 ///
@@ -103,6 +103,6 @@ private:
 /// Linking against it elsewhere is a build error rather than a silent stub.
 bool fetch_http_range(void* __url, Offset __offset, Size __size, BYTE* __dst);
 
-}  // namespace IFE
+}  // namespace Iris::File
 
 #endif  // IFE_Window_hpp

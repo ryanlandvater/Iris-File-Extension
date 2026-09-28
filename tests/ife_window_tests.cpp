@@ -28,9 +28,9 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-using ::IFE::Offset;
-using ::IFE::Size;
+using ::Iris::File::BYTE;
+using ::Iris::File::Offset;
+using ::Iris::File::Size;
 
 constexpr Size FILE_SIZE = 1024;
 
@@ -60,7 +60,7 @@ BYTE expected_at(Offset i) { return static_cast<BYTE>(i % 251); }
 
 void test_resident_is_pointer_arithmetic() {
     Stub source;
-    auto window = IFE::Window::resident(source.bytes.data(), FILE_SIZE);
+    auto window = Iris::File::Window::resident(source.bytes.data(), FILE_SIZE);
 
     IFE_CHECK(window.is_resident());
     IFE_CHECK(window.size() == FILE_SIZE);
@@ -72,10 +72,10 @@ void test_resident_is_pointer_arithmetic() {
 
 void test_bounds_are_refused_in_both_modes() {
     Stub source;
-    auto resident = IFE::Window::resident(source.bytes.data(), FILE_SIZE);
-    auto remote   = IFE::Window::remote(FILE_SIZE, &Stub::fetch, &source);
+    auto resident = Iris::File::Window::resident(source.bytes.data(), FILE_SIZE);
+    auto remote   = Iris::File::Window::remote(FILE_SIZE, &Stub::fetch, &source);
 
-    for (IFE::Window* w : {&resident, &remote}) {
+    for (Iris::File::Window* w : {&resident, &remote}) {
         IFE_CHECK(w->map(FILE_SIZE, 1) == nullptr);          // starts at EOF
         IFE_CHECK(w->map(FILE_SIZE - 4, 5) == nullptr);      // ends past EOF
         IFE_CHECK(w->map(FILE_SIZE + 1, 0) == nullptr);      // offset past EOF
@@ -93,7 +93,7 @@ void test_bounds_are_refused_in_both_modes() {
 
 void test_remote_fetches_once_and_serves_from_cache() {
     Stub source;
-    auto window = IFE::Window::remote(FILE_SIZE, &Stub::fetch, &source);
+    auto window = Iris::File::Window::remote(FILE_SIZE, &Stub::fetch, &source);
     IFE_CHECK(!window.is_resident());
 
     const BYTE* first = window.map(64, 32);
@@ -117,7 +117,7 @@ void test_remote_fetches_once_and_serves_from_cache() {
 
 void test_cached_pointers_survive_cache_growth() {
     Stub source;
-    auto window = IFE::Window::remote(FILE_SIZE, &Stub::fetch, &source);
+    auto window = Iris::File::Window::remote(FILE_SIZE, &Stub::fetch, &source);
 
     // Hold the first page, then force many more. The pages vector reallocates;
     // the bytes must not move with it, or every handle built on an earlier
@@ -135,7 +135,7 @@ void test_cached_pointers_survive_cache_growth() {
 void test_transport_failure_is_null_not_garbage() {
     Stub source;
     source.fail = true;
-    auto window = IFE::Window::remote(FILE_SIZE, &Stub::fetch, &source);
+    auto window = Iris::File::Window::remote(FILE_SIZE, &Stub::fetch, &source);
 
     IFE_CHECK(window.map(0, 16) == nullptr);
     IFE_CHECK(source.calls == 1);
@@ -153,7 +153,7 @@ void test_transport_failure_is_null_not_garbage() {
 void test_remote_without_transport_fails_closed() {
     // Null transport is a programming error, not a reason to hand back a
     // pointer into nothing.
-    auto window = IFE::Window::remote(FILE_SIZE, nullptr, nullptr);
+    auto window = Iris::File::Window::remote(FILE_SIZE, nullptr, nullptr);
     IFE_CHECK(window.map(0, 16) == nullptr);
 }
 

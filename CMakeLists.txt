@@ -90,12 +90,46 @@ if (NOT DEFINED irisheaders_SOURCE_DIR)
 endif()
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Warnings (RC-10.5) — mirrored in BUILD.bazel's _COPTS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# -Wall and -Wextra are the new coverage. -Wswitch is named for a different
+# reason: it is already on by default in clang and gcc, so naming it is a
+# GUARD, not an addition -- it survives someone trimming -Wall, and it states
+# that a new RepairClass or GapClass member must fail at compile time rather
+# than be silently uncounted (FastFHIR's gap tally had exactly that bug).
+#
+# A flag only bites where the code gives it something to bite. The GapClass
+# tally in IFE_Recovery.cpp was an if/else-if chain, which -Wswitch cannot
+# see; it is a switch now. Verified by probe: appending an enumerator to
+# RepairClass warns at both switches, and to GapClass at the tally.
+#
+# Directory scope, deliberately placed AFTER FetchContent_MakeAvailable above:
+# add_compile_options only reaches targets created from here on, so the
+# Iris-Headers subproject keeps its own flags. The two Iris-Headers sources
+# compiled straight into IrisFileExtensionLib do inherit these -- they are
+# clean today, and nothing here is -Werror, so upstream can never break this
+# build with a warning.
+#
+# NOT -Werror. Every first-party translation unit is warning-free as of
+# RC-10.5; making that a hard error would turn a compiler upgrade into a
+# build outage, which is how projects end up deleting the flags entirely.
+if(MSVC)
+    add_compile_options(/W4)
+else()
+    add_compile_options(-Wall -Wextra -Wswitch)
+endif()
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Iris File Extension Universal Object Build
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 set (
     IFE_SourcesExport 
     ${IFE_INCLUDE_DIR}/IrisFileExtension.hpp
     ${IFE_INCLUDE_DIR}/IFE_Bytes.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Primitives.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Advanced.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Builder.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Parser.hpp
     # The two Iris-Headers headers the public surface includes. IrisCore.hpp
     # and IrisCodecCore.hpp are runtime/codec concerns IFE does not use —
     # they stay with Iris-Headers' own package, not this one.
@@ -108,6 +142,9 @@ set (
 set (
     IFE_SourcesPriv
     ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
+    ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
+    ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+    ${IFE_SOURCE_DIR}/IFE_Parser.cpp
     ${IFE_SOURCE_DIR}/IFE_Window.cpp
     ${irisheaders_SOURCE_DIR}/src/IrisBuffer.cpp
     # Iris::MemoryArena's OS calls.  Split out of priv/IrisMemory.hpp so that
@@ -125,6 +162,11 @@ set (
     IFE_Dependencies
     IrisHeaders
 )
+# Recovery::scan() runs the signature census on std::thread (RC-6 / REC-19.5);
+# Threads::Threads is the portable way to get -pthread on glibc and the no-op
+# on macOS/Windows.
+find_package(Threads REQUIRED)
+list(APPEND IFE_Dependencies Threads::Threads)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Generated source (generated_source/) and generated docs
 # (generated_docs/) — generator pipeline output. Both are gitignored and
@@ -235,7 +277,7 @@ set_target_properties(
     CXX_VISIBILITY_PRESET hidden
     # Required alongside the preset, not implied by it. GCC leaves weak
     # template and inline instantiations at default visibility even when the
-    # preset is hidden, so std::optional<IFE::constants::...> lands in the
+    # preset is hidden, so std::optional<Iris::File::constants::...> lands in the
     # shared library's dynamic symbol table. Clang hides them already, which
     # is why this only ever failed on the Linux runners.
     VISIBILITY_INLINES_HIDDEN ON

@@ -92,10 +92,10 @@ def _comment(text: str, prefix: str = "//") -> list[str]:
 def _emit_constants_body(
     out: list[str], document: dict[str, Any], types: dict[str, Any]
 ) -> None:
-    """The `IFE::constants` content: enums + statically defined sentinel values.
+    """The `Iris::File::constants` content: enums + statically defined sentinel values.
 
     Emitted into the merged IFE_Blocks.hpp; the caller owns the enclosing
-    namespaces. The schema-version constants live at `IFE::` scope and are
+    namespaces. The schema-version constants live at `Iris::File::` scope and are
     the caller's to emit before this is called.
     """
     out.append("namespace constants {")
@@ -308,17 +308,17 @@ def _read_expression(field: FieldLayout, types: dict[str, Any]) -> tuple[str, st
     """
     at = f"__base + __offset + offset::{field.name}"
     if field.kind == "enum":
-        enum = f"::IFE::constants::{_pascal(field.type_name)}"
+        enum = f"::Iris::File::constants::{_pascal(field.type_name)}"
         underlying = _cpp_of(field.type_name, types) if field.type_name in types else field.cpp_type
-        return enum, f"static_cast<{enum}>(::IFE::load<{underlying}>({at}))"
+        return enum, f"static_cast<{enum}>(::Iris::File::load<{underlying}>({at}))"
     canonical = _canonical_type(field.type_name, types)
     if canonical == "u24":
-        return "std::uint32_t", f"::IFE::load_u24({at})"
+        return "std::uint32_t", f"::Iris::File::load_u24({at})"
     if canonical == "u40":
-        return "std::uint64_t", f"::IFE::load_u40({at})"
+        return "std::uint64_t", f"::Iris::File::load_u40({at})"
     if canonical == "f16":
-        return "float", f"::IFE::load_f16({at})"
-    return field.cpp_type, f"::IFE::load<{field.cpp_type}>({at})"
+        return "float", f"::Iris::File::load_f16({at})"
+    return field.cpp_type, f"::Iris::File::load<{field.cpp_type}>({at})"
 
 
 def _field_members(
@@ -351,11 +351,11 @@ def _field_members(
                 # follows whatever it finds there.
                 body.append(f"    if (__version < {_version_of(field.since):#010x}u) return {target}{{}};")
             body += [
-                f"    const ::IFE::Offset __at = ::IFE::load<::IFE::Offset>(",
+                f"    const ::Iris::File::Offset __at = ::Iris::File::load<::Iris::File::Offset>(",
                 f"        __base + __offset + offset::{field.name});",
             ]
             if field.nullable:
-                body.append(f"    if (__at == ::IFE::constants::NULL_OFFSET) return {target}{{}};")
+                body.append(f"    if (__at == ::Iris::File::constants::NULL_OFFSET) return {target}{{}};")
             body.append(f"    return {target}{{__base, __at, __size, __version}};")
             since_note = (f" Empty in a file written before {field.since}."
                           if field.since != "1.0" else "")
@@ -409,7 +409,7 @@ def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
     """
     primitive = layout.primitives[block.primitive]
     body: list[str] = [
-        "    if (!*this)",
+        "    if (!in_bounds())",
         '        return {Check::NOT_CONSTRUCTED, type, "", __offset, __size, __offset};',
     ]
     by_name = {f.name: f for f in primitive.fields}
@@ -440,17 +440,17 @@ def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
             ]
         else:
             body += [
-                f"    if (const ::IFE::Offset __v = validation(); __v != {own})",
+                f"    if (const ::Iris::File::Offset __v = validation(); __v != {own})",
                 f'        return {{Check::BAD_VALIDATION, type, "VALIDATION", __v, {own}, __offset}};',
             ]
     for field in primitive.fields:
         if field.kind == "constant":
             body += [
-                f"    if (const auto __c = ::IFE::load<{field.cpp_type}>(",
+                f"    if (const auto __c = ::Iris::File::load<{field.cpp_type}>(",
                 f"            __base + __offset + offset::{field.name});",
-                f"        __c != ::IFE::constants::{field.constant})",
+                f"        __c != ::Iris::File::constants::{field.constant})",
                 f'        return {{Check::BAD_CONSTANT, type, "{field.name}", __c,',
-                f"                ::IFE::constants::{field.constant}, __offset}};",
+                f"                ::Iris::File::constants::{field.constant}, __offset}};",
             ]
     # An untagged block has no RECOVERY field to check against -- what
     # identifies it is the shape of its VALIDATION, checked above.
@@ -479,11 +479,24 @@ def _validate_member(name: str, block: Any, layout: LayoutResult) -> Member:
             "",
             "    // Expressed as a subtraction so the multiplication cannot wrap:",
             "    // u16 * u32 fits a u64 comfortably.",
-            "    const ::IFE::Offset __begin = entries_begin();",
+            "    const ::Iris::File::Offset __begin = entries_begin();",
             f"    const std::uint64_t __span = {span};",
             "    if (__begin > __size || __span > __size - __begin)",
             '        return {Check::ARRAY_OVERRUN, type, "COUNT", __span,',
             "                __size - (__begin > __size ? __size : __begin), __offset};",
+        ]
+    if _has_payload_sizes(block, layout):
+        body += [
+            "",
+            "    // TITLE_SIZE and IMAGE_SIZE declare the payload after the header, and",
+            "    // nothing else bounds them: this block is not an array, so no COUNT",
+            "    // check runs for it. A reader trusting TITLE_SIZE once copied past",
+            "    // the end of the file while every other check here passed (RC-10.1).",
+            "    // extent() is the one formula for the span; in_bounds() above",
+            "    // guarantees the subtraction cannot wrap.",
+            "    if (const ::Iris::File::Size __ext = extent(); __ext > __size - __offset)",
+            '        return {Check::PAYLOAD_OVERRUN, type, "IMAGE_SIZE", __ext,',
+            "                __size - __offset, __offset};",
         ]
     body.append("    return {};")
     return Member(
@@ -517,13 +530,17 @@ def _validate_deep_member(name: str, block: Any) -> Member:
             lines += [
                 f"{indent}    // Optional: NULL_OFFSET means absent and is legal; any",
                 f"{indent}    // other unusable value is not.",
-                f"{indent}    if ({handle}.__offset != ::IFE::constants::NULL_OFFSET) {{",
+                f"{indent}    if ({handle}.__offset != ::Iris::File::constants::NULL_OFFSET) {{",
             ]
         else:
             lines.append(f"{indent}    {{")
         inner = indent + "        "
+        # in_bounds(), not the bool: the bool now demands validate(), so testing
+        # it here reported every child whose own witness failed as "points
+        # outside the file" and never reached the recursion that names the
+        # real failure (RC-10.1).
         lines += [
-            f"{inner}if (!{handle})",
+            f"{inner}if (!{handle}.in_bounds())",
             f'{inner}    return {{Check::OUT_OF_BOUNDS, type, "{field.name}",',
             f"{inner}            {handle}.__offset, __size, __offset}};",
             f"{inner}if (const Status __s = {handle}.validate_deep(__path); !__s) return __s;",
@@ -570,6 +587,8 @@ enum class Check : std::uint8_t {
     TOO_DEEP,          ///< a chain is longer than a reader will follow, without repeating
     BAD_NESTED_VALUE,  ///< a nested attribute value is not a whole number of offsets
     CONFORMANCE,       ///< a normative clause was violated; only the conformance layer raises this
+    PAYLOAD_OVERRUN,   ///< a block's declared payload extends past the end of the file
+    VALUE_TOO_WIDE,    ///< store(): a value wider than its packed field (u24/u40); nothing was written
 };
 
 /// Everything needed to describe a failure, unformatted.
@@ -579,7 +598,7 @@ struct Status {
     const char*   field    = "";
     std::uint64_t found    = 0;
     std::uint64_t expected = 0;
-    ::IFE::Offset at       = 0;
+    ::Iris::File::Offset at       = 0;
 
     constexpr explicit operator bool() const noexcept { return code == Check::OK; }
 };
@@ -599,15 +618,15 @@ inline constexpr std::size_t MAX_BLOCK_DEPTH = 16;
 /// pointing at one target. A cycle is an offset that reappears on the current
 /// path, bounded by the block graph's depth.
 struct VisitPath {
-    ::IFE::Offset entries[MAX_BLOCK_DEPTH]{};
+    ::Iris::File::Offset entries[MAX_BLOCK_DEPTH]{};
     std::size_t   depth = 0;
 
-    [[nodiscard]] constexpr bool contains(::IFE::Offset __o) const noexcept {
+    [[nodiscard]] constexpr bool contains(::Iris::File::Offset __o) const noexcept {
         for (std::size_t __i = 0; __i < depth; ++__i)
             if (entries[__i] == __o) return true;
         return false;
     }
-    [[nodiscard]] constexpr bool push(::IFE::Offset __o) noexcept {
+    [[nodiscard]] constexpr bool push(::Iris::File::Offset __o) noexcept {
         if (depth == MAX_BLOCK_DEPTH) return false;
         entries[depth++] = __o;
         return true;
@@ -657,9 +676,9 @@ def _emit_folded_primitive(
     """
     chain = _primitive_chain(block, layout)
     out += [
-        "    const ::IFE::BYTE* __base    = nullptr;",
-        "    ::IFE::Offset      __offset  = ::IFE::constants::NULL_OFFSET;",
-        "    ::IFE::Size        __size    = 0;   ///< total file size",
+        "    const ::Iris::File::BYTE* __base    = nullptr;",
+        "    ::Iris::File::Offset      __offset  = ::Iris::File::constants::NULL_OFFSET;",
+        "    ::Iris::File::Size        __size    = 0;   ///< total file size",
         "    std::uint32_t      __version = 0;   ///< major<<16 | minor, from FILE_HEADER",
         "",
         "    /// Whether a block of `__header_size` bytes fits here. Stricter than",
@@ -673,19 +692,26 @@ def _emit_folded_primitive(
             "    /// This block lays its fields out *before* `__offset`, so the",
             "    /// test is that the header fits behind it rather than ahead of it.",
             "    /// Getting that backwards underflows past the start of the file.",
-            "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
+            "    [[nodiscard]] constexpr bool fits(::Iris::File::Size __header_size) const noexcept {",
             "        return __base != nullptr",
-            "            && __offset != ::IFE::constants::NULL_OFFSET",
+            "            && __offset != ::Iris::File::constants::NULL_OFFSET",
             "            && __offset >= __header_size",
             "            && __offset <= __size;",
             "    }",
         ]
     else:
         out += [
-            "    [[nodiscard]] constexpr bool fits(::IFE::Size __header_size) const noexcept {",
+            "    ///",
+            "    /// Written as a subtraction, never `__offset + __header_size <= __size`:",
+            "    /// NULL_OFFSET is all ones, so one flipped bit in an ABSENT slot gives",
+            "    /// 0xFF..FE -- no longer null, and the addition wraps it to a tiny",
+            "    /// number that passes. The damage sweep read two bytes BEFORE the",
+            "    /// mapping that way (RC-10.1). BlockHeader::fits has the same shape.",
+            "    [[nodiscard]] constexpr bool fits(::Iris::File::Size __header_size) const noexcept {",
             "        return __base != nullptr",
-            "            && __offset != ::IFE::constants::NULL_OFFSET",
-            "            && __offset + __header_size <= __size;",
+            "            && __offset != ::Iris::File::constants::NULL_OFFSET",
+            "            && __offset <= __size",
+            "            && __size - __offset >= __header_size;",
             "    }",
         ]
     for prim in chain:
@@ -702,8 +728,8 @@ def _emit_folded_primitive(
             "",
             "    /// Where the entry run starts. Takes the derived block's header size",
             "    /// for the same reason `fits` does.",
-            "    [[nodiscard]] constexpr ::IFE::Offset entries_at(",
-            "            ::IFE::Size __header_size) const noexcept {",
+            "    [[nodiscard]] constexpr ::Iris::File::Offset entries_at(",
+            "            ::Iris::File::Size __header_size) const noexcept {",
             "        return __offset + __header_size;",
             "    }",
         ]
@@ -737,7 +763,7 @@ def _entry_struct(entry_name: str) -> str:
 def _writer_type(field: FieldLayout, types: dict[str, Any]) -> str:
     """The type a caller supplies for one field -- the mirror of _read_expression."""
     if field.kind == "enum":
-        return f"::IFE::constants::{_pascal(field.type_name)}"
+        return f"::Iris::File::constants::{_pascal(field.type_name)}"
     canonical = _canonical_type(field.type_name, types)
     if canonical == "u24":
         return "std::uint32_t"
@@ -764,11 +790,11 @@ def _writer_default(field: FieldLayout) -> str:
     claim implies.
     """
     if field.points_to:
-        return "::IFE::constants::NULL_OFFSET"
+        return "::Iris::File::constants::NULL_OFFSET"
     if field.name == "EXTENSION_MAJOR":
-        return "::IFE::IFE_SCHEMA_VERSION_MAJOR"
+        return "::Iris::File::IFE_SCHEMA_VERSION_MAJOR"
     if field.name == "EXTENSION_MINOR":
-        return "::IFE::IFE_SCHEMA_VERSION_MINOR"
+        return "::Iris::File::IFE_SCHEMA_VERSION_MINOR"
     return "{}"
 
 
@@ -776,18 +802,61 @@ def _write_expression(
     field: FieldLayout, vtable: str, value: str, types: dict[str, Any], base: str
 ) -> str:
     """One store through IFE_Bytes. The exact inverse of _read_expression."""
-    at = f"{base} + ::IFE::blocks::{vtable}::offset::{field.name}"
+    at = f"{base} + ::Iris::File::blocks::{vtable}::offset::{field.name}"
     if field.kind == "enum":
         underlying = _cpp_of(field.type_name, types) if field.type_name in types else field.cpp_type
-        return f"::IFE::store<{underlying}>({at}, static_cast<{underlying}>({value}));"
+        return f"::Iris::File::store<{underlying}>({at}, static_cast<{underlying}>({value}));"
     canonical = _canonical_type(field.type_name, types)
     if canonical == "u24":
-        return f"::IFE::store_u24({at}, {value});"
+        return f"::Iris::File::store_u24({at}, {value});"
     if canonical == "u40":
-        return f"::IFE::store_u40({at}, {value});"
+        return f"::Iris::File::store_u40({at}, {value});"
     if canonical == "f16":
-        return f"::IFE::store_f16({at}, {value});"
-    return f"::IFE::store<{field.cpp_type}>({at}, {value});"
+        return f"::Iris::File::store_f16({at}, {value});"
+    return f"::Iris::File::store<{field.cpp_type}>({at}, {value});"
+
+
+# The widest value each packed wire type holds. A packed field is narrower than
+# the C++ integer that carries it, so store() would otherwise truncate silently.
+_PACKED_MAX = {"u24": "0xFFFFFFull", "u40": "0xFFFFFFFFFFull"}
+
+
+def _width_guard(
+    name: str, block: Any, caller: tuple[FieldLayout, ...], types: dict[str, Any]
+) -> list[str]:
+    """store()'s first lines: refuse any caller value wider than its packed field.
+
+    Emitted before the first byte is written, so a refused store leaves the
+    destination untouched. Only fields the caller supplies are checked; the
+    machine-written prefix is the writer's own arithmetic.
+    """
+    def packed(field: FieldLayout) -> str | None:
+        if field.kind in ("constant", "enum"):
+            return None
+        return _PACKED_MAX.get(_canonical_type(field.type_name, types))
+
+    lines: list[str] = []
+    header = [(f, packed(f)) for f in caller if packed(f)]
+    entries = [(f, packed(f)) for f in (block.entry_fields or ()) if packed(f)]
+    if not header and not entries:
+        return lines
+    lines.append("    // Packed fields are narrower than the C++ integers that carry them:")
+    lines.append("    // refuse a value that does not fit, before a byte is written, rather")
+    lines.append("    // than truncate it (a u40 OFFSET of 1<<40 used to store as 0).")
+    for field, limit in header:
+        lines.append(f"    if (__info.{field.name} > {limit})")
+        lines.append(f'        return {{Check::VALUE_TOO_WIDE, {name}::type, "{field.name}",')
+        lines.append(f"                static_cast<std::uint64_t>(__info.{field.name}), {limit}, __offset}};")
+    if entries:
+        entry_struct = _entry_struct(block.entry_name or name + "_ENTRY")
+        lines.append("    for (const " + entry_struct + "& __e : __info.entries) {")
+        for field, limit in entries:
+            lines.append(f"        if (__e.{field.name} > {limit})")
+            lines.append(f'            return {{Check::VALUE_TOO_WIDE, {name}::type, "{field.name}",')
+            lines.append(f"                    static_cast<std::uint64_t>(__e.{field.name}), {limit}, __offset}};")
+        lines.append("    }")
+    lines.append("")
+    return lines
 
 
 def _caller_fields(block: Any, layout: LayoutResult) -> tuple[FieldLayout, ...]:
@@ -846,10 +915,14 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
                     "    /// DICOM sequence -- when KIND is ATTRIBUTE_NESTED. Where those",
                     "    /// blocks sit stays the caller's decision, as it is for every",
                     "    /// other offset in this layer.",
-                    "    std::vector<::IFE::Offset> nested;",
+                    "    ///",
+                    "    /// Defaulted, like KIND, because the common construction names a",
+                    "    /// key and a value and stops there. Without the initializer that",
+                    "    /// is a -Wmissing-field-initializers warning at every such site.",
+                    "    std::vector<::Iris::File::Offset> nested = {};",
                     "    /// Which of the two the value is.",
-                    "    ::IFE::constants::AttributeKinds KIND =",
-                    "        ::IFE::constants::AttributeKinds::ATTRIBUTE_STRING;",
+                    "    ::Iris::File::constants::AttributeKinds KIND =",
+                    "        ::Iris::File::constants::AttributeKinds::ATTRIBUTE_STRING;",
                     "};",
                     "",
                     "/// Wire width of one nested-structure offset: a plain 64-bit absolute",
@@ -858,7 +931,7 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
                     "/// block stores its own absolute offset in VALIDATION regardless, and",
                     "/// a packed width would buy three bytes per item at the cost of being",
                     "/// the one offset in IFE that is not shaped like the others.",
-                    "inline constexpr ::IFE::Size NESTED_OFFSET_SIZE = 8;",
+                    "inline constexpr ::Iris::File::Size NESTED_OFFSET_SIZE = 8;",
                     "",
                     "/// How many bytes of the attribute byte array one value occupies.",
                     "///",
@@ -867,9 +940,9 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
                     "/// packed run without interpreting a single value. A string value is",
                     "/// its own length; a nested one is five bytes per item it locates, so",
                     "/// a sequence of no items is a legal value of length zero.",
-                    "[[nodiscard]] inline ::IFE::Size attribute_value_bytes(",
+                    "[[nodiscard]] inline ::Iris::File::Size attribute_value_bytes(",
                     f"        const {pairs_entry}& __e) noexcept {{",
-                    "    return __e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED",
+                    "    return __e.KIND == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED",
                     "         ? __e.nested.size() * NESTED_OFFSET_SIZE",
                     "         : __e.value.size();",
                     "}",
@@ -879,21 +952,21 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
                     "/// than dividing: the wire stores a length because that is what lets a",
                     "/// decoder walk the packed run without interpreting any value, but a",
                     "/// caller thinks in items and should never see the eight.",
-                    "[[nodiscard]] inline ::IFE::Size nested_count(::IFE::Size __value_size) noexcept {",
+                    "[[nodiscard]] inline ::Iris::File::Size nested_count(::Iris::File::Size __value_size) noexcept {",
                     "    return __value_size / NESTED_OFFSET_SIZE;",
                     "}",
                     "",
                     "/// The offset of nested structure `__i` within a value slice.",
-                    "[[nodiscard]] inline ::IFE::Offset nested_offset(",
-                    "        const ::IFE::BYTE* __value, ::IFE::Size __i) noexcept {",
-                    "    return ::IFE::load<std::uint64_t>(__value + __i * NESTED_OFFSET_SIZE);",
+                    "[[nodiscard]] inline ::Iris::File::Offset nested_offset(",
+                    "        const ::Iris::File::BYTE* __value, ::Iris::File::Size __i) noexcept {",
+                    "    return ::Iris::File::load<std::uint64_t>(__value + __i * NESTED_OFFSET_SIZE);",
                     "}",
                     "",
                     "/// Whether a value slice of `__value_size` bytes is a whole number of",
                     "/// offsets. The one rule about these bytes the schema's capped predicate",
                     "/// vocabulary cannot state, so it is stated in the specification prose",
                     "/// and checked here.",
-                    "[[nodiscard]] inline bool nested_size_is_whole(::IFE::Size __value_size) noexcept {",
+                    "[[nodiscard]] inline bool nested_size_is_whole(::Iris::File::Size __value_size) noexcept {",
                     "    return __value_size % NESTED_OFFSET_SIZE == 0;",
                     "}",
                     "",
@@ -908,7 +981,7 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
                     "/// then fills `value` would have their text dropped and a well-formed",
                     "/// empty sequence written in its place.",
                     f"[[nodiscard]] inline bool attribute_payload_agrees(const {pairs_entry}& __e) noexcept {{",
-                    "    return __e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED",
+                    "    return __e.KIND == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED",
                     "         ? __e.value.empty()",
                     "         : __e.nested.empty();",
                     "}",
@@ -976,8 +1049,8 @@ def _emit_create_infos(out: list[str], layout: LayoutResult, types: dict[str, An
             out += [
                 "    /// The byte run. What it means is not this layer's business: the",
                 "    /// slicing comes from a sizes array elsewhere.",
-                "    const ::IFE::BYTE* bytes = nullptr;",
-                "    ::IFE::Size        count = 0;",
+                "    const ::Iris::File::BYTE* bytes = nullptr;",
+                "    ::Iris::File::Size        count = 0;",
             ]
         out.append("};")
 
@@ -1014,7 +1087,7 @@ def _emit_validation_hooks(out: list[str], layout: LayoutResult) -> None:
     ]
     for name in layout.blocks:
         out.append(
-            f"    Status (*{name})(const {_create_info(name)}&, ::IFE::Offset,"
+            f"    Status (*{name})(const {_create_info(name)}&, ::Iris::File::Offset,"
             f" const ValidationHooks*) = nullptr;"
         )
     out.append("};")
@@ -1033,8 +1106,8 @@ def _writer_signature(name: str, declaration: bool) -> tuple[str, str]:
     indent = (" " * len("Status store(") if declaration
               else " " * len("IFE_BLOCKS_LINKAGE Status store("))
     return (
-        f"{attrs}::IFE::Size size_of(const {info}& __info) noexcept",
-        f"Status store(::IFE::BYTE* __base, ::IFE::Offset __offset, const {info}& __info,\n"
+        f"{attrs}::Iris::File::Size size_of(const {info}& __info) noexcept",
+        f"Status store(::Iris::File::BYTE* __base, ::Iris::File::Offset __offset, const {info}& __info,\n"
         f"{indent}const ValidationHooks* __hooks{default}) noexcept",
     )
 
@@ -1069,7 +1142,7 @@ def _emit_pairs_writer(
     shape the retired hand-written layer had (STORE_ATTRIBUTES_SIZES and
     STORE_ATTRIBUTES_BYTES both took the semantic Attributes).
     """
-    vt = f"::IFE::blocks::{name}"
+    vt = f"::Iris::File::blocks::{name}"
     entry = block.entry_name or f"{name}_ENTRY"
     size_of, store = _writer_signature(name, declaration=False)
 
@@ -1099,31 +1172,31 @@ def _emit_pairs_writer(
             f"IFE_BLOCKS_LINKAGE {store} {{",
         ] + guard + [
             "    // The machine-written prefix, in wire order.",
-            f"    ::IFE::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
+            f"    ::Iris::File::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
             "                               __offset);",
-            f"    ::IFE::store<std::uint16_t>(__base + __offset + {vt}::offset::RECOVERY,",
+            f"    ::Iris::File::store<std::uint16_t>(__base + __offset + {vt}::offset::RECOVERY,",
             f"                               static_cast<std::uint16_t>({name}::recovery));",
-            f"    ::IFE::store<std::uint16_t>(__base + __offset + {vt}::offset::STRIDE,",
+            f"    ::Iris::File::store<std::uint16_t>(__base + __offset + {vt}::offset::STRIDE,",
             f"                               {vt}::{entry}::entry_size);",
-            f"    ::IFE::store<std::uint32_t>(__base + __offset + {vt}::offset::COUNT,",
+            f"    ::Iris::File::store<std::uint32_t>(__base + __offset + {vt}::offset::COUNT,",
             "                               static_cast<std::uint32_t>(__info.entries.size()));",
             "",
             "    // One entry per attribute: the sizes that slice the packed run below.",
-            f"    ::IFE::BYTE* __entry = __base + __offset + {vt}::header_size;",
+            f"    ::Iris::File::BYTE* __entry = __base + __offset + {vt}::header_size;",
             "    for (std::size_t __i = 0; __i < __info.entries.size();",
             f"         ++__i, __entry += {vt}::{entry}::entry_size) {{",
             "        const auto& __e = __info.entries[__i];",
-            f"        ::IFE::store<std::uint16_t>(__entry + {vt}::{entry}::offset::KEY_SIZE,",
+            f"        ::Iris::File::store<std::uint16_t>(__entry + {vt}::{entry}::offset::KEY_SIZE,",
             "                                   static_cast<std::uint16_t>(__e.key.size()));",
-            f"        ::IFE::store<std::uint32_t>(__entry + {vt}::{entry}::offset::VALUE_SIZE,",
+            f"        ::Iris::File::store<std::uint32_t>(__entry + {vt}::{entry}::offset::VALUE_SIZE,",
             "                                   static_cast<std::uint32_t>(attribute_value_bytes(__e)));",
-            f"        ::IFE::store<std::uint8_t>(__entry + {vt}::{entry}::offset::KIND,",
+            f"        ::Iris::File::store<std::uint8_t>(__entry + {vt}::{entry}::offset::KIND,",
             "                                   static_cast<std::uint8_t>(__e.KIND));",
             "    }",
         ]
     else:  # ATTRIBUTE_BYTES: key bytes then value bytes, no separators
         out += [
-            "    ::IFE::Size __total = 0;",
+            "    ::Iris::File::Size __total = 0;",
             "    for (const auto& __e : __info.entries)",
             "        __total += __e.key.size() + attribute_value_bytes(__e);",
             f"    return {vt}::header_size + __total;",
@@ -1131,30 +1204,30 @@ def _emit_pairs_writer(
             "",
             f"IFE_BLOCKS_LINKAGE {store} {{",
         ] + guard + [
-            "    ::IFE::Size __total = 0;",
+            "    ::Iris::File::Size __total = 0;",
             "    for (const auto& __e : __info.entries)",
             "        __total += __e.key.size() + attribute_value_bytes(__e);",
             "    // The machine-written prefix, in wire order.",
-            f"    ::IFE::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
+            f"    ::Iris::File::store<std::uint64_t>(__base + __offset + {vt}::offset::VALIDATION,",
             "                               __offset);",
-            f"    ::IFE::store<std::uint16_t>(__base + __offset + {vt}::offset::RECOVERY,",
+            f"    ::Iris::File::store<std::uint16_t>(__base + __offset + {vt}::offset::RECOVERY,",
             f"                               static_cast<std::uint16_t>({name}::recovery));",
-            f"    ::IFE::store<std::uint32_t>(__base + __offset + {vt}::offset::COUNT,",
+            f"    ::Iris::File::store<std::uint32_t>(__base + __offset + {vt}::offset::COUNT,",
             "                               static_cast<std::uint32_t>(__total));",
             "",
             "    // Key then value, no separators: the sizes array is the slicing.",
-            f"    ::IFE::BYTE* __p = __base + __offset + {vt}::header_size;",
+            f"    ::Iris::File::BYTE* __p = __base + __offset + {vt}::header_size;",
             "    for (const auto& __e : __info.entries) {",
             "        std::memcpy(__p, __e.key.data(), __e.key.size());",
             "        __p += __e.key.size();",
-            "        if (__e.KIND == ::IFE::constants::AttributeKinds::ATTRIBUTE_NESTED) {",
+            "        if (__e.KIND == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED) {",
             "            // File offsets, not text: an edge the schema cannot describe,",
             "            // because a points_to lives on a field and these live in an",
             "            // opaque run whose length is data. They are written in the",
             "            // format's ordinary form -- absolute, 64-bit -- so nothing",
             "            // here needs a base to resolve one.",
-            "            for (const ::IFE::Offset __n : __e.nested) {",
-            "                ::IFE::store<std::uint64_t>(__p, __n);",
+            "            for (const ::Iris::File::Offset __n : __e.nested) {",
+            "                ::Iris::File::store<std::uint64_t>(__p, __n);",
             "                __p += NESTED_OFFSET_SIZE;",
             "            }",
             "        } else {",
@@ -1187,7 +1260,7 @@ def _emit_writer_defs(
             _emit_pairs_writer(out, name, block, layout)
             continue
         primitive = layout.primitives[block.primitive]
-        vt = f"::IFE::blocks::{name}"
+        vt = f"::Iris::File::blocks::{name}"
         entry_type = block.entry_name or f"{name}_ENTRY"
         size_of, store = _writer_signature(name, declaration=False)
 
@@ -1209,6 +1282,7 @@ def _emit_writer_defs(
 
         out.append("")
         out.append(f"IFE_BLOCKS_LINKAGE {store} {{")
+        out += _width_guard(name, block, _caller_fields(block, layout), types)
         out.append("    // The machine-written prefix, in wire order.")
         for field in primitive.fields:
             if field.name not in _PRIMITIVE_FIELDS:
@@ -1218,7 +1292,7 @@ def _emit_writer_defs(
                     f"what supplies it before adding it to the schema"
                 )
             if field.kind == "constant":
-                value = f"::IFE::constants::{field.constant}"
+                value = f"::Iris::File::constants::{field.constant}"
             elif field.name == "VALIDATION":
                 # VALIDATION stores its own position. At the block start
                 # (offset 0) that is the handle's offset; as a backward
@@ -1271,7 +1345,7 @@ def _emit_writer_defs(
                 "",
                 "    // Entries step by the stride this build writes, which is what was",
                 "    // just stored in STRIDE -- a reader steps by the stride it finds.",
-                f"    ::IFE::BYTE* __entry = __base + __offset + {vt}::header_size;",
+                f"    ::Iris::File::BYTE* __entry = __base + __offset + {vt}::header_size;",
                 "    for (std::size_t __i = 0; __i < __info.entries.size();",
                 f"         ++__i, __entry += {vt}::{entry_type}::entry_size) {{",
                 f"        const {_entry_struct(block.entry_name or name + '_ENTRY')}&"
@@ -1295,13 +1369,24 @@ def _emit_writer_defs(
                 "                    __info.bytes, __info.count);",
             ]
 
+        # The self-check window must span everything the block DECLARES.
+        # size_of() is what store() writes -- for IMAGE_BYTES, the header only,
+        # since the payload is the caller's to place -- but validate() bounds
+        # the declared payload too since RC-10.1, so a header-sized window made
+        # every correct IMAGE_BYTES store report PAYLOAD_OVERRUN. store() has
+        # no file size to check against; the real bound is enforced on read.
+        window = "__offset + size_of(__info)"
+        if _has_payload_sizes(block, layout):
+            window += (" + static_cast<::Iris::File::Size>(__info.TITLE_SIZE)"
+                       " + __info.IMAGE_SIZE")
         out += [
             "",
             "    // Structural validation is unconditional and inline: a few integer",
-            "    // compares over what was just written. __size is the block's own end,",
-            "    // which is all validate() looks at.",
+            "    // compares over what was just written. __size is the block's own",
+            "    // end, header and any declared payload, which is all validate()",
+            "    // looks at.",
             f"    const {name} __written{{__base, __offset,",
-            "                            __offset + size_of(__info), VERSION_WRITTEN};",
+            f"                            {window}, VERSION_WRITTEN}};",
             "    if (const Status __status = __written.validate(); !__status) return __status;",
             "",
             "    // Spec conformance, only when a layer is attached.",
@@ -1322,7 +1407,7 @@ def emit_blocks_header(
     """IFE_Blocks.hpp — the whole generated C++ layer, one header.
 
     Constants, derived vtables, the block handles and their inline
-    definitions, and the IrisCodec::Serialization consumer namespace are all
+    definitions, and the Iris::File::Serialization consumer namespace are all
     emitted into this single file. The three-way namespace split inside is
     the generator's structure (one data kind per namespace); one file keeps
     the consumer's include surface to a single generated header, and every
@@ -1350,7 +1435,7 @@ def emit_blocks_header(
         '#include "IFE_Bytes.hpp"',
         "",
         "// The whole generated layer in one header: constants, derived",
-        "// vtables, the block handles, and the IrisCodec::Serialization",
+        "// vtables, the block handles, and the Iris::File::Serialization",
         "// consumer namespace at the end. Three headers were consolidated into",
         "// this one; the *definitions* are a separate translation unit,",
         "// IFE_Blocks.cpp, which is a different question and answered below.",
@@ -1373,7 +1458,7 @@ def emit_blocks_header(
         "#define IFE_BLOCKS_LINKAGE",
         "#endif",
         "",
-        "namespace IFE {",
+        "namespace Iris::File {",
         f"inline constexpr unsigned IFE_SCHEMA_VERSION_MAJOR = {version.get('major', 0)};",
         f"inline constexpr unsigned IFE_SCHEMA_VERSION_MINOR = {version.get('minor', 0)};",
         "",
@@ -1399,7 +1484,7 @@ def emit_blocks_header(
         "",
         "/// The version a writer stamps and validates against: what this build knows.",
         "inline constexpr std::uint32_t VERSION_WRITTEN =",
-        "    (::IFE::IFE_SCHEMA_VERSION_MAJOR << 16) | ::IFE::IFE_SCHEMA_VERSION_MINOR;",
+        "    (::Iris::File::IFE_SCHEMA_VERSION_MAJOR << 16) | ::Iris::File::IFE_SCHEMA_VERSION_MINOR;",
     ]
     _emit_create_infos(out, layout, types)
     _emit_validation_hooks(out, layout)
@@ -1425,8 +1510,8 @@ def emit_blocks_header(
         out.append(f'    static constexpr char type[] = "{name}";')
         recovery_enum = _pascal("recovery_codes")
         if block.recovery_tag:
-            out.append(f"    static constexpr ::IFE::constants::{recovery_enum} recovery =")
-            out.append(f"        ::IFE::constants::{recovery_enum}::{block.recovery_tag};")
+            out.append(f"    static constexpr ::Iris::File::constants::{recovery_enum} recovery =")
+            out.append(f"        ::Iris::File::constants::{recovery_enum}::{block.recovery_tag};")
         # The block's layout table. The primitives' shared tables fold into
         # each block — generated duplication, like the accessors — so the
         # `vtables` namespace is gone and a block reads as one unit (the
@@ -1445,7 +1530,17 @@ def emit_blocks_header(
             )
             out.append(f"    static constexpr std::size_t from_sof = {block.from_sof};")
         out.append("")
-        out.append("    constexpr explicit operator bool() const noexcept { return fits(header_size); }")
+        out.append("    /// Bounds only: the header lies inside the file. Says nothing about")
+        out.append("    /// whether these bytes are the block they claim to be. For code that")
+        out.append("    /// reads DAMAGED files on purpose -- recovery, the file map -- and must")
+        out.append("    /// see a block whose witnesses failed. Everything else wants the bool.")
+        out.append("    [[nodiscard]] constexpr bool in_bounds() const noexcept { return fits(header_size); }")
+        out.append("")
+        out.append("    /// A usable handle: validate() passes -- both witnesses agree and every")
+        out.append("    /// declared extent fits the file. This was in_bounds() until RC-10.1,")
+        out.append("    /// and the read path navigated on it: one flipped COUNT bit then read a")
+        out.append("    /// gigabyte past an 832-byte file with every witness intact.")
+        out.append("    explicit operator bool() const noexcept { return static_cast<bool>(validate()); }")
 
         if block.entry_fields:
             entry = block.entry_name or f"{name}_ENTRY"
@@ -1455,9 +1550,9 @@ def emit_blocks_header(
             out.extend(_emit_size_offset(block.entry_fields, indent="        "))
             _emit_version_markers(out, "        ", "entry_size", block.entry_sizes)
             out += [
-                "        const ::IFE::BYTE* __base    = nullptr;",
-                "        ::IFE::Offset      __offset  = 0;",
-                "        ::IFE::Size        __size    = 0;   ///< total file size",
+                "        const ::Iris::File::BYTE* __base    = nullptr;",
+                "        ::Iris::File::Offset      __offset  = 0;",
+                "        ::Iris::File::Size        __size    = 0;   ///< total file size",
                 "        std::uint16_t      __stride  = 0;   ///< as written, not as compiled",
                 "        std::uint32_t      __version = 0;",
             ]
@@ -1473,14 +1568,14 @@ def emit_blocks_header(
             out.append("    /// Entry `i`, stepped by the STRIDE the encoder wrote — never by the")
             out.append("    /// size this build was compiled with.")
             out.append(f"    [[nodiscard]] {entry} entry(std::uint32_t __i) const noexcept;")
-            out.append("    [[nodiscard]] ::IFE::Offset entries_begin() const noexcept;")
+            out.append("    [[nodiscard]] ::Iris::File::Offset entries_begin() const noexcept;")
         elif _is_blob(block, layout):
             out.append("")
             out.append("    /// The whole byte run. Its interpretation is not this layer's")
             out.append("    /// business: slicing comes from a sizes array elsewhere and the")
             out.append("    /// character encoding is normative prose.")
-            out.append("    [[nodiscard]] ::IFE::ByteSpan bytes() const noexcept;")
-            out.append("    [[nodiscard]] ::IFE::Offset entries_begin() const noexcept;")
+            out.append("    [[nodiscard]] ::Iris::File::ByteSpan bytes() const noexcept;")
+            out.append("    [[nodiscard]] ::Iris::File::Offset entries_begin() const noexcept;")
 
         marks = _version_boundaries(own)
         for index, member in enumerate(_block_members(name, block, layout, types)):
@@ -1490,6 +1585,11 @@ def emit_blocks_header(
                 out.append(f"    // Version {marks[index]} ends here.")
                 out.append("    // ---------------------------------------------------------------")
         out.append("")
+        out.append("    /// Bytes this block occupies on disk, header and payload together.")
+        out.append("    /// Version-aware: fields a later version appended are included. This is")
+        out.append("    /// the extent the recovery gap analysis tiles the arena with (RC-2.1).")
+        out.append("    [[nodiscard]] ::Iris::File::Size extent() const noexcept;")
+        out.append("")
         out.append("    /// Convenience: deep validation from a fresh path.")
         out.append("    [[nodiscard]] Status validate_deep() const noexcept;")
         out.append("};")
@@ -1497,7 +1597,7 @@ def emit_blocks_header(
 
     out += [
         "",
-        "}  // namespace IFE",
+        "}  // namespace Iris::File",
         "",
     ]
 
@@ -1534,7 +1634,7 @@ def emit_blocks_source(
     one.
 
     Not exported either way. The library builds with hidden visibility, and
-    tests/exported_symbols.cmake fails the build if an IFE:: symbol reaches
+    tests/exported_symbols.cmake fails the build if an Iris::File:: symbol reaches
     the dynamic table -- so moving these out of the header changes what is
     compiled, never what is in the ABI.
     """
@@ -1547,20 +1647,94 @@ def emit_blocks_source(
         "// fold, which is the point: the same source serves both ways of",
         "// consuming the layer.",
         '#include "IFE_Blocks.hpp"',
+        "// The extent() definitions delegate to the primitives' formulas, so the",
+        "// primitive layer is included HERE — the TU that does the offset math —",
+        "// never from IFE_Blocks.hpp. A consumer of the top-level API must not",
+        "// drag the byte-level primitives in transitively.",
+        '#include "IFE_Primitives.hpp"',
         "",
-        "namespace IFE {",
+        "namespace Iris::File {",
         "namespace blocks {",
     ]
     _emit_inline_definitions(out, layout, types)
     out += [
         "",
         "}  // namespace blocks",
-        "}  // namespace IFE",
+        "}  // namespace Iris::File",
         "",
         "#endif  // IFE_Blocks_cpp",
         "",
     ]
     return "\n".join(out)
+
+
+def _versioned_size_expr(sizes: tuple[tuple[str, int], ...], prefix: str) -> str:
+    """Select the emitted {prefix}_v{version} constant by __version.
+
+    sizes is ascending: [("1.0", s0), ("1.1", s1), ...]. A handle carries the
+    file's declared version, so the newest group whose version the file meets
+    wins — the exact rule _emit_version_markers documents beside the
+    constants, which it names {prefix}_v{version} (the v is part of the name).
+    Single-group blocks (the common case) collapse to their one constant.
+    """
+    if len(sizes) == 1:
+        return f"{prefix}_v{sizes[0][0].replace('.', '_')}"
+    # Build from the oldest group out: each later group's version is a new
+    # threshold whose true-branch is that group's size and whose false-branch
+    # is everything decided so far.
+    expr = f"{prefix}_v{sizes[0][0].replace('.', '_')}"
+    for i in range(1, len(sizes)):
+        major, minor = version_key(sizes[i][0])
+        threshold = (major << 16) | minor
+        expr = (
+            f"(__version >= 0x{threshold:08X}u"
+            f" ? {prefix}_v{sizes[i][0].replace('.', '_')} : {expr})"
+        )
+    return expr
+
+
+def _has_payload_sizes(block: Any, layout: LayoutResult) -> bool:
+    """IMAGE_BYTES' shape: a plain BLOCK whose TITLE_SIZE/IMAGE_SIZE declare the
+    payload after its header. Not an array and not a byte array, so neither
+    COUNT check bounds it -- which is why validate() needs its own (RC-10.1).
+    One predicate, read by both extent() and validate(), so the formula and
+    its bound cannot come to disagree about which blocks have the shape.
+    """
+    own = {f.name for f in (block.header_fields or ())}
+    return (not block.entry_fields and not _is_blob(block, layout)
+            and {"TITLE_SIZE", "IMAGE_SIZE"} <= own)
+
+
+def _emit_extent(out: list[str], block: Any, layout: LayoutResult) -> None:
+    """extent(): the block's on-disk span, header and payload together.
+
+    The polymorphism is read off what the block HAS — typed entries, a COUNT,
+    a TITLE_SIZE/IMAGE_SIZE payload pair — never its primitive's name (the
+    byte_array-rename lesson that _is_blob records). The formulas themselves
+    live in IFE_Primitives.hpp; this emission only picks which one applies.
+    The versioned header size handles a newer file's appended fields, which is
+    what keeps the recovery gap analysis from reading version growth as
+    damage.
+    """
+    name = block.name
+    hdr = _versioned_size_expr(block.header_sizes, "header_size")
+    own_names = {f.name for f in (block.header_fields or ())}
+    if block.entry_fields:
+        formula = "::Iris::File::primitives::ArrayHeader::extent(__hdr, stride(), count())"
+    elif _is_blob(block, layout):
+        formula = "::Iris::File::primitives::ByteArrayHeader::extent(__hdr, count())"
+    elif _has_payload_sizes(block, layout):
+        # IMAGE_BYTES: a plain BLOCK whose two size fields declare the payload
+        # (label + compressed stream); there is no COUNT to derive it from.
+        formula = "__hdr + title_size() + image_size()"
+    elif block.primitive == "TILE_FRAME":
+        formula = "::Iris::File::primitives::FrameHeader::extent(__hdr)"
+    else:
+        formula = "::Iris::File::primitives::BlockHeader::extent(__hdr)"
+    out.append(f"IFE_BLOCKS_LINKAGE ::Iris::File::Size {name}::extent() const noexcept {{")
+    out.append(f"    const ::Iris::File::Size __hdr = {hdr};")
+    out.append(f"    return {formula};")
+    out.append("}")
 
 
 def _emit_inline_definitions(
@@ -1591,6 +1765,8 @@ def _emit_inline_definitions(
                 out.extend(member.body)
                 out.append("}")
 
+        _emit_extent(out, block, layout)
+
         if block.entry_fields:
             entry = block.entry_name or f"{name}_ENTRY"
             for member in _entry_members(name, block, types):
@@ -1602,7 +1778,7 @@ def _emit_inline_definitions(
                 out.extend(member.body)
                 out.append("}")
             out.append("")
-            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::Iris::File::Offset {name}::entries_begin() const noexcept {{")
             out.append("    return entries_at(header_size);")
             out.append("}")
             out.append("")
@@ -1610,16 +1786,16 @@ def _emit_inline_definitions(
                 f"IFE_BLOCKS_LINKAGE {name}::{entry} {name}::entry(std::uint32_t __i) const noexcept {{"
             )
             out.append(f"    return {entry}{{__base,")
-            out.append("                 entries_begin() + static_cast<::IFE::Offset>(__i) * stride(),")
+            out.append("                 entries_begin() + static_cast<::Iris::File::Offset>(__i) * stride(),")
             out.append("                 __size, stride(), __version};")
             out.append("}")
         elif _is_blob(block, layout):
             out.append("")
-            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::Offset {name}::entries_begin() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::Iris::File::Offset {name}::entries_begin() const noexcept {{")
             out.append("    return entries_at(header_size);")
             out.append("}")
             out.append("")
-            out.append(f"IFE_BLOCKS_LINKAGE ::IFE::ByteSpan {name}::bytes() const noexcept {{")
+            out.append(f"IFE_BLOCKS_LINKAGE ::Iris::File::ByteSpan {name}::bytes() const noexcept {{")
             out.append("    return {__base + entries_begin(), count()};")
             out.append("}")
 
@@ -1686,10 +1862,10 @@ def _check_lines(block: str, field: FieldLayout, value: str, types: dict[str, An
     if "maximum" in c:
         out += [f"    if ({value} > {c['maximum']}) {{"] + fail + ["    }"]
     if c.get("non_null"):
-        out += [f"    if ({value} == ::IFE::constants::NULL_OFFSET) {{"] + fail + ["    }"]
+        out += [f"    if ({value} == ::Iris::File::constants::NULL_OFFSET) {{"] + fail + ["    }"]
     if c.get("enum_member"):
         enum = _pascal(field.type_name)
-        out += [f"    if (!is_member(static_cast<::IFE::constants::{enum}>({value}))) {{"] + fail + ["    }"]
+        out += [f"    if (!is_member(static_cast<::Iris::File::constants::{enum}>({value}))) {{"] + fail + ["    }"]
     return out
 
 
@@ -1708,7 +1884,7 @@ def emit_validation_source(
         "",
         '#include "IFE_Validation.hpp"',
         "",
-        "namespace IFE {",
+        "namespace Iris::File {",
         "namespace blocks {",
         "namespace {",
         "",
@@ -1737,10 +1913,10 @@ def emit_validation_source(
         out += [
             "",
             f"/// Whether a value names a declared member of {group_name}.",
-            f"[[nodiscard]] bool is_member(::IFE::constants::{enum} __v) noexcept {{",
+            f"[[nodiscard]] bool is_member(::Iris::File::constants::{enum} __v) noexcept {{",
             "    switch (__v) {",
         ]
-        out += [f"        case ::IFE::constants::{enum}::{m}:" for m in members]
+        out += [f"        case ::Iris::File::constants::{enum}::{m}:" for m in members]
         out += ["            return true;", "    }", "    return false;", "}"]
 
     out += ["", "}  // namespace"]
@@ -1757,7 +1933,7 @@ def emit_validation_source(
         out += [
             "",
             f"// ---- {name} ----",
-            f"Status check_{name}(const {info}& __info, ::IFE::Offset __at,",
+            f"Status check_{name}(const {info}& __info, ::Iris::File::Offset __at,",
             "                    const ValidationHooks* __hooks) noexcept {",
         ]
         for field in header_clauses:
@@ -1819,7 +1995,7 @@ def emit_validation_source(
         "}",
         "",
         "}  // namespace blocks",
-        "}  // namespace IFE",
+        "}  // namespace Iris::File",
         "",
     ]
     return "\n".join(out)
@@ -1836,7 +2012,7 @@ def emit_validation_header(
         "",
         '#include "IFE_Blocks.hpp"',
         "",
-        "namespace IFE {",
+        "namespace Iris::File {",
         "namespace blocks {",
         "",
         "/// The spec-conformance layer.",
@@ -1861,7 +2037,7 @@ def emit_validation_header(
         "[[nodiscard]] const ValidationHooks& conformance_layer() noexcept;",
         "",
         "}  // namespace blocks",
-        "}  // namespace IFE",
+        "}  // namespace Iris::File",
         "",
         "#endif  // IFE_Validation_hpp",
         "",
@@ -1871,7 +2047,7 @@ def emit_validation_header(
 def _emit_serialization_body(
     out: list[str], layout: LayoutResult, document: dict[str, Any]
 ) -> None:
-    """The `IrisCodec::Serialization` re-export: the consumer-facing write API.
+    """The `Iris::File::Serialization` re-export: the consumer-facing write API.
 
     One namespace for the whole write surface — block handles, payloads,
     store()/size_of(), enumerations, sentinels — so a consumer never visits
@@ -1881,16 +2057,16 @@ def _emit_serialization_body(
     schema change propagates here on the next run.
     """
     out += [
-        "namespace IrisCodec {",
+        "namespace Iris::File {",
         "namespace Serialization {",
         "",
         "// The enumerations, by schema group.",
         "// A consumer names the members (Serialization::TileEncodings::TILE_ENCODING_JPEG)",
-        "// without knowing they are generated into IFE::constants.",
+        "// without knowing they are generated into Iris::File::constants.",
     ]
     for group_name, group in constants_groups(document).items():
         if is_enum_group(group):
-            out.append(f"using ::IFE::constants::{_pascal(group_name)};")
+            out.append(f"using ::Iris::File::constants::{_pascal(group_name)};")
 
     out += [
         "",
@@ -1909,37 +2085,37 @@ def _emit_serialization_body(
             group.get("ife_version", {}).items(), key=lambda kv: version_key(kv[0])
         ):
             for name in entries:
-                out.append(f"using ::IFE::constants::{name};")
+                out.append(f"using ::Iris::File::constants::{name};")
 
     out += [
         "",
         "// The version this build writes. FILE_HEADER's EXTENSION_MAJOR/MINOR",
         "// default to these, so a file written without thinking about version",
         "// claims the layout its bytes actually have.",
-        "using ::IFE::IFE_SCHEMA_VERSION_MAJOR;",
-        "using ::IFE::IFE_SCHEMA_VERSION_MINOR;",
+        "using ::Iris::File::IFE_SCHEMA_VERSION_MAJOR;",
+        "using ::Iris::File::IFE_SCHEMA_VERSION_MINOR;",
         "",
         "// The validation vocabulary store() reports through.",
-        "using ::IFE::blocks::Check;",
-        "using ::IFE::blocks::Status;",
-        "using ::IFE::blocks::ValidationHooks;",
-        "using ::IFE::blocks::VERSION_WRITTEN;",
+        "using ::Iris::File::blocks::Check;",
+        "using ::Iris::File::blocks::Status;",
+        "using ::Iris::File::blocks::ValidationHooks;",
+        "using ::Iris::File::blocks::VERSION_WRITTEN;",
         "",
         "// Every block, its payload, and its entry type, in schema order.",
         "// The handle carries header_size and recovery as statics, so the",
         "// vtables namespace never needs to be visited from consumer code.",
     ]
     for name, block in layout.blocks.items():
-        out.append(f"using ::IFE::blocks::{name};")
-        out.append(f"using ::IFE::blocks::{_create_info(name)};")
+        out.append(f"using ::Iris::File::blocks::{name};")
+        out.append(f"using ::Iris::File::blocks::{_create_info(name)};")
         # from_pairs blocks are included: their payload used to be a
         # std::pair, which needed no re-export, and is now a generated type.
         # Leaving them out published a CreateInfo whose payload type the
         # consumer namespace did not name -- the write API for attributes was
-        # unusable through Serialization:: without reaching into IFE::blocks.
+        # unusable through Serialization:: without reaching into Iris::File::blocks.
         if block.entry_fields:
             entry = _entry_struct(block.entry_name or f"{name}_ENTRY")
-            out.append(f"using ::IFE::blocks::{entry};")
+            out.append(f"using ::Iris::File::blocks::{entry};")
 
     out += [
         "",
@@ -1948,20 +2124,87 @@ def _emit_serialization_body(
         "// bytes. The wire stores a byte length -- that is what lets a decoder",
         "// walk the packed run without interpreting any value -- and these are",
         "// how a caller works in the unit it actually thinks in.",
-        "using ::IFE::blocks::NESTED_OFFSET_SIZE;",
-        "using ::IFE::blocks::nested_count;",
-        "using ::IFE::blocks::nested_offset;",
-        "using ::IFE::blocks::nested_size_is_whole;",
-        "using ::IFE::blocks::attribute_value_bytes;",
+        "using ::Iris::File::blocks::NESTED_OFFSET_SIZE;",
+        "using ::Iris::File::blocks::nested_count;",
+        "using ::Iris::File::blocks::nested_offset;",
+        "using ::Iris::File::blocks::nested_size_is_whole;",
+        "using ::Iris::File::blocks::attribute_value_bytes;",
         "",
         "// The write entry points, one overload set per kind of work:",
         "//     size_of(payload)   -> bytes the block will occupy",
         "//     store(base, offset, payload, hooks = nullptr) -> Status",
         "// The payloads are the CreateInfos above; the machine-written fields",
         "// (VALIDATION, RECOVERY, MAGIC, STRIDE, COUNT) are never supplied.",
-        "using ::IFE::blocks::size_of;",
-        "using ::IFE::blocks::store;",
+        "using ::Iris::File::blocks::size_of;",
+        "using ::Iris::File::blocks::store;",
         "",
         "}  // namespace Serialization",
-        "}  // namespace IrisCodec",
+        "}  // namespace Iris::File",
     ]
+
+
+def emit_map_header(
+    layout: LayoutResult,
+    header: dict[str, Any],
+    witness_hash: str,
+) -> str:
+    """IFE_Map.hpp — the generated wire-tag → map-entry vocabulary.
+
+    Included from IFE_Advanced.hpp (the advanced tier) after the Abstraction
+    namespace closes, so it may name MapEntryType; the file assumes that
+    context and includes nothing itself. The mapping is derived from the
+    spec's block inventory: every tagged block yields one case, so a new block
+    regenerates a case that fails to compile until MapEntryType grows the
+    matching MAP_ENTRY_<name>. The mapping never silently drops a block.
+    """
+    out: list[str] = [
+        _banner(header, witness_hash),
+        "#ifndef IFE_Map_hpp",
+        "#define IFE_Map_hpp",
+        "",
+        "// Included from IFE_Advanced.hpp after the Abstraction namespace.",
+        "// One case per tagged block in the spec inventory; MAP_ENTRY_<name> is",
+        "// a pure function of the inventory, so a renamed block breaks here",
+        "// rather than silently mapping to UNDEFINED.",
+        "",
+        "namespace Iris::File {",
+        "namespace Abstraction {",
+        "",
+        "inline MapEntryType entry_for(::Iris::File::constants::RecoveryCodes __tag) noexcept {",
+        "    switch (__tag) {",
+    ]
+    for name, block in layout.blocks.items():
+        if block.recovery_tag:
+            out.append(
+                f"        case ::Iris::File::constants::RecoveryCodes::{block.recovery_tag}:"
+                f" return MAP_ENTRY_{name};"
+            )
+    out += [
+        "        case ::Iris::File::constants::RecoveryCodes::RECOVER_UNDEFINED: break;",
+        "    }",
+        "    return MAP_ENTRY_UNDEFINED;",
+        "}",
+        "",
+        "/// The inverse of entry_for: the tag a map entry's blocks carry. Both",
+        "/// directions come from the same spec inventory, so a new block adds a",
+        "/// case to both and neither can drift from the other.",
+        "inline ::Iris::File::constants::RecoveryCodes recovery_for(MapEntryType __type) noexcept {",
+        "    switch (__type) {",
+    ]
+    for name, block in layout.blocks.items():
+        if block.recovery_tag:
+            out.append(
+                f"        case MAP_ENTRY_{name}: return ::Iris::File::constants::RecoveryCodes::{block.recovery_tag};"
+            )
+    out += [
+        "        default: return ::Iris::File::constants::RecoveryCodes::RECOVER_UNDEFINED;",
+        "    }",
+        "}",
+        "",
+        "}  // namespace Abstraction",
+        "}  // namespace Iris::File",
+        "",
+        "#endif  // IFE_Map_hpp",
+        "",
+    ]
+    return "\n".join(out)

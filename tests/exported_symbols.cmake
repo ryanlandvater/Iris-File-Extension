@@ -1,7 +1,7 @@
 # Decision 4.0-D, as a test.
 #
 # The exported surface is the semantic API and nothing below it. The generated
-# block layer (IFE::blocks, IFE::vtables, IFE::constants) must export zero
+# block layer (Iris::File::blocks, ::vtables, ::constants) must export zero
 # symbols from a shared build: it is pure field arithmetic, a consumer reaches
 # it through IFE_HEADER_ONLY, and every exported symbol is a thing that cannot
 # change without breaking someone -- which a *generated* layer must be free to
@@ -25,7 +25,8 @@ if(NOT NM_TOOL)
     return()
 endif()
 
-# -g: external (exported) symbols only. Mangled `IFE::` is `3IFE`.
+# -g: external (exported) symbols only. Mangled `Iris::File::blocks` is
+# `4Iris4File6blocks` (Itanium length-prefixed); see the match in the loop below.
 execute_process(
     COMMAND "${NM_TOOL}" -g "${LIBRARY}"
     OUTPUT_VARIABLE symbols ERROR_VARIABLE nm_error RESULT_VARIABLE nm_code
@@ -38,7 +39,13 @@ endif()
 string(REPLACE "\n" ";" lines "${symbols}")
 set(leaked "")
 foreach(line IN LISTS lines)
-    if(line MATCHES "3IFE" AND NOT line MATCHES " U ")
+    # The PUBLIC API is namespace Iris::File (e.g. Iris::File::Recovery), so the
+    # bare namespace does not mean "the generated layer" — matching it would
+    # flag every exported symbol. The generated block layer lives in the THREE
+    # sub-namespaces Iris::File::blocks / ::vtables / ::constants, whose mangled
+    # spellings are the Itanium length-prefixed "4Iris4File6blocks" /
+    # "4Iris4File7vtables" / "4Iris4File9constants". Match those.
+    if(line MATCHES "4Iris4File(6blocks|7vtables|9constants)" AND NOT line MATCHES " U ")
         list(APPEND leaked "${line}")
     endif()
 endforeach()
@@ -48,7 +55,7 @@ if(count GREATER 0)
     string(REPLACE ";" "\n  " detail "${leaked}")
     message(FATAL_ERROR
         "${count} generated-layer symbol(s) are exported from ${LIBRARY}.\n"
-        "Decision 4.0-D keeps IFE::blocks/vtables/constants out of the ABI; "
+        "Decision 4.0-D keeps Iris::File::blocks/vtables/constants out of the ABI; "
         "consumers reach them with IFE_HEADER_ONLY.\n  ${detail}")
 endif()
 

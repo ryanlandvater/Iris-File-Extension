@@ -15,15 +15,15 @@
 #include <string>
 #include <vector>
 
-namespace b = ::IFE::blocks;
+namespace b = ::Iris::File::blocks;
 
-::IFE::Size size_of_from_other_tu() {
+::Iris::File::Size size_of_from_other_tu() {
     const std::vector<b::AttributeSizeEntry> attrs = {{.key = "SCANNER", .value = "TestCo"}};
     return b::size_of(b::AttributeSizesCreateInfo{.entries = attrs});
 }
 
-::IFE::Offset store_from_other_tu(::IFE::BYTE* __base) {
+::Iris::File::Offset store_from_other_tu(::Iris::File::BYTE* __base) {
     const std::vector<b::AttributeSizeEntry> attrs = {{.key = "SCANNER", .value = "TestCo"}};
-    constexpr ::IFE::Offset at = 64;
+    constexpr ::Iris::File::Offset at = 64;
     return b::store(__base, at, b::AttributeSizesCreateInfo{.entries = attrs}) ? at : 0;
 }

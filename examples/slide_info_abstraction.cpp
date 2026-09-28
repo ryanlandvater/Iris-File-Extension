@@ -1,7 +1,7 @@
 /**
  * @file slide_info_abstraction.cpp
  * @author Ryan Landvater (ryanlandvater@gmail.com)
- * @brief Example Iris File Encoding API using IrisCodec::Abstraction to aid in file decoding
+ * @brief Example Iris File Encoding API using Iris::File::Abstraction to aid in file decoding
  *
  * @version 0.1
  * @date 2025-03-04
@@ -9,14 +9,14 @@
  * @copyright Copyright (c) 2025 Ryan Landvater
  *
  * This file gives an example of how to implement the Iris Codec File Extension
- * using the IrisCodec::Abstraction::File higher-level structure. This method
+ * using the Iris::File::Abstraction::File higher-level structure. This method
  * removes the manual process of removing slide information by header and arrays
  * and delegates it to the abstraction structure. All significant data blocks
- * such as image byte arrays are not read from disk. The IrisCodec::Abstraction::File
+ * such as image byte arrays are not read from disk. The Iris::File::Abstraction::File
  * maintains offsets to the byte locations and offsets of these data blocks so they can
  * be used in a zero-copy manner.
  *
- * The slide is mapped read-only through Iris::MemoryArena (priv/IrisMemory.hpp),
+ * The slide is mapped read-only through Iris::Memory (priv/IrisMemory.hpp),
  * so this example also serves as the reference for the arena-based read path.
  *
  */
@@ -69,19 +69,19 @@
      std::string source_path(argv[1]);
      if (!std::filesystem::exists(source_path.c_str()))
          return INVALID_FILE_PATH(source_path);
-     // Map the slide read-only through Iris::MemoryArena (priv/IrisMemory.hpp):
+     // Map the slide read-only through Iris::Memory (priv/IrisMemory.hpp):
      // one cross-platform mapping implementation, replacing the per-OS
      // CreateFileMapping/mmap branches this example used to carry. The slide
      // is never opened for writing, so a read-only file on disk or a slide
      // still being written by a scanner maps just as well. The arena unmaps
      // and closes its handles on scope exit.
-     Iris::MemoryArena arena;
+     Iris::Memory arena;
      std::uint8_t* ptr = nullptr;
      std::size_t size = 0;
      try {
          // Mapping reports through Iris::Result instead of throwing; the try
          // block remains for the validation and abstraction calls below.
-         const Iris::Result mapped = Iris::create_memory_arena(
+         const Iris::Result mapped = Iris::create_memory(
              {.filepath = source_path, .read_only = true}, arena);
          if (!mapped) {
              std::cerr << "Failed to map the slide file: " << mapped.message << "\n";
@@ -93,7 +93,7 @@
          // ALWAYS VALIDATE the file structure before attempting to
          // read it. This will check the file against the IFE
          // Specfification to ensure adherence.
-         IrisCodec::validate_file_structure({ptr, size});
+         Iris::File::validate_file_structure({ptr, size});
          std::cout << "Iris Slide file \"" << source_path
              << "\" successfully passed file validation.\n";
  
@@ -105,9 +105,9 @@
      }
  
      try {
-         using namespace IrisCodec::Abstraction;
+         using namespace Iris::File::Abstraction;
  
-         auto slide = IrisCodec::abstract_file_structure({ptr, size});
+         auto slide = Iris::File::abstract_file_structure({ptr, size});
          std::cout << "Slide File information:\n"
              << "\t Encoded using IFE Spec v"
              << (slide.header.extVersion >> 16) << "."

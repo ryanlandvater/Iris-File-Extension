@@ -42,9 +42,9 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+using ::Iris::File::BYTE;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
 /// Where the snapshot's LAYER_EXTENTS sits: v1 laid the file out head to
 /// tail, header then tile table, so this is the sum of their 1.0 sizes —
@@ -222,13 +222,13 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     // through the writers, which proves the readers agree with the writers;
     // this walks a file whose bytes are pinned by digest, which is what
     // catches the two agreeing with each other about a changed layout.
-    ::IFE::Size cursor = 0;
+    ::Iris::File::Size cursor = 0;
     for (std::uint32_t i = 0; i < attr_sizes.count(); ++i) {
         const auto entry = attr_sizes.entry(i);
         const std::string key(reinterpret_cast<const char*>(attr_bytes.data + cursor),
                               entry.key_size());
         cursor += entry.key_size();
-        const ::IFE::BYTE* value = attr_bytes.data + cursor;
+        const ::Iris::File::BYTE* value = attr_bytes.data + cursor;
         cursor += entry.value_size();
 
         if (i == 0) {   // the text value, checked above
@@ -245,7 +245,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
         IFE_CHECK(b::nested_count(entry.value_size()) == sequence.items.size());
 
         for (std::size_t item = 0; item < sequence.items.size(); ++item) {
-            const ::IFE::Offset at = b::nested_offset(value, item);
+            const ::Iris::File::Offset at = b::nested_offset(value, item);
             // Each item is a complete attributes structure: it validates on
             // its own terms, exactly as the root does.
             const b::ATTRIBUTES nested{p, at, f.size(), declared};
@@ -255,7 +255,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
             const auto nested_bytes = nested.bytes_offset().bytes();
             IFE_CHECK(nested_sizes.count() == sequence.items[item].size());
 
-            ::IFE::Size at_byte = 0;
+            ::Iris::File::Size at_byte = 0;
             for (std::uint32_t j = 0; j < nested_sizes.count(); ++j) {
                 const auto pair = nested_sizes.entry(j);
                 const std::string nk(reinterpret_cast<const char*>(nested_bytes.data + at_byte),
@@ -341,7 +341,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
     IFE_CHECK(gs.count() == expected.annotation_groups.size());
 
     const auto group_run = gb.bytes();
-    ::IFE::Size run_at = 0;
+    ::Iris::File::Size run_at = 0;
     for (std::size_t i = 0; i < expected.annotation_groups.size(); ++i) {
         const auto& spec  = expected.annotation_groups[i];
         const auto  entry = gs.entry(static_cast<std::uint32_t>(i));
@@ -356,7 +356,7 @@ void test_v1_bytes_read_through_generated_layer(const std::vector<BYTE>& f,
                               spec.title.size()) == 0);
         run_at += spec.title.size();
         for (const std::uint32_t id : spec.members) {
-            const ::IFE::BYTE* m = group_run.data + run_at;
+            const ::Iris::File::BYTE* m = group_run.data + run_at;
             const std::uint32_t decoded =
                 static_cast<std::uint32_t>(m[0]) |
                 (static_cast<std::uint32_t>(m[1]) << 8) |

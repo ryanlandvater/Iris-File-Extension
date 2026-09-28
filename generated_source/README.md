@@ -12,7 +12,7 @@ regenerated from the committed JSON specification — never hand-edited.
 
 | File | Content |
 |------|---------|
-| `IFE_Blocks.hpp` | The whole layer, in one header: `IFE::constants` (enumerations and sentinels), each block's derived offset and size tables, the typed block handles with their accessors, `points_to` navigation and structural validators, the `*CreateInfo` writer payloads, and the `IrisCodec::Serialization` consumer namespace. Includes the Iris headers itself. |
+| `IFE_Blocks.hpp` | The whole layer, in one header: `Iris::File::constants` (enumerations and sentinels), each block's derived offset and size tables, the typed block handles with their accessors, `points_to` navigation and structural validators, the `*CreateInfo` writer payloads, and the `Iris::File::Serialization` consumer namespace. Includes the Iris headers itself. |
 | `IFE_Validation.hpp` / `.cpp` | The conformance layer — the normative `shall`/`should` clauses from the JSON, compiled into an attachable set of `ValidationHooks`. Its own target; never a link-time dependency of the library. |
 
 One header, not several: the split cost consumers an include list and bought
@@ -44,8 +44,8 @@ is stdlib-only Python, so no toolchain beyond Python 3 is required.
 
 ## Consuming this layer
 
-Nothing here is exported from the shared library — `IFE::blocks` and
-`IFE::constants` carry no export marking, and a test fails the build if any of
+Nothing here is exported from the shared library — `Iris::File::blocks` and
+`Iris::File::constants` carry no export marking, and a test fails the build if any of
 them becomes visible. Include the header and the definitions come with it:
 
 ```cpp
@@ -56,7 +56,7 @@ That is deliberate, not an oversight. This layer is field arithmetic — inlinin
 a `u24` load beats calling it across a library boundary — and it is *generated*,
 so it must stay free to change whenever the schema does. An exported symbol is
 one that cannot. The stable, exported API is the semantic layer:
-`IrisCodec::validate_file_structure`, `abstract_file_structure`,
+`Iris::File::validate_file_structure`, `abstract_file_structure`,
 `generate_file_map`, `recover_file_structure`, and the `Abstraction::` structs.
 
 ## Contract

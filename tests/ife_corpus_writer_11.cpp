@@ -44,12 +44,12 @@
 
 namespace {
 
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
-using ::IFE::BYTE;
-using ::IFE::Offset;
-using ::IFE::Size;
+using ::Iris::File::BYTE;
+using ::Iris::File::Offset;
+using ::Iris::File::Size;
 
 /// Dummy pixel bytes per tile. Real extent rather than zero length because
 /// deep validation requires every addressed range to lie inside the file.

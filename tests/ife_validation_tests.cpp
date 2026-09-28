@@ -36,9 +36,9 @@ int g_failures = 0;
     } \
 } while (0)
 
-using ::IFE::BYTE;
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+using ::Iris::File::BYTE;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
 /// Where the layer writes its diagnostic, so a test can assert it cites its
 /// section rather than merely that something failed. Cleared before each
@@ -192,7 +192,7 @@ void test_layers_chain() {
     b::ValidationHooks generated = attached();
     b::ValidationHooks tracing{};
     tracing.next = &generated;
-    tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::IFE::Offset at,
+    tracing.LAYER_EXTENTS = [](const b::LayerExtentsCreateInfo& info, ::Iris::File::Offset at,
                                const b::ValidationHooks* self) noexcept -> b::Status {
         ++outer_calls;
         if (self && self->next && self->next->LAYER_EXTENTS)
@@ -222,7 +222,7 @@ void test_attached_enforces_file_header_clauses() {
     g_diagnostic.clear();
 
     b::FileHeaderCreateInfo header{};
-    header.TILE_TABLE_OFFSET = ::IFE::constants::NULL_OFFSET;
+    header.TILE_TABLE_OFFSET = ::Iris::File::constants::NULL_OFFSET;
     header.METADATA_OFFSET   = 128;
     const auto status = b::store(f.data(), 0, header, &hooks);
     IFE_CHECK(!status);
@@ -233,7 +233,7 @@ void test_attached_enforces_file_header_clauses() {
 
     g_diagnostic.clear();
     header.TILE_TABLE_OFFSET = 64;
-    header.METADATA_OFFSET   = ::IFE::constants::NULL_OFFSET;
+    header.METADATA_OFFSET   = ::Iris::File::constants::NULL_OFFSET;
     const auto status2 = b::store(f.data(), 0, header, &hooks);
     IFE_CHECK(!status2);
     IFE_CHECK(status2.code == b::Check::CONFORMANCE);
@@ -273,7 +273,7 @@ void test_attached_enforces_image_encoding_membership() {
     // Designated initializers must follow declaration order, so the
     // BYTES_OFFSET/WIDTH/HEIGHT slots are named before ENCODING.
     const std::vector<b::ImageEntry> entries = {{
-        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
+        .BYTES_OFFSET = ::Iris::File::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
         .ENCODING = static_cast<k::ImageEncodings>(200),
         .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
     }};
@@ -286,7 +286,7 @@ void test_attached_enforces_image_encoding_membership() {
 
     g_diagnostic.clear();
     const std::vector<b::ImageEntry> good_entries = {{
-        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
+        .BYTES_OFFSET = ::Iris::File::constants::NULL_OFFSET, .WIDTH = 0, .HEIGHT = 0,
         .ENCODING = k::ImageEncodings::IMAGE_ENCODING_JPEG,
         .FORMAT = k::PixelFormats::FORMAT_R8G8B8A8, .ORIENTATION = 0,
     }};
@@ -302,7 +302,7 @@ void test_attached_enforces_annotation_type_membership() {
 
     const std::vector<b::AnnotationEntry> entries = {{
         .IDENTIFIER = 1,
-        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
+        .BYTES_OFFSET = ::Iris::File::constants::NULL_OFFSET,
         .FORMAT = static_cast<k::AnnotationTypes>(200),
     }};
     const b::AnnotationsCreateInfo bad{.entries = entries};
@@ -315,7 +315,7 @@ void test_attached_enforces_annotation_type_membership() {
     g_diagnostic.clear();
     const std::vector<b::AnnotationEntry> good_entries = {{
         .IDENTIFIER = 1,
-        .BYTES_OFFSET = ::IFE::constants::NULL_OFFSET,
+        .BYTES_OFFSET = ::Iris::File::constants::NULL_OFFSET,
         .FORMAT = k::AnnotationTypes::ANNOTATION_TEXT,
     }};
     const b::AnnotationsCreateInfo good{.entries = good_entries};
@@ -356,7 +356,7 @@ void test_attached_enforces_clinical_encoding_membership() {
 
 void test_frame_validation_is_anchored_five_bytes_before_the_stream() {
     auto f = buffer();
-    constexpr ::IFE::Offset STREAM_AT = 512;   // what the tile table names
+    constexpr ::Iris::File::Offset STREAM_AT = 512;   // what the tile table names
 
     IFE_CHECK(static_cast<bool>(b::store(f.data(), STREAM_AT,
         b::TilePixelDataCreateInfo{.TILE_INDEX = 7, .Z_PLANES = 0})));
@@ -374,7 +374,7 @@ void test_frame_validation_is_anchored_five_bytes_before_the_stream() {
     // carries -- the stream's own address -- instead of the field's position.
     // Every other block in the format stores its own start, so this is the
     // mistake the layout invites.
-    ::IFE::store_u40(f.data() + STREAM_AT - 5, STREAM_AT);
+    ::Iris::File::store_u40(f.data() + STREAM_AT - 5, STREAM_AT);
     const auto status = frame.validate();
     IFE_CHECK(!static_cast<bool>(status));
     IFE_CHECK(status.code == b::Check::BAD_VALIDATION);
@@ -382,8 +382,8 @@ void test_frame_validation_is_anchored_five_bytes_before_the_stream() {
 
 void test_a_frame_written_from_its_own_start_fails_at_the_anchor() {
     auto f = buffer();
-    constexpr ::IFE::Offset STREAM_AT = 512;
-    const ::IFE::Offset frame_start = STREAM_AT - b::TILE_PIXEL_DATA::header_size;
+    constexpr ::Iris::File::Offset STREAM_AT = 512;
+    const ::Iris::File::Offset frame_start = STREAM_AT - b::TILE_PIXEL_DATA::header_size;
 
     // The bug: passing the frame's START where store() wants the ANCHOR. It
     // writes a frame five bytes early that is entirely self-consistent -- a

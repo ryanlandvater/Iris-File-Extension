@@ -23,7 +23,7 @@
  * case where they could agree and both be wrong.
  *
  * 64-bit hosts only (a 32-bit address space cannot map 4 GiB). Sparse on both
- * platforms: the mapping goes through Iris::MemoryArena (priv/IrisMemory.hpp),
+ * platforms: the mapping goes through Iris::Memory (priv/IrisMemory.hpp),
  * which marks NTFS files sparse (FSCTL_SET_SPARSE) before mapping — matching
  * what ftruncate gives POSIX for free — so Windows no longer needs its own
  * gate.
@@ -31,7 +31,7 @@
  * Usage: ife_large_file_tests <writable-directory> <corpus-dir>
  */
 // POSIX-only: every use of these headers sits in an #else branch below, and
-// MSVC has no sys/mman.h or sys/stat.h. Left over from the pre-MemoryArena
+// MSVC has no sys/mman.h or sys/stat.h. Left over from the pre-Memory
 // version (130bb97); the Windows enablement (f5ec4ae) guarded the uses but
 // not the includes.
 #ifndef _WIN32
@@ -66,8 +66,8 @@ int g_failures = 0;
     } \
 } while (0)
 
-namespace b = ::IFE::blocks;
-namespace k = ::IFE::constants;
+namespace b = ::Iris::File::blocks;
+namespace k = ::Iris::File::constants;
 
 /// Report a failed Status in full. Without this a validation failure here says
 /// only "false", and the block and offset are the whole diagnosis.
@@ -153,7 +153,7 @@ std::uint64_t file_allocated_bytes(const std::string& __path,
 #endif
 }
 
-/// A sparse file, mapped through Iris::MemoryArena. Unlinks itself.
+/// A sparse file, mapped through Iris::Memory. Unlinks itself.
 ///
 /// The arena (priv/IrisMemory.hpp) is what makes this portable: it marks NTFS
 /// files sparse (FSCTL_SET_SPARSE) before mapping, so the file stays sparse on
@@ -167,7 +167,7 @@ public:
         // A mapping failure now leaves _arena empty, so ok() reports it. It
         // used to escape this constructor as an uncaught std::system_error --
         // ok() only ever covered the create_empty_file path above.
-        const Iris::Result made = Iris::create_memory_arena(
+        const Iris::Result made = Iris::create_memory(
             {.capacity = __size, .filepath = __path}, _arena);
         if (!made) std::fprintf(stderr, "  arena: %s\n", made.message.c_str());
     }
@@ -198,7 +198,7 @@ public:
 
 private:
     std::string       _path;
-    Iris::MemoryArena _arena;
+    Iris::Memory _arena;
 };
 
 void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __corpus_dir) {
@@ -245,13 +245,13 @@ void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __cor
 
     // Patch FILE_SIZE: whole-file validation compares it against the size the
     // OS reports, which is now TILE_BASE plus the two relocated tiles.
-    ::IFE::store<std::uint64_t>(p + b::FILE_HEADER::offset::FILE_SIZE, file_size);
+    ::Iris::File::store<std::uint64_t>(p + b::FILE_HEADER::offset::FILE_SIZE, file_size);
 
     // Patch the first two tile-offset entries to address the relocated tile
     // region. Their position follows from the 1.0 sizes alone: header, tile
     // table, then the three-entry extents array -- the same arithmetic v1's
     // place() did, without v1.
-    constexpr ::IFE::Offset TILES_AT =
+    constexpr ::Iris::File::Offset TILES_AT =
         b::FILE_HEADER::header_size_v1_0 + b::TILE_TABLE::header_size_v1_0
         + b::LAYER_EXTENTS::header_size_v1_0
         + 3 * b::LAYER_EXTENTS::LAYER_EXTENT::entry_size_v1_0;
@@ -259,10 +259,10 @@ void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __cor
                       + 0 * b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0;
     Iris::BYTE* entry1 = p + TILES_AT + b::TILE_OFFSETS::header_size
                       + 1 * b::TILE_OFFSETS::TILE_OFFSET::entry_size_v1_0;
-    ::IFE::store_u40(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE);
-    ::IFE::store_u24(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE0_SIZE);
-    ::IFE::store_u40(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE + TILE0_SIZE);
-    ::IFE::store_u24(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE1_SIZE);
+    ::Iris::File::store_u40(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE);
+    ::Iris::File::store_u24(entry0 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE0_SIZE);
+    ::Iris::File::store_u40(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::OFFSET, TILE_BASE + TILE0_SIZE);
+    ::Iris::File::store_u24(entry1 + b::TILE_OFFSETS::TILE_OFFSET::offset::SIZE, TILE1_SIZE);
 
     // A byte at each end of the tile region, so the pages carrying the tile
     // data are really allocated and the offsets address something written
@@ -277,7 +277,7 @@ void test_v1_slide_above_4GiB(const std::string& __dir, const std::string& __cor
     // zero and validate_deep follows it to byte 0. Reading major/minor first
     // and constructing with them is what IFE_Runtime's versioned_root does,
     // and is the whole bidirectional-compatibility idiom in three lines.
-    constexpr ::IFE::Offset header_at = 0;   // the snapshot's FILE_HEADER is at SOF
+    constexpr ::Iris::File::Offset header_at = 0;   // the snapshot's FILE_HEADER is at SOF
     const b::FILE_HEADER bootstrap{p, header_at, file_size, UINT32_MAX};
     const std::uint32_t  version =
         (static_cast<std::uint32_t>(bootstrap.extension_major()) << 16) |

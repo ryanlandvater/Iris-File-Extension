@@ -1,6 +1,6 @@
 # Iris File Extension
 
-This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This repository has a very limited scope; it provies the byte-offset vtables and enumerations referenced by the Iris Codec specification and validates files against the published IFE specification. This is an advanced repository. **If this is your first foray into Iris, the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) is a much better choice**. 
+This is the official implementation of the Iris File Extension specification, part of the Iris Digital Pathology project. This repository has a very limited scope; it provides the byte-offset vtables and enumerations referenced by the Iris Codec specification and validates files against the published IFE specification. This is an advanced repository. **If this is your first foray into Iris, the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) is a much better choice**. 
 
 > [!IMPORTANT]
 > **Schema-driven.** The byte-offset vtables and enumerations are expressed as
@@ -15,7 +15,7 @@ Example Iris slide files are hosted to test decoding are hosted at [the Iris-Exa
 > [!NOTE]
 > The scope of this repository is only serializing or deserializing Iris slide files. Compression and decompression are **NOT** components of this repository. The WSI tile byte arrays will be referenced in their on-disk compressed forms and it is up to your implementation to compress or decompress tiles. If you would like a system that performs image compression and decompression, you should instead incorporate the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which incorporates this repository for Iris slide file serialization.
 
-This repository builds C++ access to Iris files — header-only, static, shared, or as a WebAssembly module. It exposes the *byte structure*; the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) builds on it and exposes *compression and the high-level slide API*. Each publishes bindings for its own layer. The repository builds with CMake
+This repository builds C++ access to Iris files — header-only, static, shared, or as a WebAssembly module. It exposes the *byte structure*; the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git) builds on it and exposes *compression and the high-level slide API*. Iris Codec publishes Python and JavaScript bindings for its layer; bindings for this layer are planned but not yet published. The repository builds with CMake
 and has an equivalent Bazel build (`BUILD.bazel`); both are exercised in CI.
 
 <p xmlns:cc="http://creativecommons.org/ns#" >This repository is licensed under the MIT software license. The Iris File Extension is licensed under <a href="https://creativecommons.org/licenses/by-nd/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer" style="display:inline-block;">CC BY-ND 4.0 <img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt=""><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nd.svg?ref=chooser-v1" alt=""></a></p>
@@ -23,7 +23,7 @@ and has an equivalent Bazel build (`BUILD.bazel`); both are exercised in CI.
 # Installation
 Incorporating the Iris File Extension into your code base is simple; Additional [Iris headers](https://github.com/IrisDigitalPathology/Iris-Headers) are required but are automatically included when this repository is built or included in a CMake project.
 
-In addition to building from source, we provide pre-compiled binaries under the **releases tab** for Linux (x86-64 and arm64), macOS (universal) and Windows (x64). Each archive carries the shared and static libraries, the public headers, and the CMake package configuration that `find_package(IrisFileExtension)` resolves; every archive is pinned by SHA-256 in the release's `SHA256SUMS`. The specification itself is published with them as PDF and HTML. Language bindings are not built from this repository: Python and JavaScript access is provided by the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which consumes this repository for slide file serialization.
+No release has been tagged yet, so build from source for now. Once one is, pre-compiled binaries will be published under the **releases tab** for Linux (x86-64 and arm64), macOS (universal) and Windows (x64): each archive carries the shared and static libraries, the public headers, and the CMake package configuration that `find_package(IrisFileExtension)` resolves, pinned by SHA-256 in the release's `SHA256SUMS`, with the specification as PDF and HTML. Python and JavaScript access to slides is provided today by the [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git), which consumes this repository for slide file serialization.
 
 ### Non-CMake Project
 If you are **NOT** using CMake to build your project, you should still use CMake to generate the Iris File Extension library.
@@ -31,7 +31,7 @@ If you are **NOT** using CMake to build your project, you should still use CMake
 git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-File-Extension.git
 # Optional cmake flags to consider: 
 #   -DCMAKE_INSTALL_PREFIX='' for custom install directory
-#   -DBUILD_EXAMPLES=ON to test build the included examples
+#   -DIFE_BUILD_EXAMPLES=ON to test build the included examples
 cmake -B ./Iris-File-Extension/build ./Iris-File-Extension 
 cmake --build ./Iris-File-Extension/build --config Release
 cmake --install ./Iris-File-Extension/build
@@ -41,7 +41,7 @@ cmake --install ./Iris-File-Extension/build
 An equivalent Bazel build covers the library, the examples and the full test
 suite (`BUILD.bazel`). The test rules live in `tests/tests.bzl`, declared from
 the `ife_tests()` macro that `BUILD.bazel` calls — the fixture genrules, the
-header-only input library and all twelve `cc_test` targets. `generated_source/`
+header-only input library and every `cc_test` target. `generated_source/`
 is regenerated at build time from `spec/` (never committed), and Iris-Headers
 is resolved from the sibling checkout next to this repository (see
 `MODULE.bazel`).
@@ -89,146 +89,192 @@ target_link_libraries (
 ```
 # Implementation
 > [!CAUTION]
-> **This API is not still early in development and liable to change. As we apply new updates some of the exposed calls may change.** If dynamically linked, always check new headers against your code base when updating your version of the Iris File Extension API.
+> **This API is still early in development and liable to change. As we apply new updates some of the exposed calls may change.** If dynamically linked, always check new headers against your code base when updating your version of the Iris File Extension API.
 
 ## C++ Interface
 
-### Always Validate a Slide
+The library is namespaced by layer: `Iris::` is the shared core (Iris-Headers — `Result`, `Buffer`, `Memory`), `Iris::File::` is this repository. It exposes two handles: a **`Parser`** to read a slide and a **`Builder`** to write one. An application *owns* a handle and keeps its own job: a reader decodes the streams a Parser hands it; an encoder compresses, runs its threads, and names and moves its files, while its Builder claims space and writes every byte of the file's structure. Neither handle decodes or encodes an image — compression belongs to your codec (or to [Iris Codec](https://github.com/IrisDigitalPathology/Iris-Codec.git)).
+
+Every C++ example on this page is compiled against the real headers by the `ife_readme_compiles` test, as published. Editing one? The HTML comment above each block (`<!-- ife-compile: fragment | program | skip -->`, invisible when rendered) tells the gate how to compile it; placeholder names such as `path` and `ptr` are declared in `tests/readme/readme_context.hpp`.
+
+### Reading a Slide
 > [!WARNING]
-> When reading Iris slide files, you should **always validate** a slide before attempting to read data from it. 
+> When reading Iris slide files, you should **always validate** a slide before attempting to read data from it.
 
-Validation will return an `Iris::Result` structure. In the event of failure `Iris::Result::message` will provide information about the failure. Validation requires the operating system's returned file size as part of the validation process and will fail if inaccurate. Validation *can be* performed by calling the [`IrisCodec::validate_file_structure`](./include/IrisFileExtension.hpp) method.
+`Parser::open` maps the file read-only and keeps it mapped for as long as any copy of the handle lives, so a reader that keeps the Parser keeps its bytes. Validation returns an `Iris::Result`; on failure its `message` says why.
+<!-- ife-compile: fragment -->
 ```cpp
-size_t  size = GET_FILE_SIZE(file_handle);
-uint8_t* ptr = FILE_MAP(file_handle, size);
+#include "IrisFileExtension.hpp"
+#include <cstdio>
 
-auto  result = IrisCodec::validate_file_structure({ptr, size});
+using namespace Iris;
+using namespace Iris::File;
 
-if (result != IRIS_SUCCESS) {
-    printf(result.message);
-    ...handle the validation error
+Parser parser = Parser::open(path);        // throws if the file cannot be mapped
+if (Result valid = parser.validate_file_structure(); valid != IRIS_SUCCESS) {
+    std::printf("%s\n", valid.message.c_str());
+    return;
 }
+const Abstraction::File& slide = parser.abstraction();    // lifted once, then kept
+std::span<const BYTE> stream   = parser.tile(layer, tile); // zero-copy; empty = no tile there
+// ...decompress stream.data(), stream.size() with the JPEG/AVIF library you use
 ```
-This method deep-validates the offset graph of the slide. If you prefer to validate individual data blocks, every generated block handle offers `validate()` and `validate_deep()`; their layout comes from the specification (spec/ife_fields.json) and is rendered into the generated layer (`generated_source/`, regenerated at build time).
+`validate_file_structure` deep-validates the offset graph and bounds-checks every tile entry. `abstraction()` and `abstract_file_structure` check every block they read — both witnesses, and every length the block declares — and throw `std::runtime_error` on a structurally damaged file rather than reading it. They never return values they could not verify, and never repair; to reopen a damaged file, see [Recovering a Damaged File](#recovering-a-damaged-file). A caller that maps the file itself can bind a Parser to that mapping instead — `Parser({ptr, size})` borrows it — or call the free functions `validate_file_structure` / `abstract_file_structure` directly.
 
-
-### Using Slide Abstraction
-The easiest way to access slide information is via the [`IrisCodec::Abstraction::File`](./include/IrisFileExtension.hpp), which abstracts representations of the data elements still residing on disk (and providing byte-offset locations within the mapped WSI file to access these elements in an optionally **zero-copy manner**). [An example implementation reading using file abstraction is available](./examples/slide_info_abstraction.cpp). 
-> [!WARNING]
-> If you did not validate prior to abstraction, uncaught runtime exceptions will be thrown if the slide violates the standard. We leave how to deal with validation exceptions to your implementation, should they arise.  
+### Writing a Slide
+The Builder lays the bytes down; your encoder runs the application. Declare the tile pyramid, append every tile (from any number of threads, in any order), append the associated images, and `finalize`. The Builder frames each tile stream by default (and always on a Z-stacked layer), refuses to finalize while any tile is unaccounted for, and leaves a complete, closed file.
+<!-- ife-compile: fragment -->
 ```cpp
-struct IrisCodec::Abstraction::File {
-    Header          header;      // File Header information
-    TileTable       tileTable;   // Table of slide extent and WSI 256 pixel tiles
-    Images          images;      // Set of ancillary images (label, thumbnail, etc...)
-    Annotations     annotations; // Set of on-slide annotation objects
-    Metadata        metadata;    // Slide metadata (patient info, acquisition. etc...)
+#include "IrisFileExtension.hpp"
+#include <filesystem>
+
+using namespace Iris;
+using namespace Iris::File;
+
+// The encoder picks the file name; the builder writes where it is told.
+Builder builder = Builder::create({.filepath = temp_path});
+
+BuilderTileTableInfo table;
+table.encoding = TILE_ENCODING_JPEG;
+table.format   = FORMAT_R8G8B8A8;
+table.extent   = extent;                 // width, height, per-layer tile grid and scale
+builder.set_tile_table(table);
+
+// On your worker threads, one call per grid position:
+builder.append_tile(layer, tile, jpeg.data(), jpeg.size());
+builder.append_null_tile(layer, blank);  // no tile at this position (NULL_TILE)
+
+builder.append_image(thumbnail_info, thumbnail.data(), thumbnail.size());
+builder.finalize({.metadata = metadata});
+
+// Complete and closed: moving it into place is the encoder's job.
+std::filesystem::rename(temp_path, final_path);
+```
+The Builder reserves a large sparse range (8 GiB by default; pass a larger `capacity` for a larger file) and never remaps it: only written pages cost memory or disk, and exhausting the reservation throws.
+
+### The Slide Abstraction
+[`Iris::File::Abstraction::File`](./include/IrisFileExtension.hpp) is the lifted structure: light-weight representations of what is on disk, with byte offsets into the mapped file for the payloads, which stay where they are (zero-copy). [An example reading through it is available](./examples/slide_info_abstraction.cpp).
+<!-- ife-compile: skip -->
+```cpp
+struct Iris::File::Abstraction::File {
+    Header           header;         // file size, IFE version, revision
+    TileTable        tileTable;      // encoding, format, extent, and every tile's offset + size
+    AssociatedImages images;         // label, thumbnail, macro... by label
+    Annotations      annotations;    // on-slide annotation objects
+    Metadata         metadata;       // codec version, attributes, ICC profile, mpp, magnification
+    AttributeSet     attributeTree;  // the attributes with their nesting preserved
+    // ...clinical metadata range, microns per focal plane
 };
 ```
-```cpp
-try {
-    using namespace IrisCodec::Abstraction;
-    File file = abstract_file_structure({(uint8_t*)ptr, size});
-    std::cout   << "Encoded using IFE Spec v"
-                << (file.header.extVersion >> 16) << "."
-                << (file.header.extVersion & 0xFFFF) << std::endl;
-    
-    // We can retrieve data easily from the slide
-    // Get the encoding type (IrisCodec::Encoding)
-    auto compression_format = file.tileTable.encoding;
-    // Get the location and offset of the tile (layer, tile_index)
-    auto& layer_0_1_bytes = file.tileTable.layers[0][1];
-    // And 'decompress' based upon whatever JPEG, AVIF, etc... library you use
-    char* some_buffer = decompress (ptr + layer_0_1_bytes.offset,layer_0_1_bytes.size);
-    // Or copy it from disk
-    memcpy(some_buffer, ptr + layer_0_1_bytes.offset,layer_0_1_bytes.size);
 
-    // Don't worry about clean up. You're just referencing on-disk locations.
-} catch (std::runtime_error &error) {
-    ...handle the read error
+### Reading Blocks Directly
+Below the abstraction, every block is a generated handle: construct it from an offset, test it (a handle's `bool` is `validate()`), and read its fields through named accessors. Each offset field returns the block it points to. The layouts are generated from `spec/ife_fields.json` — there is no hand-written layout table.
+<!-- ife-compile: fragment -->
+```cpp
+#include "IFE_Primitives.hpp"   // versioned_root: the root handle, at the file's own version
+
+namespace b = Iris::File::blocks;
+
+const b::FILE_HEADER header = Iris::File::versioned_root(ptr, size);
+if (!header) { /* header.validate() says why */ }
+const auto table = header.tile_table_offset();   // the TILE_TABLE the header points at
+if (!table)  { /* table.validate() says why */ }
+const uint32_t width = table.x_extent();
+const auto offsets = table.tile_offsets_offset();
+for (uint32_t i = 0; offsets && i < offsets.count(); ++i) {
+    const auto entry = offsets.entry(i);         // entry.offset(), entry.size_field()
 }
-```
-
-### Manually *without* File Abstraction 
-Instead of using the file abstraction routine, you may manually access data block elements. All data blocks within the slide file are derived from the universal block header described in the [specification](spec/). They are accessed by retrieval from parent data blocks using the generated handles (each offset field returns the block it points to), and their byte layouts are generated from `spec/ife_fields.json` — there is no hand-written layout table. 
-```cpp
-struct DATA_BLOCK {
-    // Each datablock has an vtable
-    enum vtable_sizes   {
-        VALIDATION_S                = TYPE_SIZE_UINT64,
-        RECOVERY_S                  = TYPE_SIZE_UINT16,
-        ///... Other elements (see IFE Specification)
-    };
-    enum vtable_offsets {
-        VALIDATION                  = 0,
-        RECOVERY                    = VALIDATION + VALIDATION_S,
-        ///... Other elements (see IFE Specification)
-    };
-    // And only stores 3 pieces of information
-    // 1) The datablock offset on disk
-    // 2) The file size for validation
-    // 3) The IFE version
-    Offset      __offset            = NULL_OFFSET;
-    Size        __size              = 0;
-    uint32_t    __version           = 0;
-    explicit    DATA_BLOCK          (Offset, Size file_size, uint32_t IFE_version);
-    Result      validate_offset     (BYTE* const __base) const noexcept;
-};
 ```
 
 ### File Data Mapping
-**File data mapping is more advanced functionality**. The IFE provides a powerful tool to assess the location of data blocks within a serialized slide file. This is critical when performing file recovery or file updates, as you may overwrite already used regions (eg. when expanding arrays). A file map allows for finding all data-blocks before or after a byte offset location (using std::map binary search tree internally). A file map entry, shown below, describes the location, size, and type of data block within the file at the given location. You may recast the datablock as it's internally defined type and use it per the API, though we recommend validating it first before attempting to do so. 
+**File data mapping is more advanced functionality.** A file map records the location, size and type of every block, keyed by offset (a `std::map`), so you can find every block at or after a byte you are about to write — critical when modifying or recovering a file. An entry carries the type and offset; build the handle you want from them.
+<!-- ife-compile: fragment -->
 ```cpp
-// File Map Entry contains information about the datablock (what type)
-// and the offset location
-struct FileMapEntry {
-    using Datablock                 = Serialization::DATA_BLOCK;
-    MapEntryType        type        = MAP_ENTRY_UNDEFINED;
-    Datablock           datablock;
-    Size                size        = 0;
-};
-```
-```cpp
-try {
-    // Always validate the slide file first
-    IrisCodec::validate_file_structure({ptr, size});
-    // Then generate the slide map (src/IFE_Runtime.cpp).
-    auto file_map = IrisCodec::generate_file_map({(uint8_t*)ptr, size});
+#include "IFE_Advanced.hpp"
+#include "IFE_Primitives.hpp"
 
-    Offset write_location = //...some location you will write at;
-    auto data_blocks_after = file_map.upper_bound(write_location);
-    for (;data_blocks_after!=file_map.cend();++data_blocks_after) {
+using namespace Iris::File;
 
-        //...do something (copy into memory for writing later, etc...)
+const Abstraction::FileMap map = generate_file_map({ptr, size});
+const uint32_t version = versioned_root(ptr, size).__version;
 
-        Offset offset_location = data_block->first;
-        Size   block_byte_size = data_block->second.size;
-        switch (data_block->second.type) {
-            ...
-            case MAP_ENTRY_TILE_TABLE: 
-            static_cast<TILE_TABLE&>(data_block->second.datablock).validate_offset(ptr);
-            static_cast<TILE_TABLE&>(data_block->second.datablock).read_tile_table(ptr);
-            ...
-        }
-        
-    }    
-} catch (std::runtime_error &error) {
-    ...handle the validation error
+for (auto it = map.lower_bound(write_location); it != map.end(); ++it) {
+    const Abstraction::FileMapEntry& entry = it->second;   // type, offset, size
+    if (entry.type == Abstraction::MAP_ENTRY_TILE_TABLE) {
+        // Handles are constructed from an offset, not downcast from a base.
+        const blocks::TILE_TABLE table{ptr, entry.offset, size, version};
+        if (table) { /* read through it */ }
+    }
 }
 ```
+
+### Recovering a Damaged File
+
+Every parent-to-child reference in an IFE file is written **twice** — the
+parent's slot holds the child's offset, and the child's header holds its own
+offset (`VALIDATION == its own address`) plus a type tag. A single-site
+corruption therefore leaves the other half standing as evidence, and
+`Iris::File::Recovery` is the machinery that turns that redundancy back into
+readable structure. It is also how you reopen a file `abstract_file_structure`
+refused: `recover()`, then `apply()` on a writable copy, then abstract again.
+
+<!-- ife-compile: fragment -->
+```cpp
+#include "IFE_Recovery.hpp"
+
+const Iris::File::FileAccessInfo info {file_ptr, file_size};
+Iris::File::Recovery recovery (info);
+
+// Read-only: reconcile both witnesses of every reference and report.
+const auto report = recovery.recover();
+printf("%zu references: %zu intact, %zu repaired, %zu ambiguous, %zu lost\n",
+       report.blocks_total, report.intact,
+       report.corroborated + report.tag_repaired + report.position_repaired,
+       report.ambiguous, report.unrecovered);
+
+// Every repair is itemised; nothing is silent.
+for (const auto& verdict : report.blocks)
+    if (verdict.class_ == Iris::File::Abstraction::RepairClass::Ambiguous) {
+        // reported WITH its candidates, never guessed between
+    }
+
+// apply() is the ONLY path that mutates, and it needs a writable mapping.
+// All-or-nothing: if any planned repair cannot be honoured, nothing is
+// written; every committed write is re-read and verified, and a failure rolls
+// the whole report back.
+if (!recovery.apply(report)) {
+    // refused — the bytes are untouched
+}
+```
+
+Three things worth knowing before relying on it:
+
+- **Ambiguous and Unrecovered are never written.** They are reported precisely
+  because the engine declined to choose between equally-good readings, and
+  writing a guess would turn a declared uncertainty into a silent one.
+- **Repair is not authentication.** A repaired file is not the same object as
+  an intact one. Every repair is reported so a caller can decide what to trust.
+- **Not everything has a second witness.** Inline scalar values, payload bytes
+  (`ICC_PROFILE`, `IMAGE_BYTES`, tile pixel data), an unframed tile stream, and
+  an absent (`NULL_OFFSET`) slot carry no redundancy — damage there is
+  undetectable by construction, and the engine does not pretend otherwise.
+
+The threat model is **bit flips**. Truncation, overwrite and memmove damage
+defeat the Hamming ranker; those cases are reported ambiguous or unrecovered
+rather than guessed.
 
 ## Language Bindings
 
 This repository presently builds C++ — header-only, static, shared, or as a
-WebAssembly module.
+WebAssembly module — and publishes no language bindings yet.
 
 Bindings divide by layer rather than by language. The
 [Iris Codec Community Module](https://github.com/IrisDigitalPathology/Iris-Codec.git)
 publishes Python bindings over the high-performance codec: opening slides,
-decoding tiles, compression. Bindings published here expose the low-level byte
-manipulation the Codec deliberately hides — validating, abstracting, mapping
-and recovering the file structure — for callers who need to work at that level,
-including anyone writing an encoder or decoder outside C++.
+decoding tiles, compression. Bindings for this layer — validating, abstracting,
+mapping and recovering the file structure, for callers who need to work at that
+level, including anyone writing an encoder or decoder outside C++ — are planned
+(Python first).
 
 # Publications
 
