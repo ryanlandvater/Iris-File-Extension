@@ -25,33 +25,36 @@ if(NOT NM_TOOL)
     return()
 endif()
 
-# -g: external (exported) symbols only. Mangled `Iris::File::blocks` is
-# `4Iris4File6blocks` (Itanium length-prefixed); see the match in the loop below.
+# -g: external (exported) symbols only. -C: demangle, so the loop below can
+# name the namespace it guards (Iris::File::blocks) rather than an Itanium
+# spelling of it — an ABI detail that would have to be rewritten for a
+# compiler that mangles differently.
 execute_process(
-    COMMAND "${NM_TOOL}" -g "${LIBRARY}"
+    COMMAND "${NM_TOOL}" -g -C "${LIBRARY}"
     OUTPUT_VARIABLE symbols ERROR_VARIABLE nm_error RESULT_VARIABLE nm_code
 )
 if(NOT nm_code EQUAL 0)
     message(FATAL_ERROR "nm failed on ${LIBRARY}:\n${nm_error}")
 endif()
 
-# Undefined symbols are imports, not exports; only defined ones widen the ABI.
+# `nm -g -C` prints "<address> <type> <name>"; type U is undefined — an
+# import, not an export — and only a definition widens the ABI.
 string(REPLACE "\n" ";" lines "${symbols}")
 set(leaked "")
 foreach(line IN LISTS lines)
+    if(NOT line MATCHES "^[0-9a-fA-F]+ +([A-Za-z]) +(.*)$" OR CMAKE_MATCH_1 STREQUAL "U")
+        continue()
+    endif()
     # The PUBLIC API is namespace Iris::File (e.g. Iris::File::Parser), so the
-    # bare namespace does not mean "the generated layer" — matching it would
-    # flag every exported symbol. The generated block layer lives in the THREE
-    # sub-namespaces Iris::File::blocks / ::vtables / ::constants, whose mangled
-    # spellings are the Itanium length-prefixed "4Iris4File6blocks" /
-    # "4Iris4File7vtables" / "4Iris4File9constants" — but only when they LEAD
-    # the symbol. The bare substring also appears as a template ARGUMENT inside
-    # an unrelated symbol: std::set<std::pair<Offset, constants::RecoveryCodes>>
-    # mangles to _ZNSt8_Rb_tree...N4Iris4File9constants..., and libstdc++ leaves
-    # that weak emission externally visible where libc++ does not — so the bare
-    # match flagged it as a leak on the GCC legs only. Anchor at the symbol's
-    # leading "_ZN": a generated-layer symbol is always _ZN4Iris4File<subns>.
-    if(line MATCHES "_ZN4Iris4File(6blocks|7vtables|9constants)" AND NOT line MATCHES " U ")
+    # bare namespace does not mean "the generated layer". The generated layer
+    # is the three sub-namespaces Iris::File::blocks / ::vtables / ::constants,
+    # and a symbol DEFINED in one carries that namespace at the FRONT of its
+    # name — so anchor there. Matching the namespace anywhere would also hit it
+    # as a template ARGUMENT: std::set<std::pair<Offset,
+    # Iris::File::constants::RecoveryCodes>> demangles to exactly that inside a
+    # std::_Rb_tree<...> symbol, which is not a generated-layer export (and
+    # which libstdc++ leaves externally visible where libc++ does not).
+    if(CMAKE_MATCH_2 MATCHES "^Iris::File::(blocks|vtables|constants)(::|$)")
         list(APPEND leaked "${line}")
     endif()
 endforeach()
