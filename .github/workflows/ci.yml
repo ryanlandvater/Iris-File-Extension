@@ -92,6 +92,14 @@ jobs:
         with:
           path: .deps/corpus
           key: corpus-${{ hashFiles('tests/corpus/manifest.json') }}
+      # MSVC locates its standard headers through INCLUDE, which the Windows
+      # runner does not set: the build's MSBuild invocation carries it per
+      # project, but the README gate spawns cl itself at test time and, without
+      # it, cannot find <cstddef>. Establish the developer environment for the
+      # whole job — configure, build and test then all see the same toolchain.
+      - name: Set up the MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
       # The configuration is named three times on purpose. Visual Studio is a
       # multi-config generator: it ignores CMAKE_BUILD_TYPE and picks a
       # configuration when it builds and again when it tests. Omit --config
