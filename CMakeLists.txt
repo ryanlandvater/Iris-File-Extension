@@ -433,34 +433,28 @@ endif(IFE_BUILD_EXAMPLES)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 include(${CMAKE_CURRENT_SOURCE_DIR}/tests/tests.cmake)
 
-
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# BEGIN Export macros for in-tree executables
+# Export macros for in-tree executables
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# Nothing here links a DLL. Tests and examples compile the runtime and the
-# generated layer straight into the executable, or link the object library,
-# so neither IFE_EXPORT nor IRIS_EXPORT should carry an attribute.
+# Every executable in this directory -- the examples and the whole test suite --
+# compiles the runtime and the generated layer straight in, or links the object
+# library; none links a DLL. (The IrisFileExtension* libraries are the
+# exception: they keep IRIS_EXPORT_API=true so their own exports are unchanged.)
 #
-# IFE_EXPORT resolves correctly on its own (IrisFileExtension.hpp distinguishes
-# "not exporting" from "importing"). IRIS_EXPORT is declared in Iris-Headers,
-# which still conflates the two: undefined, it becomes __declspec(dllimport)
-# on MSVC, and every use of Iris::Result or IrisCodec::AssociatedImageInfo
-# emits an __imp_ reference to a DLL this build never produces. Both headers
-# guard with #ifndef, so defining them here simply wins.
+# IFE_EXPORT already tells "not exporting" from "importing", so it is correct on
+# its own. IRIS_EXPORT is declared in Iris-Headers, which conflates the two:
+# undefined, it becomes __declspec(dllimport) on MSVC, and every use of
+# Iris::Result or Iris::Extent emits an __imp_ reference to a DLL this build
+# never produces. Both headers guard with #ifndef, so defining them here wins.
 #
-# Applied to the executables only. The library keeps IRIS_EXPORT_API=true so
-# its own shared-object exports are unchanged.
-foreach(target IN ITEMS
-        ife_bytes_tests ife_blocks_tests ife_blocks_header_only_tests
-        ife_window_tests ife_runtime_tests ife_lifetime_tests ife_corpus_tests
-        ife_version_gating_tests ife_version_gating_backward_tests
-        ife_validation_tests ife_v1_oracle_tests
-        ife_example_runtime)
-    if(TARGET ${target})
-        target_compile_definitions(${target} PRIVATE IFE_EXPORT= IRIS_EXPORT=)
+# Read from the directory's real target list rather than a hand-kept one. The
+# builder, parser, recovery, damage-sweep and advanced/api-contract tests were
+# added without being appended to the old list, and the MSVC link failed on
+# every one of them; a name list is a thing that goes stale silently.
+get_property(_ife_directory_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_ife_target IN LISTS _ife_directory_targets)
+    if(NOT _ife_target MATCHES "^IrisFileExtension")
+        target_compile_definitions(${_ife_target} PRIVATE IFE_EXPORT= IRIS_EXPORT=)
     endif()
 endforeach()
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# END Export macros for in-tree executables
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
