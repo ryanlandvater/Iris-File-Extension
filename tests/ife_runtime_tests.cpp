@@ -19,6 +19,7 @@
 // which ife_blocks_tests owns: a test that hand-computes a byte position
 // stops testing the format and starts testing its own arithmetic.
 #include "IFE_Blocks.hpp"
+#include "IFE_Primitives.hpp"   // versioned_root, and the primitive header offsets
 
 #include "ife_corpus_path.hpp"
 #include "ife_v1_fixture.hpp"
@@ -28,7 +29,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -516,154 +519,90 @@ void test_file_map_finds_every_block() {
     IFE_CHECK(after->first > 0);
 }
 
-void test_recovery_finds_blocks_without_the_offset_graph() {
-    v1_fixture::Expected expected;
-    auto f = v1_slide(expected);
+// ---- reference_fields_view: the table the recovery census walks (RB-2) ---- //
 
-    // Destroy the root's pointers. generate_file_map walks the graph and
-    // cannot get past this; the recovery scan does not use the graph at all.
-    std::memset(f.data() + 22, 0xFF, 16);   // TILE_TABLE_OFFSET + METADATA_OFFSET
+namespace k = ::Iris::File::constants;
+namespace p = ::Iris::File::primitives;
+using ::Iris::File::Offset;
+using ::Iris::File::Size;
+using ::Iris::File::Abstraction::FieldInfo;
 
-    const auto recovered = Iris::File::recover_file_structure({f.data(), f.size()});
+struct TableWalk {
+    const std::vector<BYTE>&                   file;
+    std::uint32_t                              version = 0;
+    std::set<Offset>                           reached{0};
+    std::vector<std::pair<Offset, k::RecoveryCodes>> todo{{0, k::RecoveryCodes::RECOVER_FILE_HEADER}};
+    std::set<std::string>&                     used;  ///< "OWNER.FIELD" of every non-null field seen
+};
 
-    // Every block is found — including the root, which has no VALIDATION
-    // field to find by signature and is therefore noted explicitly by scan()
-    // (an unnoted root would read as a Hole on every clean file, RC-2.3).
-    auto found = [&recovered](Iris::File::Abstraction::MapEntryType type) {
-        for (const auto& [offset, entry] : recovered) if (entry.type == type) return true;
-        return false;
-    };
-    using namespace Iris::File::Abstraction;
-    IFE_CHECK(found(MAP_ENTRY_TILE_TABLE));
-    IFE_CHECK(found(MAP_ENTRY_METADATA));
-    IFE_CHECK(found(MAP_ENTRY_LAYER_EXTENTS));
-    IFE_CHECK(found(MAP_ENTRY_ICC_PROFILE));
-    IFE_CHECK(recovered.count(0) == 1);   // the root, noted by construction
-
-    IFE_CHECK(found(MAP_ENTRY_ANNOTATIONS));
-    IFE_CHECK(found(MAP_ENTRY_ANNOTATION_BYTES));
-
-    // Every self-validating block written is found, and nothing is invented:
-    // ten, plus the annotations array and one ANNOTATION_BYTES apiece, plus
-    // three per nested sequence item. A false positive needs eight bytes equal
-    // to their own offset followed by a u16 in the 0x55 tag set -- the reason
-    // that prefix is worth keeping.
-    //
-    // The nested blocks are the point of counting them here. This scan never
-    // reads an attribute value -- the offset graph is deliberately destroyed
-    // below -- so finding them proves a nested structure is an ordinary block
-    // that carries its own VALIDATION word and recovery tag, and is
-    // recoverable without the parent that names it.
-    int nested_blocks = 0;
-    for (const auto& sequence : expected.nested_attributes)
-        nested_blocks += 3 * static_cast<int>(sequence.items.size());
-    // 14, not 12: as above, the two group arrays are tagged blocks and a
-    // scan finds them without the ANNOTATIONS block that names them. The
-    // tile streams are charged too (RC-2.1): the scan found the
-    // self-validating TILE_OFFSETS array even though the root pointers are
-    // gone, and each surviving entry sizes the stream it addresses — a
-    // stream without its entry would read as a hole instead. The 14th is
-    // the FILE_HEADER itself, noted by construction (no VALIDATION to find).
-    IFE_CHECK(recovered.size() ==
-              14 + nested_blocks + expected.annotations.size() + expected.tiles);
-
-    // What a scan cannot do is tell the root attributes structure from an
-    // item: they are structurally identical, and only the reference from a
-    // parent's byte run distinguishes them. Recorded here because a recovery
-    // tool has to resolve that by reference, not by position.
-    int attribute_headers = 0;
-    for (const auto& [offset, entry] : recovered)
-        if (entry.type == MAP_ENTRY_ATTRIBUTES) ++attribute_headers;
-    IFE_CHECK(attribute_headers == 1 + nested_blocks / 3);
-
-    // And the graph walk really is defeated, so the comparison is meaningful.
-    bool threw = false;
-    try { (void)Iris::File::generate_file_map({f.data(), f.size()}); }
-    catch (const std::runtime_error&) { threw = true; }
-    IFE_CHECK(threw);
+/// Every seat of `field` in the block at `at`: one, or one per array entry.
+/// On a clean file both witnesses of each edge hold, so a wrong field_offset
+/// reads a word that names no block of the declared type.
+void follow(TableWalk& w, Offset at, k::RecoveryCodes owner, const FieldInfo& field) {
+    const BYTE* base   = w.file.data();
+    const Size  copies = field.in_entry ? ::Iris::File::load<std::uint32_t>(base + at + p::ArrayHeader::COUNT) : 1;
+    const Size  stride = field.in_entry ? ::Iris::File::load<std::uint16_t>(base + at + p::ArrayHeader::STRIDE) : 0;
+    for (Size i = 0; i < copies; ++i) {
+        const Offset child = ::Iris::File::load<std::uint64_t>(base + at + field.field_offset + i * stride);
+        if (child == k::NULL_OFFSET) {
+            IFE_CHECK(field.nullable);
+            continue;
+        }
+        IFE_CHECK(child < w.file.size());
+        if (child >= w.file.size()) return;
+        IFE_CHECK(p::BlockHeader::validation_at(base, child) == child);
+        IFE_CHECK(p::BlockHeader::recovery_at(base, child) == static_cast<std::uint16_t>(field.child_recovery));
+        w.used.insert(std::to_string(static_cast<unsigned>(owner)) + "." + field.name);
+        if (w.reached.insert(child).second) w.todo.emplace_back(child, field.child_recovery);
+    }
 }
 
+/// The census will walk the offset graph from reference_fields_view() alone,
+/// so the table must name every seat the generated accessors read. Walked from
+/// the root over each corpus file: every non-null word names a block whose
+/// VALIDATION is its own offset and whose tag is the field's child_recovery,
+/// and every block the table reaches is one generate_file_map finds. What the
+/// map finds and the table does not must be what the table cannot see by
+/// design: tile streams, and structures reached through nested attribute
+/// values. Across the corpus every field must name a real child at least
+/// once, or its offset was never tested.
+void test_reference_fields_name_every_edge() {
+    std::set<std::string> used;
+    for (const char* name : {"cipher_iris.test_slide", "v1_0_witness.test_slide",
+                             "v1_1_witness.test_slide"}) {
+        const std::vector<BYTE> f = ife_load_fixture(g_corpus_dir, name);
+        IFE_CHECK(!f.empty());
+        if (f.empty()) continue;
+        TableWalk w{.file = f, .used = used};
+        w.version = ::Iris::File::versioned_root(f.data(), f.size()).__version;
+        while (!w.todo.empty()) {
+            const auto [at, owner] = w.todo.back();
+            w.todo.pop_back();
+            for (const FieldInfo& field : Iris::File::Abstraction::reference_fields_view(owner))
+                if (field.since <= w.version) follow(w, at, owner, field);
+        }
 
-/// Tile frames are found by the same scan, and carry enough to rebuild an entry.
-///
-/// This is the case the frame exists for: the tile offsets array is gone, so
-/// nothing says where any tile is or which tile it is. The frames are all that
-/// is left, and a frame is found without a recovery tag -- what marks it is a
-/// forty-bit value equal to its own position, which nothing else in the format
-/// writes.
-///
-/// The streams here are deliberately out of index order. Ordering is explicitly
-/// free (spec 2.4.3), so a scan that inferred an index from file position would
-/// pass a tidy fixture and be wrong on a real one written in parallel.
-void test_recovery_finds_tile_frames_and_rebuilds_entries() {
-    using namespace Iris::File::Abstraction;
-    namespace b  = ::Iris::File::blocks;
-
-    struct Tile { std::uint32_t index; std::uint32_t size; };
-    const Tile tiles[] = {{7, 300}, {2, 145}, {19, 64}};
-
-    // A run of framed streams, nothing else -- no header, no arrays. Recovery
-    // has to work from the frames alone.
-    std::vector<Iris::BYTE> f(64, 0xA5);   // leading junk, so nothing sits at 0
-    std::vector<Iris::File::Offset> stream_at;
-    for (const auto& t : tiles) {
-        f.resize(f.size() + b::TILE_PIXEL_DATA::header_size);
-        const Iris::File::Offset at = f.size();
-        stream_at.push_back(at);
-        ::Iris::File::store_u40(f.data() + at + b::TILE_PIXEL_DATA::offset::VALIDATION,
-                         at + b::TILE_PIXEL_DATA::offset::VALIDATION);
-        ::Iris::File::store<std::uint32_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::TILE_INDEX, t.index);
-        ::Iris::File::store<std::uint16_t>(f.data() + at + b::TILE_PIXEL_DATA::offset::Z_PLANES, 1);
-        f.resize(f.size() + t.size, 0x5A);
-    }
-
-    const auto recovered = Iris::File::recover_file_structure({f.data(), f.size()});
-
-    int frames = 0, data = 0;
-    for (const auto& [offset, entry] : recovered) {
-        if (entry.type == MAP_ENTRY_TILE_FRAME) ++frames;
-        if (entry.type == MAP_ENTRY_TILE_PIXEL_DATA) ++data;
-    }
-    IFE_CHECK(frames == 3);
-    IFE_CHECK(data == 3);
-
-    // What recovery is actually for: turn each frame back into the tile
-    // offsets entry that was lost. Index, offset and size all come from the
-    // frame, so the rebuilt entry is complete rather than a location alone.
-    for (std::size_t i = 0; i < std::size(tiles); ++i) {
-        const b::TILE_PIXEL_DATA frame{f.data(), stream_at[i], f.size(), b::VERSION_WRITTEN};
-        IFE_CHECK(static_cast<bool>(frame.validate()));
-        IFE_CHECK(frame.tile_index() == tiles[i].index);
-
-        // The recovered map agrees with the frame about where the payload is.
-        // Its extent is left at zero: the frame carries no length, and how far
-        // a compressed stream runs is the codec's question, not this layer's.
-        const auto it = recovered.find(stream_at[i]);
-        IFE_CHECK(it != recovered.end());
-        if (it != recovered.end()) {
-            IFE_CHECK(it->second.type == MAP_ENTRY_TILE_PIXEL_DATA);
-            IFE_CHECK(it->second.size == 0);
+        using namespace Iris::File::Abstraction;
+        const FileMap map = Iris::File::generate_file_map({f.data(), f.size()});
+        for (const Offset at : w.reached) IFE_CHECK(map.count(at) == 1);
+        for (const auto& [at, entry] : map) {
+            if (w.reached.count(at) || entry.type == MAP_ENTRY_TILE_PIXEL_DATA) continue;
+            const bool nested = entry.type == MAP_ENTRY_ATTRIBUTES ||
+                                entry.type == MAP_ENTRY_ATTRIBUTE_SIZES ||
+                                entry.type == MAP_ENTRY_ATTRIBUTE_BYTES;
+            if (!nested) std::fprintf(stderr, "  %s: the table never reaches the block at %llu\n",
+                                      name, static_cast<unsigned long long>(at));
+            IFE_CHECK(nested);
         }
     }
 
-    // Junk does not answer the self-reference test, so the leading region and
-    // the payload bytes contribute nothing.
-    IFE_CHECK(recovered.size() == 6);
-
-    // A frame must fit behind the stream it precedes. A self-referencing u40
-    // too near the start of file cannot be one, and is rejected on those
-    // grounds -- plant exactly that and confirm nothing is invented. A guard
-    // never exercised is a guard that rots.
-    //
-    // That bound is the only filter left now that the frame carries no length
-    // to sanity-check. A u40 equal to its own position is a 2^-40 event, which
-    // over a 2 GB file is an expected 0.002 false frames; the caller sees one
-    // extra entry whose tile index is nonsense, and nothing worse.
-    auto poisoned = f;
-    constexpr Iris::File::Offset FAKE = 2;   // anchor would be 7, short of the 11 a frame needs
-    ::Iris::File::store_u40(poisoned.data() + FAKE, FAKE);
-    IFE_CHECK(::Iris::File::load_u40(poisoned.data() + FAKE) == FAKE);   // the bait is set
-    IFE_CHECK(Iris::File::recover_file_structure({poisoned.data(), poisoned.size()}).size() == 6);
+    std::size_t fields = 0;
+    for (unsigned tag = 0x5500; tag <= 0x55FF; ++tag)
+        fields += Iris::File::Abstraction::reference_fields_view(static_cast<k::RecoveryCodes>(tag)).size();
+    if (used.size() != fields)
+        std::fprintf(stderr, "  the corpus exercises %zu of the table's %zu fields\n", used.size(), fields);
+    IFE_CHECK(fields == 16);   // the spec's points_to edges: RB-2
+    IFE_CHECK(used.size() == fields);
 }
 
 }  // namespace
@@ -676,9 +615,6 @@ int main(int argc, char** argv) {
     // Bazel cannot pass a directory; BUILD.bazel passes the runfiles path of
     // one corpus file and its parent is the directory CTest passes directly.
     g_corpus_dir = ife_corpus_dir(argv[1]);
-
-    // Needs no slide of its own.
-    test_recovery_finds_tile_frames_and_rebuilds_entries();
 
     // The rest read the fetched snapshot. If the corpus fetch did not run
     // there is nothing to read, and going on would turn a clear diagnostic
@@ -699,7 +635,7 @@ int main(int argc, char** argv) {
     test_attribute_nesting_depth_is_bounded();
     test_shared_nested_structures_are_validated_once();
     test_file_map_finds_every_block();
-    test_recovery_finds_blocks_without_the_offset_graph();
+    test_reference_fields_name_every_edge();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

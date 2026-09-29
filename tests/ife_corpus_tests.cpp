@@ -21,13 +21,11 @@
  * every offset from the file header and reports a typed entry per block.
  * Writing a second walk here would just be a second thing to be wrong.
  *
- * `recover_file_structure` runs too, and its types are unioned in. Two
- * reasons. The offset graph cannot see a tile frame at all -- a frame carries
- * no recovery tag and is addressed backward from the stream it precedes, so
- * only the recovery scan's signature match finds one, and without this a
- * framed fixture would be invisible to the gate. And it means the corpus
- * exercises the recovery path over real bytes, which nothing else does: on a
- * healthy file recovery should find a subset of the graph, and it does.
+ * The offset graph cannot see a TILE_FRAME (a frame carries no recovery tag
+ * and is addressed backward from its stream), so the recovery census that used
+ * to be unioned in here found it and the walk does not. That engine is being
+ * rebuilt against FastFHIR's census design, so while it is gone the manifest
+ * still declares TILE_FRAME and the gate skips it rather than fail on it.
  *
  * Fragments (a bare block, not a slide) cannot be walked from a file header,
  * so they are size-checked and excluded from coverage accounting rather than
@@ -37,7 +35,7 @@
  * Self-contained; non-zero exit on failure.
  */
 #include "IrisFileExtension.hpp"
-#include "IFE_Advanced.hpp"   // generate_file_map / recover_file_structure + FileMap
+#include "IFE_Advanced.hpp"   // generate_file_map + FileMap
 
 #include "corpus_manifest.hpp"
 #include "ife_corpus_path.hpp"
@@ -100,23 +98,8 @@ const char* manifest_name(MapEntryType type) {
 }
 
 std::vector<BYTE> read_whole_file(const std::string& path) {
-    std::FILE* in = std::fopen(path.c_str(), "rb");
-    if (!in) {
-        std::fprintf(stderr, "FAIL: cannot open %s\n", path.c_str());
-        ++g_failures;
-        return {};
-    }
-    std::fseek(in, 0, SEEK_END);
-    const auto size = static_cast<std::size_t>(std::ftell(in));
-    std::fseek(in, 0, SEEK_SET);
-    std::vector<BYTE> bytes(size);
-    const auto read = std::fread(bytes.data(), 1, size, in);
-    std::fclose(in);
-    if (read != size) {
-        std::fprintf(stderr, "FAIL: short read on %s\n", path.c_str());
-        ++g_failures;
-        return {};
-    }
+    auto bytes = ife_read_file(path);
+    if (bytes.empty()) ++g_failures;
     return bytes;
 }
 
@@ -140,12 +123,10 @@ std::set<std::string> walk(const ife_corpus::Fixture& fixture,
         return observed;
     }
 
-    // The offset graph, then the recovery scan; a block counts as reached if
-    // either finds it. See the file comment for why both are needed.
+    // The offset graph is the traversal. It cannot see a TILE_FRAME (a frame
+    // carries no recovery tag and is addressed backward from its stream); the
+    // recovery census that used to be unioned in here is being rebuilt.
     auto map = ::Iris::File::generate_file_map({bytes.data(), bytes.size()});
-    const auto recovered =
-        ::Iris::File::recover_file_structure({bytes.data(), bytes.size()});
-    for (const auto& [offset, entry] : recovered) map.emplace(offset, entry);
 
     for (const auto& [offset, entry] : map) {
         const char* name = manifest_name(entry.type);
@@ -201,6 +182,10 @@ std::set<std::string> test_fixture(const ife_corpus::Fixture& fixture,
     // wrongly when it was hosted. Either way the corpus no longer proves what
     // the manifest sells it as proving.
     for (const auto& block : declared) {
+        // TILE_FRAME is invisible to the offset graph (see walk()), and the
+        // recovery census that found it is being rebuilt; the manifest still
+        // declares it, so it is not counted against the walk here.
+        if (block == "TILE_FRAME") continue;
         if (!observed.count(block)) {
             std::fprintf(stderr,
                          "FAIL: %s: manifest declares %s, the walk never "

@@ -49,9 +49,9 @@ int g_failures = 0;
 static_assert(std::is_pointer_v<decltype(FileAccessInfo::file_ptr)>);
 static_assert(std::is_integral_v<decltype(FileAccessInfo::file_size)>);
 
-// The three entry points the codec calls. The two file-map PRODUCERS
-// (generate_file_map / recover_file_structure) are the ADVANCED tier now —
-// their contract is frozen in ife_advanced_api_tests.cpp.
+// The three entry points the codec calls. The file-map PRODUCER
+// (generate_file_map) is the ADVANCED tier now — its contract is frozen in
+// ife_advanced_api_tests.cpp.
 using IfeResult = decltype(is_iris_codec_file(std::declval<const FileAccessInfo&>()));
 static_assert(std::is_same_v<IfeResult, decltype(validate_file_structure(std::declval<const FileAccessInfo&>()))>);
 static_assert(std::is_same_v<IfeResult, Iris::Result>);  // the codec's `Iris::Result`

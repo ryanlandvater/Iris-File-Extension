@@ -15,11 +15,13 @@
 
 #include "IrisFileExtension.hpp"
 #include "IFE_Primitives.hpp"
-#include "IFE_Recovery.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
+#include <set>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -117,88 +119,6 @@ bool present(const Handle& __h) {
     return true;
 }
 
-// MARK: - Attribute slicing
-//
-// One attribute, as it sits on disk: a key, and a value that is either text or
-// a run of offsets to nested structures. The slicing lives here, once, because
-// the sizes array and the packed byte run have to agree exactly and a second
-// copy of that agreement is a second place for it to drift -- the same reason
-// the generated writer derives both from one payload.
-
-struct AttributeSlice {
-    const BYTE*       key        = nullptr;
-    Size              key_size   = 0;
-    const BYTE*       value      = nullptr;
-    Size              value_size = 0;
-    k::AttributeKinds kind       = k::AttributeKinds::ATTRIBUTE_STRING;
-
-    /// How many nested structures the value locates. Meaningful only when the
-    /// kind is nested; zero is a legal empty sequence.
-    [[nodiscard]] Size item_count() const noexcept {
-        return kind == k::AttributeKinds::ATTRIBUTE_NESTED
-             ? b::nested_count(value_size) : 0;
-    }
-    /// The offset of nested structure `i`: an ordinary absolute file offset.
-    [[nodiscard]] Offset item(Size __i) const noexcept {
-        return b::nested_offset(value, __i);
-    }
-};
-
-/// Why a slice failed. Three causes, reported apart rather than as one bool,
-/// because the diagnostic a caller prints is the whole value of noticing.
-enum class SliceError {
-    NONE,
-    UNREADABLE,       ///< the sizes or bytes block does not validate
-    OVERRUN,          ///< an attribute extends past the end of the byte array
-    NESTED_PARTIAL,   ///< a nested value is not a whole number of offsets
-};
-
-/// Cut one attributes structure into its slices.
-///
-/// Where the deserialization-side checks live. Both blocks can validate
-/// structurally and still disagree with each other, because neither block
-/// describes the other; this is where that is caught. `__at` receives the
-/// index of the offending entry, so a message can name it.
-SliceError slice_attributes(const b::ATTRIBUTES& __attrs,
-                            std::vector<AttributeSlice>& __slices,
-                            std::uint32_t* __at = nullptr) {
-    __slices.clear();
-    if (__at) *__at = 0;
-    const auto sizes = __attrs.sizes_offset();
-    const auto bytes = __attrs.bytes_offset();
-    if (!sizes || !bytes) return SliceError::UNREADABLE;
-
-    const ::Iris::File::ByteSpan blob = bytes.bytes();
-    Size cursor = 0;
-    for (uint32_t i = 0; i < sizes.count(); ++i) {
-        if (__at) *__at = i;
-        const auto entry = sizes.entry(i);
-        AttributeSlice slice;
-        slice.key_size   = entry.key_size();
-        slice.value_size = entry.value_size();
-        slice.kind       = entry.kind();
-
-        if (slice.key_size > blob.size - cursor) return SliceError::OVERRUN;
-        slice.key = blob.data + cursor;
-        cursor += slice.key_size;
-        if (slice.value_size > blob.size - cursor) return SliceError::OVERRUN;
-        slice.value = blob.data + cursor;
-        cursor += slice.value_size;
-
-        // A nested value is a whole number of offsets or it is malformed: the
-        // one rule about these bytes that the capped schema vocabulary cannot
-        // state, so it is stated in the specification prose and enforced here.
-        // Rejected outright rather than rounded down -- a partial offset is a
-        // corrupted file, and reading the whole ones would be inventing a
-        // structure the encoder never wrote.
-        if (slice.kind == k::AttributeKinds::ATTRIBUTE_NESTED &&
-            !b::nested_size_is_whole(slice.value_size))
-            return SliceError::NESTED_PARTIAL;
-
-        __slices.push_back(slice);
-    }
-    return SliceError::NONE;
-}
 
 /// How deep a chain of nested attribute structures may go.
 ///
@@ -432,46 +352,94 @@ const char* tile_entry_error(Offset __offset, std::uint32_t __size, Size __file_
     return nullptr;
 }
 
-/// Every entry of a validated tile offsets array, checked: each lies inside the
-/// file, and each stream of a Z-stacked layer is framed (tile_frame_error). The
-/// arrays' own extents are already known to fit (validate_deep), so `count()`
-/// is safe to walk.
-Result check_tile_entries(const b::FILE_HEADER& __header, Size __file_size) {
+/// The one walk over the tile offsets array, split into layers by the layer
+/// extents. Both read paths use it — validate_file_structure with a visitor
+/// that keeps nothing, abstract_file_structure with one that records every
+/// entry — so what one accepts the other accepts. Each entry is checked before
+/// `__visit(layer, tile, offset, size)` sees it: it lies inside the file
+/// (tile_entry_error), and on a Z-stacked layer it is framed (tile_frame_error).
+/// Returns why the first bad entry cannot be read through, naming it, or an
+/// empty string when every entry can.
+///
+/// Preconditions: both arrays have validated, so each COUNT fits the file.
+template <class Visit>
+std::string walk_tile_entries(const b::FILE_HEADER& __header, Size __file_size, Visit&& __visit) {
     const auto table   = __header.tile_table_offset();
     const auto offsets = table.tile_offsets_offset();
     const auto extents = table.layer_extents_offset();
-    const Size header_end = __header.extent();
-    const auto describe = [&](std::uint32_t __i, const auto& __entry, const char* __why) {
-        return Result{IRIS_FAILURE, "TILE_OFFSETS entry " + std::to_string(__i) +
-                                    " (OFFSET " + std::to_string(__entry.offset()) +
-                                    ", SIZE " + std::to_string(__entry.size_field()) + ") " + __why};
-    };
-    for (std::uint32_t i = 0; i < offsets.count(); ++i) {
-        const auto entry = offsets.entry(i);
-        if (const char* why = tile_entry_error(entry.offset(), entry.size_field(),
-                                               __file_size, header_end))
-            return describe(i, entry, why);
-    }
-    // Global indices ascend by layer, so a layer's entries are one run.
-    std::uint64_t first = 0;
+
+    // X_TILES × Y_TILES is a claim. Summing stops once it passes the array's
+    // u32 COUNT, so the total cannot wrap back onto a matching value.
+    std::uint64_t total = 0;
+    for (std::uint32_t l = 0; l < extents.count() && total <= offsets.count(); ++l)
+        total += static_cast<std::uint64_t>(extents.entry(l).x_tiles()) * extents.entry(l).y_tiles();
+    if (total != offsets.count())
+        return "The layer extents disagree with the tile offset array (" +
+               std::to_string(offsets.count()) + " entries) on the number of tiles";
+
+    const Size    header_end = __header.extent();
+    std::uint32_t global     = 0;
     for (std::uint32_t l = 0; l < extents.count(); ++l) {
-        const auto layer = extents.entry(l);
-        const std::uint64_t tiles  = static_cast<std::uint64_t>(layer.x_tiles()) * layer.y_tiles();
+        const auto          layer  = extents.entry(l);
         const std::uint16_t planes = layer.z_planes().value_or(0);
-        if (planes > 1) {
-            const std::uint64_t end = std::min<std::uint64_t>(first + tiles, offsets.count());
-            for (std::uint64_t g = first; g < end; ++g) {
-                const auto entry = offsets.entry(static_cast<std::uint32_t>(g));
-                if (entry.offset() == k::NULL_TILE) continue;
-                if (const char* why = tile_frame_error(__header.__base, __file_size,
-                                                       __header.__version, entry.offset(),
-                                                       g, planes))
-                    return describe(static_cast<std::uint32_t>(g), entry, why);
-            }
+        const std::uint64_t tiles  = static_cast<std::uint64_t>(layer.x_tiles()) * layer.y_tiles();
+        for (std::uint64_t t = 0; t < tiles; ++t, ++global) {
+            const auto  entry = offsets.entry(global);
+            const char* why   = tile_entry_error(entry.offset(), entry.size_field(),
+                                                 __file_size, header_end);
+            // A Z-stacked layer frames every stream (the spec, Focal Planes).
+            if (!why && planes > 1 && entry.offset() != k::NULL_TILE)
+                why = tile_frame_error(__header.__base, __file_size, __header.__version,
+                                       entry.offset(), global, planes);
+            if (why)
+                return "Layer " + std::to_string(l) + ", tile " + std::to_string(t) +
+                       " (OFFSET " + std::to_string(entry.offset()) + ", SIZE " +
+                       std::to_string(entry.size_field()) + ") " + why;
+            __visit(l, t, entry.offset(), entry.size_field());
         }
-        first += tiles;
     }
-    return IRIS_SUCCESS;
+    return {};
+}
+
+/// The one walk over the annotation groups. Group titles are a byte run sliced
+/// by a parallel size array, as the attributes are, and each title is followed
+/// by its members' 24-bit identifiers. Both read paths use it, as they share
+/// walk_tile_entries. `__visit(title, at, members)` sees each group, where
+/// `at` is the offset of its identifiers within the byte run. Returns why the
+/// first group does not fit the byte array, or an empty string.
+///
+/// Preconditions: both blocks have validated, so COUNT and the byte run fit
+/// the file.
+template <class Visit>
+std::string walk_annotation_groups(const b::ANNOTATION_GROUP_SIZES& __sizes,
+                                   const b::ANNOTATION_GROUP_BYTES& __blob, Visit&& __visit) {
+    const ::Iris::File::ByteSpan titles = __blob.bytes();
+    Size cursor = 0;
+    for (std::uint32_t i = 0; i < __sizes.count(); ++i) {
+        const auto entry        = __sizes.entry(i);
+        const Size title_size   = entry.title_size();
+        const Size member_bytes = Size{entry.member_count()} * 3;
+        // Never `cursor + title_size + member_bytes > size`: subtract instead.
+        if (titles.size - cursor < title_size || titles.size - cursor - title_size < member_bytes)
+            return "Annotation group " + std::to_string(i) +
+                   " extends past the annotation group byte array";
+        __visit(std::string_view(reinterpret_cast<const char*>(titles.data + cursor), title_size),
+                cursor + title_size, entry.member_count());
+        cursor += title_size + member_bytes;
+    }
+    return {};
+}
+
+/// validate_file_structure's view of the annotation groups. validate_deep has
+/// already vouched for every block it reaches, so a slot that does not validate
+/// here is an absent one.
+std::string annotation_groups_error(const b::METADATA& __metadata) {
+    const auto annotations = __metadata.annotations_offset();
+    if (!annotations) return {};
+    const auto sizes = annotations.group_sizes_offset();
+    const auto blob  = annotations.group_bytes_offset();
+    if (!sizes || !blob) return {};
+    return walk_annotation_groups(sizes, blob, [](std::string_view, Size, std::uint32_t) {});
 }
 
 }  // namespace
@@ -497,19 +465,22 @@ Result IFE_EXPORT validate_file_structure(const FileAccessInfo& __info) noexcept
     // streams, which have no header, and the structures nested inside
     // attribute values.
     try {
-        if (Result tiles = check_tile_entries(header, __info.file_size);
-            tiles.flag != IRIS_SUCCESS)
-            return tiles;
+        const std::string tiles = walk_tile_entries(header, __info.file_size,
+                                                    [](std::uint32_t, std::uint64_t, Offset, std::uint32_t) {});
+        if (!tiles.empty()) return {IRIS_FAILURE, tiles};
 
         const auto metadata = header.metadata_offset();
         if (!metadata) return to_result(metadata.validate());
+        if (const std::string groups = annotation_groups_error(metadata); !groups.empty())
+            return {IRIS_FAILURE, groups};
         if (const auto attributes = metadata.attributes_offset()) {
             b::VisitPath   path;
             VisitedBlocks  seen;
             return to_result(validate_nested_attributes(attributes, path, seen, 0));
         }
     } catch (const std::bad_alloc&) {
-        return {IRIS_FAILURE, "validation failed (out of memory walking tiles or nested attributes)"};
+        return {IRIS_FAILURE, "validation failed (out of memory walking tiles, annotation "
+                              "groups or nested attributes)"};
     }
     return to_result(b::Status{});
 }
@@ -567,41 +538,17 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
     const auto offsets = table.tile_offsets_offset();
     if (!offsets) fail(offsets.validate());
 
-    uint64_t total_tiles = 0;
-    for (const auto& layer : abstraction.tileTable.extent.layers)
-        total_tiles += static_cast<uint64_t>(layer.xTiles) * layer.yTiles;
-    if (total_tiles != offsets.count())
-        throw std::runtime_error(
-            "Tile count from the layer extents (" + std::to_string(total_tiles) +
-            ") does not match the tile offset array (" + std::to_string(offsets.count()) + ")");
-
-    abstraction.tileTable.layers.resize(abstraction.tileTable.extent.layers.size());
-    const Size header_end = header.extent();
-    uint32_t tile = 0;
-    for (size_t li = 0; li < abstraction.tileTable.extent.layers.size(); ++li) {
-        const auto& extent = abstraction.tileTable.extent.layers[li];
-        auto&       layer  = abstraction.tileTable.layers[li];
-        layer.resize(static_cast<size_t>(extent.xTiles) * extent.yTiles);
-        for (size_t ti = 0; ti < layer.size(); ++ti) {
-            const auto stored = offsets.entry(tile++);
-            // Checked before it is handed out: the abstraction's promise is that
-            // every offset in it can be read through.
-            const char* why = tile_entry_error(stored.offset(), stored.size_field(),
-                                               __info.file_size, header_end);
-            // A Z-stacked layer frames every stream (the spec, Focal Planes).
-            if (!why && abstraction.tileTable.planes[li] > 1 && stored.offset() != k::NULL_TILE)
-                why = tile_frame_error(__info.file_ptr, __info.file_size, header.__version,
-                                       stored.offset(), tile - 1,
-                                       abstraction.tileTable.planes[li]);
-            if (why)
-                throw std::runtime_error(
-                    "Layer " + std::to_string(li) + ", tile " + std::to_string(ti) +
-                    " (OFFSET " + std::to_string(stored.offset()) + ", SIZE " +
-                    std::to_string(stored.size_field()) + ") " + why);
-            layer[ti].offset = stored.offset();
-            layer[ti].size   = stored.size_field();
-        }
-    }
+    // Checked before it is handed out: the abstraction's promise is that every
+    // offset in it can be read through. Entries are visited only after the
+    // tile count is known to match the array, so the vectors grow to what the
+    // file actually holds.
+    auto& layers = abstraction.tileTable.layers;
+    layers.resize(abstraction.tileTable.extent.layers.size());
+    const std::string tiles = walk_tile_entries(header, __info.file_size,
+        [&](std::uint32_t __layer, std::uint64_t, Offset __offset, std::uint32_t __size) {
+            layers[__layer].push_back({.offset = __offset, .size = __size});
+        });
+    if (!tiles.empty()) throw std::runtime_error(tiles);
 
     // ---- metadata, and the optional blocks it points at ------------------ //
     const auto metadata = header.metadata_offset();
@@ -712,33 +659,17 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
             meta.annotations.insert(identifier);
         }
 
-        // Group titles are a byte run sliced by a parallel size array, as the
-        // attributes are; each group's member identifiers follow its title.
         const auto sizes = annotations.group_sizes_offset();
         const auto blob  = annotations.group_bytes_offset();
         if (present(sizes) && present(blob)) {
-            const ::Iris::File::ByteSpan titles = blob.bytes();
-            Size cursor = 0;
-            for (uint32_t i = 0; i < sizes.count(); ++i) {
-                const auto entry      = sizes.entry(i);
-                const Size title_size = entry.title_size();
-                const Size members    = entry.member_count();
-                if (cursor + title_size + members * 3 > titles.size)
-                    throw std::runtime_error(
-                        "Annotation group " + std::to_string(i) +
-                        " extends past the annotation group byte array");
-
-                std::string title(reinterpret_cast<const char*>(titles.data + cursor), title_size);
-                cursor += title_size;
-
-                Abstraction::AnnotationGroup group;
-                group.offset = blob.__offset + b::ANNOTATION_GROUP_BYTES::header_size + cursor;
-                group.number = static_cast<uint32_t>(members);
-                cursor += members * 3;   // 24-bit identifiers
-
-                meta.annotationGroups.insert(title);
-                abstraction.annotations.groups[std::move(title)] = group;
-            }
+            const std::string groups = walk_annotation_groups(sizes, blob,
+                [&](std::string_view __title, Size __at, std::uint32_t __members) {
+                    meta.annotationGroups.emplace(__title);
+                    abstraction.annotations.groups[std::string(__title)] = {
+                        .offset = blob.__offset + b::ANNOTATION_GROUP_BYTES::header_size + __at,
+                        .number = __members};
+                });
+            if (!groups.empty()) throw std::runtime_error(groups);
         }
     }
 
@@ -749,43 +680,26 @@ Abstraction::File IFE_EXPORT abstract_file_structure(const FileAccessInfo& __inf
 
 namespace {
 
-/// Record one attributes structure and every structure nested inside it.
-///
-/// The nested blocks have to appear in the map or the map is unsafe for what
-/// it exists for: a caller looks up what lies after a write location so it
-/// does not overwrite live data, and a block the map never mentions is a block
-/// it will happily let you land on.
-void note_attributes(Abstraction::FileMap& __map, const b::ATTRIBUTES& __attrs,
-                     VisitedBlocks& __seen, Size __depth) {
-    if (__depth > MAX_ATTRIBUTE_DEPTH) return;
-    // The map is built over files that may already be damaged, so this is the
-    // one walk with no validated graph behind it: a loop, or a value naming
-    // one structure many times, has nothing but this to stop it. note() keys
-    // by offset and is idempotent, so skipping a repeat changes no entry --
-    // only how long the map takes to build.
-    if (!__seen.insert(__attrs.__offset).second) return;
-    note(__map, Abstraction::MAP_ENTRY_ATTRIBUTES, __attrs.__offset,
-         __attrs.extent());
+/// A block the map walk has still to record: where a slot said it is, and
+/// the type that slot declares.
+struct Visit {
+    Offset           at;
+    k::RecoveryCodes tag;
+    bool             required;   ///< one of the header's slots
+};
 
-    const auto sizes = __attrs.sizes_offset();
-    const auto bytes = __attrs.bytes_offset();
-    if (sizes.in_bounds()) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_SIZES, sizes.__offset,
-                    sizes.extent());
-    if (bytes.in_bounds()) note(__map, Abstraction::MAP_ENTRY_ATTRIBUTE_BYTES, bytes.__offset,
-                    bytes.extent());
-
-    std::vector<AttributeSlice> slices;
-    // Best-effort: the map is built over files that may already be damaged, so
-    // an unreadable value stops the descent rather than failing the map.
-    if (slice_attributes(__attrs, slices) != SliceError::NONE) return;
-    for (const auto& slice : slices) {
-        if (slice.kind != k::AttributeKinds::ATTRIBUTE_NESTED) continue;
-        for (Size i = 0, n = slice.item_count(); i < n; ++i) {
-            const b::ATTRIBUTES child{__attrs.__base, slice.item(i), __attrs.__size,
-                                      __attrs.__version};
-            if (child.in_bounds()) note_attributes(__map, child, __seen, __depth + 1);
-        }
-    }
+/// Queue the children `__slots` name, in reverse, so they come off the stack
+/// in slot order: each subtree is recorded before its next sibling. Tile
+/// entries are recorded here. The tile data is unframed -- it carries no block
+/// header, so it can only be located through the entries that address it.
+void queue_children(Abstraction::FileMap& __map, const std::vector<Recovery::Slot>& __slots,
+                    std::vector<Visit>& __todo) {
+    for (const Recovery::Slot& s : __slots)
+        if (s.repr == Recovery::SlotRepr::TileEntry && s.stored != k::NULL_TILE && s.claim != 0)
+            note(__map, Abstraction::MAP_ENTRY_TILE_PIXEL_DATA, s.stored, s.claim);
+    for (auto it = __slots.rbegin(); it != __slots.rend(); ++it)
+        if (it->repr != Recovery::SlotRepr::TileEntry)
+            __todo.push_back({it->stored, it->expect, it->parent == 0});
 }
 
 }  // namespace
@@ -794,83 +708,47 @@ Abstraction::FileMap IFE_EXPORT generate_file_map(const FileAccessInfo& __info) 
     using namespace Abstraction;
     FileMap map;
     map.file_size = __info.file_size;
-    // Every handle test here is in_bounds(), not the bool. The map records
-    // what the offset graph CLAIMS, over files that may already be damaged,
-    // so a block whose witnesses fail still belongs in it -- the bool would
-    // drop it, and the map exists to warn a writer off live bytes.
-
+    // Every test here is in_bounds(), not the bool. The map records what the
+    // offset graph CLAIMS, over files that may already be damaged, so a block
+    // whose witnesses fail still belongs in it -- the bool would drop it, and
+    // the map exists to warn a writer off live bytes.
     const b::FILE_HEADER header = versioned_root(__info.file_ptr, __info.file_size);
     if (!header.in_bounds()) fail(header.validate());
     note(map, MAP_ENTRY_FILE_HEADER, header.__offset, header.extent());
 
-    const auto table = header.tile_table_offset();
-    if (!table.in_bounds()) fail(table.validate());
-    note(map, MAP_ENTRY_TILE_TABLE, table.__offset, table.extent());
-
-    if (const auto cipher = table.cipher_offset(); cipher.in_bounds())
-        note(map, MAP_ENTRY_CIPHER, cipher.__offset, cipher.extent());
-
-    if (const auto extents = table.layer_extents_offset(); extents.in_bounds())
-        note(map, MAP_ENTRY_LAYER_EXTENTS, extents.__offset, extents.extent());
-
-    if (const auto offsets = table.tile_offsets_offset(); offsets.in_bounds()) {
-        note(map, MAP_ENTRY_TILE_OFFSETS, offsets.__offset, offsets.extent());
-        // The tile data itself is unframed -- it carries no block header, so
-        // it can only be located through the entries that address it.
-        for (uint32_t i = 0, n = readable_entries(offsets); i < n; ++i) {
-            const auto entry = offsets.entry(i);
-            if (entry.offset() != k::NULL_TILE && entry.size_field() != 0)
-                note(map, MAP_ENTRY_TILE_PIXEL_DATA, entry.offset(), entry.size_field());
-        }
+    // One walk over the slots each block holds: slots_of(), which the recovery
+    // census reads with too. It has no validated graph behind it, so the
+    // (offset, type) seen set is what stops a loop, or a nested value naming
+    // one structure many times, while a damaged slot that names a block under
+    // another type still has that type's subtree walked.
+    std::set<std::pair<Offset, k::RecoveryCodes>> seen;
+    std::vector<Recovery::Slot> slots;
+    std::vector<Visit>          todo;
+    slots_of(__info.file_ptr, __info.file_size, header.__version, 0,
+             k::RecoveryCodes::RECOVER_FILE_HEADER, slots);
+    queue_children(map, slots, todo);
+    while (!todo.empty()) {
+        const Visit v = todo.back();
+        todo.pop_back();
+        const std::optional<Size> extent = b::with_block(
+            v.tag, __info.file_ptr, v.at, __info.file_size, header.__version,
+            std::optional<Size>{}, [](const auto& __h) -> std::optional<Size> {
+                if (!__h.in_bounds()) return std::nullopt;
+                return __h.extent();
+            });
+        // The header's slots name the tile table and the metadata: a file
+        // without them is no slide to map.
+        if (!extent && v.required)
+            b::with_block(v.tag, __info.file_ptr, v.at, __info.file_size, header.__version, 0,
+                          [](const auto& __h) -> int { fail(__h.validate()); });
+        if (!extent) continue;
+        note(map, entry_for(v.tag), v.at, *extent);
+        if (!seen.emplace(v.at, v.tag).second) continue;
+        slots.clear();
+        slots_of(__info.file_ptr, __info.file_size, header.__version, v.at, v.tag, slots);
+        queue_children(map, slots, todo);
     }
-
-    const auto metadata = header.metadata_offset();
-    if (!metadata.in_bounds()) fail(metadata.validate());
-    note(map, MAP_ENTRY_METADATA, metadata.__offset, metadata.extent());
-
-    if (const auto attributes = metadata.attributes_offset(); attributes.in_bounds()) {
-        VisitedBlocks seen;
-        note_attributes(map, attributes, seen, 0);
-    }
-
-    if (const auto images = metadata.images_offset(); images.in_bounds()) {
-        note(map, MAP_ENTRY_IMAGES, images.__offset, images.extent());
-        for (uint32_t i = 0, n = readable_entries(images); i < n; ++i)
-            if (const auto bytes = images.entry(i).bytes_offset(); bytes.in_bounds())
-                note(map, MAP_ENTRY_IMAGE_BYTES, bytes.__offset,
-                     bytes.extent());
-    }
-
-    if (const auto profile = metadata.icc_color_offset(); profile.in_bounds())
-        note(map, MAP_ENTRY_ICC_PROFILE, profile.__offset, profile.extent());
-
-    if (const auto clinical = metadata.clinical_offset(); clinical.in_bounds())
-        note(map, MAP_ENTRY_CLINICAL_METADATA, clinical.__offset, clinical.extent());
-
-    if (const auto annotations = metadata.annotations_offset(); annotations.in_bounds()) {
-        note(map, MAP_ENTRY_ANNOTATIONS, annotations.__offset, annotations.extent());
-        for (uint32_t i = 0, n = readable_entries(annotations); i < n; ++i)
-            if (const auto bytes = annotations.entry(i).bytes_offset(); bytes.in_bounds())
-                note(map, MAP_ENTRY_ANNOTATION_BYTES, bytes.__offset, bytes.extent());
-        if (const auto sizes = annotations.group_sizes_offset(); sizes.in_bounds())
-            note(map, MAP_ENTRY_ANNOTATION_GROUP_SIZES, sizes.__offset, sizes.extent());
-        if (const auto blob = annotations.group_bytes_offset(); blob.in_bounds())
-            note(map, MAP_ENTRY_ANNOTATION_GROUP_BYTES, blob.__offset, blob.extent());
-    }
-
     return map;
-}
-
-// MARK: - Recovery
-
-// The scan-only census moved to Recovery::scan() (IFE_Recovery.cpp) when the
-// two-witness reconciliation landed; this entry point is kept as the thin
-// wrapper so the corpus harness and existing tests keep one call site.
-// Deliberately at IFE scope, not in an anonymous namespace: the header
-// declares it externally, and internal linkage here would leave every other
-// translation unit with an undefined reference.
-Abstraction::FileMap IFE_EXPORT recover_file_structure(const FileAccessInfo& __info) {
-    return Recovery{__info}.scan();
 }
 
 }  // namespace Iris::File

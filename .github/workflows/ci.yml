@@ -8,8 +8,11 @@ name: CI
 #   tests       the generated layer and the primitives behave -- including the
 #               v1 oracle, the only test that reads bytes the shipped encoder
 #               wrote rather than another description of the format. Run on
-#               GCC, Clang, AppleClang and MSVC, because an include that one
-#               toolchain resolves transitively is a bug on the others.
+#               GCC, Clang, AppleClang, MSVC, and under the Xcode generator,
+#               because an include that one toolchain resolves transitively is
+#               a bug on the others, and because the Xcode generator names the
+#               compiler the raw toolchain `clang++`, an identity no other leg
+#               presents (see the matrix note).
 #   bazel       the Bazel build and its twelve tests, on the default
 #               toolchain AND MSVC -- the only job that exercises the
 #               /std:c++20 select and the IRIS_EXPORT= dllimport
@@ -71,6 +74,14 @@ jobs:
           - {os: ubuntu-latest, compiler: GCC}
           - {os: ubuntu-latest, compiler: Clang, cxx: clang++}
           - {os: macos-latest, compiler: AppleClang}
+          # AppleClang via Makefiles names the driver `c++`; the Xcode generator
+          # names it the raw toolchain binary `.../usr/bin/clang++`. That is a
+          # different identity to anything above: it is what a tool that
+          # classifies the compiler by name sees, and the only config whose
+          # driver is a toolchain binary with no SDK default. Both facts bit
+          # the README gate (tests/readme/readme_compiles.py), and neither
+          # AppleClang leg here nor any Linux leg can reproduce them.
+          - {os: macos-latest, compiler: Xcode, generator: Xcode}
           - {os: windows-latest, compiler: MSVC}
     steps:
       - uses: actions/checkout@v7
@@ -93,6 +104,7 @@ jobs:
         run: >
           cmake -B build -DIFE_BUILD_TESTS=ON -DIFE_RUN_GENERATOR=ON
           -DCMAKE_BUILD_TYPE=Release
+          ${{ matrix.generator && format('-G {0}', matrix.generator) || '' }}
           ${{ matrix.cxx && format('-DCMAKE_CXX_COMPILER={0}', matrix.cxx) || '' }}
       - run: cmake --build build --config Release -j
       - run: ctest --test-dir build -C Release --output-on-failure

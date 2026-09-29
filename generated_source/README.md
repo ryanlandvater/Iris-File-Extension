@@ -57,7 +57,7 @@ a `u24` load beats calling it across a library boundary — and it is *generated
 so it must stay free to change whenever the schema does. An exported symbol is
 one that cannot. The stable, exported API is the semantic layer:
 `Iris::File::validate_file_structure`, `abstract_file_structure`,
-`generate_file_map`, `recover_file_structure`, and the `Abstraction::` structs.
+`generate_file_map`, and the `Abstraction::` structs.
 
 ## Contract
 

@@ -10,15 +10,16 @@
  *                 (`is_iris_codec_file`, `validate_file_structure`,
  *                 `abstract_file_structure`) and the `Abstraction::*` read
  *                 types. Nothing below this line is needed to open a slide.
- *   2. ADVANCED — this header. Recovering or modifying a file: the file map
- *                 (`FileMap`, `FileMapEntry`, `MapEntryType`), the gap census,
- *                 the per-reference verdicts (`BlockRef`, `BlockVerdict`,
- *                 `RepairClass`), and the two entry points that produce them
- *                 (`generate_file_map`, `recover_file_structure`). The public
- *                 header's own documentation already says generate_file_map
- *                 "is not a cheap method and does not need to be routinely
- *                 done; only when recovering or modifying a file" — this
- *                 header is where that sentence becomes structural.
+ *   2. ADVANCED — this header. Modifying a file: the file map (`FileMap`,
+ *                 `FileMapEntry`, `MapEntryType`), the gap census, and the
+ *                 entry point that produces it (`generate_file_map`). The
+ *                 public header's own documentation already says
+ *                 generate_file_map "is not a cheap method and does not need
+ *                 to be routinely done; only when recovering or modifying a
+ *                 file" — this header is where that sentence becomes
+ *                 structural. The recovery engine is being rebuilt against
+ *                 FastFHIR's census design; its types and entry point were
+ *                 removed 2026-09-28.
  *   3. INTERNAL — `IFE_Primitives.hpp`, `IFE_Bytes.hpp`, and generated_source/.
  *                 Block layout and byte arithmetic. Not part of the consumer
  *                 surface; reached through the generated handles.
@@ -43,6 +44,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <vector>
 
 #include "IrisFileExtension.hpp"
@@ -90,7 +92,11 @@ enum class IFE_EXPORT GapClass : uint8_t {
 struct IFE_EXPORT Gap {
     Offset   start  = ::Iris::File::constants::NULL_OFFSET;
     Size     length = 0;
-    GapClass class_ = GapClass::Hole;
+    /// The tag of the entry the run trails (FastFHIR's Gap::after):
+    /// RECOVER_UNDEFINED after a tile stream or frame, or at the file's start.
+    ::Iris::File::constants::RecoveryCodes after = ::Iris::File::constants::RecoveryCodes::RECOVER_UNDEFINED;
+    GapClass    class_ = GapClass::Hole;
+    const char* why    = "";
 };
 
 /**
@@ -147,122 +153,40 @@ struct IFE_EXPORT ProducerFailure {
     const char* why = nullptr;  ///< invariant-style one-liner; never null
 };
 
+/// One field of a block that names a child block: FastFHIR's FF_FieldInfo,
+/// reference fields only. reference_fields_view() (generated from the spec's
+/// `points_to`, in IFE_Map.hpp) lists them per block type. Two references are
+/// not declared that way and are read by hand: a tile entry's u40 OFFSET (a
+/// headerless stream) and a nested attribute value (u64 offsets inside
+/// ATTRIBUTE_BYTES, sliced by ATTRIBUTE_SIZES).
+struct IFE_EXPORT FieldInfo {
+    const char*   name         = nullptr;
+    /// From the block's start. An entry field (`in_entry`) names entry 0's
+    /// copy; entry i's is i × STRIDE further on, STRIDE read from the array.
+    std::uint16_t field_offset = 0;
+    /// The tag the child must carry: the witness that cannot be damaged,
+    /// because it is compiled in rather than read from the file.
+    ::Iris::File::constants::RecoveryCodes child_recovery =
+        ::Iris::File::constants::RecoveryCodes::RECOVER_UNDEFINED;
+    bool          nullable     = false;  ///< NULL_OFFSET is a legal value
+    bool          in_entry     = false;  ///< one copy per array entry
+    /// The version that added the field (compose_version), or 0 for a 1.0
+    /// field, which every file has: gated exactly as the generated accessors are.
+    std::uint32_t since        = 0;
+};
+
 struct IFE_EXPORT FileMap : public std::map<Offset, FileMapEntry> {
     Size file_size = 0;
-    /// Runs of bytes no entry claims, populated by Recovery::scan() (RC-2.3).
-    /// A non-empty vector here means the file has holes, skew, or trailing
-    /// slack — the caller reads `class_` to tell damage from benign runs.
+    /// Runs of bytes no entry claims (RC-2.3). A non-empty vector here means
+    /// the file has holes, skew, or trailing slack — the caller reads `class_`
+    /// to tell damage from benign runs. Filled by Recovery::scan();
+    /// generate_file_map walks the offset graph only and leaves it EMPTY, so
+    /// on its map empty does not mean "no holes".
     std::vector<Gap> gaps;
     /// The census's own audit (RC-6): self-consistent offsets whose recovery
     /// tag is not a known type. The entry is NOT recorded — an unknown type
-    /// has no extent to tile with — but the fact is never dropped. recover()
-    /// merges these into the report's failure list.
-    std::vector<ProducerFailure> failures;
-};
-
-/// One parent→child block reference, with both wire witnesses and the
-/// compiled expectation (FastFHIR BlockRef, P0-3). The atom recovery counts.
-struct IFE_EXPORT BlockRef {
-    Offset       parent    = ::Iris::File::constants::NULL_OFFSET; ///< 1a: the block owning the slot
-    Size         slot      = 0;               ///< 1a: byte offset of the slot within parent
-    MapEntryType expected  = MAP_ENTRY_UNDEFINED;  ///< 1c: what the slot must point at — compiled in
-    Offset       target    = ::Iris::File::constants::NULL_OFFSET;  ///< 1b: the offset stored in the slot
-    Offset       validation = ::Iris::File::constants::NULL_OFFSET; ///< 2a: VALIDATION read at target
-    /// 2b: the RECOVERY tag read at target. For a TILE_PIXEL_DATA edge this
-    /// carries no tag (streams are unframed); the frame's TILE_INDEX, or
-    /// RECOVER_UNDEFINED when no frame precedes the stream.
-    ::Iris::File::constants::RecoveryCodes recovery = ::Iris::File::constants::RecoveryCodes::RECOVER_UNDEFINED;
-    /// The claimed extent of the child, from the parent's own bytes — for a
-    /// TILE_PIXEL_DATA edge, the entry's SIZE field (the stream's only extent
-    /// witness). Zero when the parent carries no size claim. The tile
-    /// reconciliation ranks with it: a candidate whose claimed run would not
-    /// tile the arena (overlap or gap) is not the child (RC-3.4).
-    Size         extent    = 0;
-};
-
-/// How a damaged reference was repaired, or why it was not (RC-1).
-enum class IFE_EXPORT RepairClass : uint8_t {
-    Intact = 0,        ///< both witnesses agreed on the wire — nothing to repair
-    Corroborated,      ///< parent slot corrupt; a unique matching orphan names the child
-    TagRepaired,       ///< child RECOVERY rewritten from the parent's expectation
-    PositionRepaired,  ///< child VALIDATION recomputed from the parent-named address
-    ExtentDerived,     ///< array COUNT/STRIDE corrupt; extent recomputed
-    Ambiguous,         ///< ≥2 live readings at equal cost — reported, never guessed
-    Unrecovered,       ///< no candidate within the flip budget
-    /// Both witnesses gone and no orphan within budget, but a HOLE the tiling
-    /// located sits where the child was (RC-2.4). The repair restores the
-    /// parent's pointer, NOT the child: the bytes at that address are the
-    /// destroyed ones, and a reader following the repaired slot will fail
-    /// validate() there. Strictly weaker evidence than Corroborated — a
-    /// surviving block says "I am here", a hole says only "something of this
-    /// size was here" — and counted apart for that reason.
-    HoleCorroborated,
-    /// The FILE_HEADER itself was the damaged half. The root is the one
-    /// structure with no wire witness AND no VALIDATION, but its shape is
-    /// fully known before it is read: MAGIC and RECOVERY are constants the
-    /// format defines, the extension version must be one this reader knows,
-    /// and the FILE_SIZE field must equal the mapping's size. Those
-    /// self-constraints are the witness — the header is recovered by virtue
-    /// of being a header, and a repair writes a known constant, never a
-    /// candidate (strictly stronger evidence than either ranked hypothesis).
-    RootRepaired,
-};
-
-/// One block reference plus its verdict.
-struct IFE_EXPORT BlockVerdict {
-    BlockRef            block;
-    RepairClass         class_    = RepairClass::Unrecovered;
-    std::uint32_t       bit_cost  = 0;   ///< Hamming cost of the repair, 0 = intact
-    std::vector<Offset> candidates;      ///< populated for Ambiguous
-    /// The offset apply() writes: for Corroborated the chosen child to store
-    /// into the parent slot; for ExtentDerived the recomputed array extent.
-    /// NULL_OFFSET when the repair writes nothing.
-    Offset              repaired  = ::Iris::File::constants::NULL_OFFSET;
-    /// TagRepaired only (RC-8 / FastFHIR REC-22.2): the rewrite was decided by
-    /// COHERENCE, not cost — the child's own slots read coherently under the
-    /// slot's declared type (block_reads_as), so the wire tag is the damaged
-    /// half even though it is a plausible type. apply() may then rewrite a
-    /// plausible tag; without this flag it declines to, because a plausible
-    /// tag could be an innocent block's real type.
-    bool                tag_adjudicated = false;
-};
-
-/// The RC-1 reconciliation result. Counts are precomputed so a driver can
-/// report "blocks recovered / total blocks" without re-walking the vectors.
-struct IFE_EXPORT RecoveryReport {
-    std::size_t blocks_total       = 0;
-    std::size_t intact             = 0;
-    std::size_t corroborated       = 0;
-    std::size_t tag_repaired       = 0;
-    std::size_t position_repaired  = 0;
-    std::size_t extent_derived     = 0;
-    std::size_t ambiguous          = 0;
-    std::size_t unrecovered        = 0;
-    /// Repairs made against a hole rather than a surviving block (RC-2.4).
-    /// Counted apart from `corroborated` because the evidence is weaker: the
-    /// pointer is restored, the bytes it names are still destroyed.
-    std::size_t hole_corroborated  = 0;
-    /// FILE_HEADER fields rewritten from the format's own constants (MAGIC,
-    /// RECOVERY, extension version). Counted apart: no reference was broken,
-    /// but without the root no reference is reachable.
-    std::size_t root_repaired      = 0;
-
-    /// Every enumerated block reference, each with its verdict.
-    std::vector<BlockVerdict> blocks;
-
-    /// The gap census (RC-2): `holes` is the count that means damage — a
-    /// block whose VALIDATION AND parent reference are broken leaves no
-    /// witness at all. Version skew and trailing slack are counted apart
-    /// because neither is damage.
-    std::size_t      holes        = 0;
-    std::size_t      version_skew = 0;
-    std::vector<Gap> gaps;
-
-    /// The merged producer audit (RC-6 / FastFHIR REC-19.2): every damaged
-    /// reference the hierarchical walk, the orphan pass, the reapply, or the
-    /// scan census saw, typed. NOT empty on a damaged file whose verdicts all
-    /// came out Intact — that combination is how a silently-lost subtree used
-    /// to hide, and the whole-report tests assert the audit catches it.
+    /// has no extent to tile with — but the fact is never dropped. Filled by
+    /// Recovery::scan(), like `gaps`.
     std::vector<ProducerFailure> failures;
 };
 
@@ -284,38 +208,6 @@ struct IFE_EXPORT RecoveryReport {
 // ALWAYS CREATE A FILE MAP BEFORE PERFORMING AN UPDATE TO A FILE
 Abstraction::FileMap IFE_EXPORT generate_file_map       (const FileAccessInfo&);
 
-/**
- * @brief Recover the block structure of a damaged file by scanning for block signatures.
- *
- * New in the generated layer. Where generate_file_map walks the offset graph — and therefore
- * finds nothing below a corrupted pointer — this ignores the graph entirely and scans for the
- * two signatures a block can carry.
- *
- * Most blocks carry a u64 equal to their own offset followed by a u16 in the recovery-tag set;
- * the 0x55 high byte those tags share is what keeps that scan's false-positive rate negligible.
- * A tile frame carries no tag at all, and is instead identified by a *forty*-bit value equal to
- * its own position, which nothing else in the format writes. Frames are reported as
- * MAP_ENTRY_TILE_FRAME alongside the MAP_ENTRY_TILE_PIXEL_DATA stream each one describes.
- *
- * A frame supplies the part of a tile offsets entry that reading the slide cannot: its global
- * tile index. Position cannot supply it, because streams may be written in any order. The
- * stream's *length* is not in the frame and is not reported — that is a question its codec
- * answers, and this layer knows nothing about codecs. FileMapEntry carries no index field, so as
- * with every other type a caller builds the handle and asks it:
- *
- * ```cpp
- * case MAP_ENTRY_TILE_FRAME: {
- *     const auto stream_at = entry.offset + entry.size;   // the frame ends where the stream starts
- *     Iris::File::blocks::TILE_PIXEL_DATA frame {base, stream_at, file_size, version};
- *     if (frame.validate()) rebuilt[*frame.tile_index()] = stream_at;
- * }
- * ```
- *
- * The FILE_HEADER is not recoverable this way and is not reported: it is the one block with no
- * VALIDATION field, because it lives at byte 0 where that field could only ever store zero.
- */
-Abstraction::FileMap IFE_EXPORT recover_file_structure  (const FileAccessInfo&);
-
 }  // namespace Iris::File
 
 // The generated wire-tag → map-entry vocabulary (spec-derived, emitted by
@@ -334,13 +226,10 @@ Abstraction::FileMap IFE_EXPORT recover_file_structure  (const FileAccessInfo&);
 using IFE_MapEntryType        = Iris::File::Abstraction::MapEntryType;
 using IFE_FileMapEntry        = Iris::File::Abstraction::FileMapEntry;
 using IFE_FileMap             = Iris::File::Abstraction::FileMap;
+using IFE_FieldInfo           = Iris::File::Abstraction::FieldInfo;
 using IFE_Gap                 = Iris::File::Abstraction::Gap;
 using IFE_GapClass            = Iris::File::Abstraction::GapClass;
 using IFE_ProducerFailure     = Iris::File::Abstraction::ProducerFailure;
 using IFE_ProducerFailureKind = Iris::File::Abstraction::ProducerFailureKind;
-using IFE_BlockRef            = Iris::File::Abstraction::BlockRef;
-using IFE_BlockVerdict        = Iris::File::Abstraction::BlockVerdict;
-using IFE_RepairClass         = Iris::File::Abstraction::RepairClass;
-using IFE_RecoveryReport      = Iris::File::Abstraction::RecoveryReport;
 
 #endif  // IFE_Advanced_hpp

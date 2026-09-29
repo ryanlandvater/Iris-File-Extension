@@ -110,8 +110,7 @@ class Builder_t
     // ---- the tile table (set once by set_tile_table) ---------------------- //
     std::mutex                     m_table_mutex;  ///< serialises set_tile_table
     std::atomic<bool>              m_table_ready{false};
-    BuilderTileTableInfo           m_table;
-    std::vector<std::uint16_t>     m_planes;       ///< per layer; 0 = single plane
+    BuilderTileTableInfo           m_table;        ///< `planes` normalised to one per layer
     std::vector<std::uint64_t>     m_layer_first;  ///< global index of each layer's tile 0, + total
     std::unique_ptr<TileSlot[]>    m_slots;        ///< one per global tile index
 
@@ -120,8 +119,9 @@ class Builder_t
     std::vector<blocks::ImageEntry>     m_images;
     std::set<std::string>               m_image_labels;
 
-    /// The slot for (layer, tile), its global index, after the index checks.
-    TileSlot& slot(std::uint32_t layer, std::uint32_t tile, std::uint64_t& global);
+    /// The global tile index of (layer, tile); throws for a position the
+    /// table does not have, or before set_tile_table.
+    std::uint64_t global_index(std::uint32_t layer, std::uint32_t tile) const;
     void      ensure_open(const char* what) const;
 
 public:

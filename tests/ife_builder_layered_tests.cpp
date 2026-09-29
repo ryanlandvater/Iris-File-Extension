@@ -19,7 +19,6 @@
  * Self-contained (no framework). Non-zero exit on failure.
  */
 #include "IFE_Builder.hpp"
-#include "IFE_Recovery.hpp"
 #include "IrisFileExtension.hpp"
 
 #include <algorithm>
@@ -189,7 +188,7 @@ int main() {
         IFE_CHECK(file.metadata.micronsPerPixel == 0.25f);
         IFE_CHECK(file.metadata.magnification == 40.f);
 
-        // ---- (b) frames at the anchor, and recovery finds nothing wrong --- //
+        // ---- (b) frames at the anchor ------------------------------------- //
         for (uint32_t g = 0; g < 5; ++g) {
             const auto& entry = file.tileTable.layers[COORDS[g].layer][COORDS[g].tile];
             const b::TILE_PIXEL_DATA frame{at.file_ptr, entry.offset, at.file_size,
@@ -197,9 +196,6 @@ int main() {
             IFE_CHECK(static_cast<bool>(frame.validate()));
             IFE_CHECK(frame.tile_index().value_or(~0u) == g);
         }
-        const auto report = Recovery(at).recover();
-        IFE_CHECK(report.blocks_total > 0);
-        IFE_CHECK(report.intact == report.blocks_total);
     }
 
     // ---- (c) NULL_TILE: a legitimate "no tile here" ------------------------ //

@@ -235,7 +235,11 @@ def ife_tests(
         copts = copts,
         size = "small",
         deps = [ife, "@rules_cc//cc/runfiles"],
-        data = ["//tests/corpus:v1_0_witness.test_slide"],
+        data = [
+            "//tests/corpus:v1_0_witness.test_slide",
+            "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:cipher_iris.test_slide",
+        ],
         # Bazel cannot pass a directory, and Windows tests have no runfiles
         # tree (manifest-only mode) — so pass the manifest-style path and
         # resolve it through the runfiles library in ife_corpus_dir().
@@ -253,7 +257,7 @@ def ife_tests(
         deps = [ife],
     )
 
-    # The ADVANCED tier (IFE_Advanced.hpp): the recovery / modification API.
+    # The ADVANCED tier (IFE_Advanced.hpp): the file map and generate_file_map.
     cc_test(
         name = "ife_advanced_api_tests",
         srcs = ["tests/ife_advanced_api_tests.cpp"],
@@ -297,35 +301,14 @@ def ife_tests(
         args = ["_main/tests/corpus/v1_1_witness.test_slide"],
     )
 
-    # RC-3: the two-witness reconciliation against damaged bytes — clean
-    # baselines, one witness per repair class, both-witness orphaning per
-    # shape, the frame-survival tile rebuild, and the never-silent gates.
-    # Loads three corpus witnesses by name from the runfiles directory.
-    cc_test(
-        name = "ife_recovery_tests",
-        srcs = [
-            "tests/ife_recovery_tests.cpp",
-            "tests/ife_corpus_path.hpp",
-        ],
-        copts = copts,
-        size = "small",
-        deps = [ife, "@rules_cc//cc/runfiles"],
-        data = [
-            "//tests/corpus:v1_0_witness.test_slide",
-            "//tests/corpus:v1_1_witness.test_slide",
-            "//tests/corpus:cipher_iris.test_slide",
-        ],
-        local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/cipher_iris.test_slide"],
-    )
-
-    # The exhaustive counterpart to ife_recovery_tests: every byte of every
-    # corpus witness damaged three ways. Meant to be run under a sanitizer,
-    # where it is the gate a hand-written suite cannot be.
+    # Every public read entry point over every single-site damage of every
+    # fixture (RB-1). Registered on both build systems: its value is under a
+    # sanitizer, where it is the gate a hand-written suite cannot be.
     cc_test(
         name = "ife_damage_sweep_tests",
         srcs = [
             "tests/ife_damage_sweep_tests.cpp",
+            "tests/ife_builder_fixture.hpp",
             "tests/ife_corpus_path.hpp",
         ],
         copts = copts,
@@ -340,14 +323,12 @@ def ife_tests(
         args = ["_main/tests/corpus/cipher_iris.test_slide"],
     )
 
-    # Bits flipped -> percent recovered: the FastFHIR-benchmark Test 5 curve,
-    # run as an assertion. Registered on BOTH build systems on purpose --
-    # FastFHIR shipped a recovery engine Bazel was not compiling at all, so a
-    # defect reachable only through one of them was invisible for a week.
+    # The recovery census (RB-3), tested as FastFHIR tests its own.
     cc_test(
-        name = "ife_recovery_bench_tests",
+        name = "ife_recovery_tests",
         srcs = [
-            "tests/ife_recovery_bench_tests.cpp",
+            "tests/ife_recovery_tests.cpp",
+            "tests/ife_builder_fixture.hpp",
             "tests/ife_corpus_path.hpp",
         ],
         copts = copts,
@@ -356,9 +337,10 @@ def ife_tests(
         data = [
             "//tests/corpus:v1_0_witness.test_slide",
             "//tests/corpus:v1_1_witness.test_slide",
+            "//tests/corpus:cipher_iris.test_slide",
         ],
         local_defines = ["IFE_BAZEL_RUNFILES"],
-        args = ["_main/tests/corpus/v1_0_witness.test_slide"],
+        args = ["_main/tests/corpus/cipher_iris.test_slide"],
     )
 
     # Lifetime (XP-4): the abstraction reads over a lens of the caller's

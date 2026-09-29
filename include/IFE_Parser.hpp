@@ -33,7 +33,7 @@
 #include <string>
 
 #include "IrisFileExtension.hpp"   // the Parser handle, FileAccessInfo, the read entry points
-#include "IFE_Advanced.hpp"        // the file-map / recovery surface (generate_file_map, ...)
+#include "IFE_Advanced.hpp"        // the file-map surface (generate_file_map, ...)
 
 namespace Iris::File {
 
@@ -98,15 +98,11 @@ public:
     [[nodiscard]] uint16_t                 tile_planes(uint32_t layer, uint32_t tile) const;
     [[nodiscard]] std::span<const BYTE>    image(const std::string& label) const;
 
-    // ---- the deeper (recovery / modification) surface --------------------- //
+    // ---- the deeper (modification) surface -------------------------------- //
 
-    /// The offset map of every block, for a caller about to modify or recover.
+    /// The offset map of every block, for a caller about to modify a file.
     [[nodiscard]] Abstraction::FileMap generate_file_map() const {
         return ::Iris::File::generate_file_map(m_info);
-    }
-    /// Recover the block structure of a damaged file by signature scan.
-    [[nodiscard]] Abstraction::FileMap recover_file_structure() const {
-        return ::Iris::File::recover_file_structure(m_info);
     }
 };
 

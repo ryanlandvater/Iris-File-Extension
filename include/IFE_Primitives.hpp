@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <vector>
 
 #include "IFE_Bytes.hpp"
 // The reader-policy helpers at the foot of this header construct the
@@ -54,6 +55,7 @@
 // internal header depends on the advanced tier's value types. The edge is
 // deliberate — the primitives layer already reaches the semantic layer above.
 #include "IFE_Advanced.hpp"
+#include "IFE_Recovery.hpp"   // Recovery::Slot, which slots_of() fills
 
 namespace Iris::File {
 namespace primitives {
@@ -310,6 +312,168 @@ inline const char* tile_frame_error(const BYTE* __base, Size __size, std::uint32
     if (frame.z_planes().value_or(0) > __layer_planes)
         return "has a tile frame claiming more planes than its layer holds";
     return nullptr;
+}
+
+// MARK: - Attribute slicing
+//
+// One attribute, as it sits on disk: a key, and a value that is either text or
+// a run of offsets to nested structures. The slicing lives here, once, because
+// the sizes array and the packed byte run have to agree exactly and a second
+// copy of that agreement is a second place for it to drift -- the same reason
+// the generated writer derives both from one payload.
+
+struct AttributeSlice {
+    const BYTE*       key        = nullptr;
+    Size              key_size   = 0;
+    const BYTE*       value      = nullptr;
+    Size              value_size = 0;
+    ::Iris::File::constants::AttributeKinds kind       = ::Iris::File::constants::AttributeKinds::ATTRIBUTE_STRING;
+
+    /// How many nested structures the value locates. Meaningful only when the
+    /// kind is nested; zero is a legal empty sequence.
+    [[nodiscard]] Size item_count() const noexcept {
+        return kind == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED
+             ? ::Iris::File::blocks::nested_count(value_size) : 0;
+    }
+    /// The offset of nested structure `i`: an ordinary absolute file offset.
+    [[nodiscard]] Offset item(Size __i) const noexcept {
+        return ::Iris::File::blocks::nested_offset(value, __i);
+    }
+};
+
+/// Why a slice failed. Three causes, reported apart rather than as one bool,
+/// because the diagnostic a caller prints is the whole value of noticing.
+enum class SliceError {
+    NONE,
+    UNREADABLE,       ///< the sizes or bytes block does not validate
+    OVERRUN,          ///< an attribute extends past the end of the byte array
+    NESTED_PARTIAL,   ///< a nested value is not a whole number of offsets
+};
+
+/// Cut one attributes structure into its slices.
+///
+/// Where the deserialization-side checks live. Both blocks can validate
+/// structurally and still disagree with each other, because neither block
+/// describes the other; this is where that is caught. `__at` receives the
+/// index of the offending entry, so a message can name it.
+inline SliceError slice_attributes(const ::Iris::File::blocks::ATTRIBUTES& __attrs,
+                            std::vector<AttributeSlice>& __slices,
+                            std::uint32_t* __at = nullptr) {
+    __slices.clear();
+    if (__at) *__at = 0;
+    const auto sizes = __attrs.sizes_offset();
+    const auto bytes = __attrs.bytes_offset();
+    if (!sizes || !bytes) return SliceError::UNREADABLE;
+
+    const ::Iris::File::ByteSpan blob = bytes.bytes();
+    Size cursor = 0;
+    for (uint32_t i = 0; i < sizes.count(); ++i) {
+        if (__at) *__at = i;
+        const auto entry = sizes.entry(i);
+        AttributeSlice slice;
+        slice.key_size   = entry.key_size();
+        slice.value_size = entry.value_size();
+        slice.kind       = entry.kind();
+
+        if (slice.key_size > blob.size - cursor) return SliceError::OVERRUN;
+        slice.key = blob.data + cursor;
+        cursor += slice.key_size;
+        if (slice.value_size > blob.size - cursor) return SliceError::OVERRUN;
+        slice.value = blob.data + cursor;
+        cursor += slice.value_size;
+
+        // A nested value is a whole number of offsets or it is malformed: the
+        // one rule about these bytes that the capped schema vocabulary cannot
+        // state, so it is stated in the specification prose and enforced here.
+        // Rejected outright rather than rounded down -- a partial offset is a
+        // corrupted file, and reading the whole ones would be inventing a
+        // structure the encoder never wrote.
+        if (slice.kind == ::Iris::File::constants::AttributeKinds::ATTRIBUTE_NESTED &&
+            !::Iris::File::blocks::nested_size_is_whole(slice.value_size))
+            return SliceError::NESTED_PARTIAL;
+
+        __slices.push_back(slice);
+    }
+    return SliceError::NONE;
+}
+
+// MARK: - Slots: the one reading of a block's references
+
+/// An array's layout: the stride between entries and how many there are. The
+/// stamp in the array's header, or what the recovery census derives from the
+/// bytes around it when the stamp is the damaged part.
+struct ArrayGeometry {
+    Size          stride = 0;
+    std::uint32_t count  = 0;
+    bool operator==(const ArrayGeometry&) const = default;
+};
+
+/// Every slot of the block at `__at`, read as `__tag`, appended to `__slots`.
+/// The one reading generate_file_map and the recovery census share (FastFHIR's
+/// slots_of): the block's reference fields from reference_fields_view(), one
+/// TileEntry per entry of a tile offsets array, and one Nested slot per offset
+/// in an attributes structure's nested values. An array's entries are laid out
+/// by `__geometry` when one is given, by its stamp otherwise, and read only as
+/// far as the file holds them -- never by the stamped COUNT alone. No word is
+/// read past the end of the file.
+inline void slots_of(const BYTE* __base, Size __size, std::uint32_t __version, Offset __at,
+                     constants::RecoveryCodes __tag, std::vector<Recovery::Slot>& __slots,
+                     const ArrayGeometry* __geometry = nullptr) {
+    namespace b = ::Iris::File::blocks;
+    constexpr Size WORD = sizeof(std::uint64_t);
+    const auto word_fits = [__size](Offset __seat) { return __seat <= __size && __size - __seat >= WORD; };
+
+    const auto fields = Abstraction::reference_fields_view(__tag);
+    b::with_block(__tag, __base, __at, __size, __version, 0, [&](const auto& __h) {
+        ArrayGeometry g;            // one per array; empty for a block
+        std::uint32_t readable = 0; // entries wholly inside the file
+        if constexpr (requires { __h.entries_begin(); __h.stride(); }) {
+            using Entry = std::remove_cvref_t<decltype(__h.entry(0))>;
+            g        = __geometry ? *__geometry : ArrayGeometry{__h.stride(), __h.count()};
+            readable = primitives::ArrayHeader::readable(__h.entries_begin(), __size, g.stride,
+                                                         g.count, Entry::entry_size);
+            // A tile entry names a headerless stream, so it is no `points_to`
+            // field: it is read here, from the same geometry.
+            if (__tag == constants::RecoveryCodes::RECOVER_TILE_OFFSETS)
+                for (std::uint32_t i = 0; i < readable; ++i) {
+                    const Entry entry{__base, __h.entries_begin() + Size{i} * g.stride, __size,
+                                      static_cast<std::uint16_t>(g.stride), __version};
+                    if constexpr (requires { entry.size_field(); })
+                        __slots.push_back({.parent = __at, .seat = entry.__offset,
+                                         .repr = Recovery::SlotRepr::TileEntry,
+                                         .stored = entry.offset(), .nullable = true, .index = i,
+                                         .claim = entry.size_field()});
+                }
+        }
+        for (const Abstraction::FieldInfo& f : fields) {
+            if (f.since > __version) continue;
+            const std::uint32_t n = f.in_entry ? readable : 1;
+            for (std::uint32_t i = 0; i < n; ++i) {
+                const Offset seat = __at + f.field_offset + Size{i} * g.stride;
+                if (!word_fits(seat)) break;
+                __slots.push_back({.parent = __at, .seat = seat, .repr = Recovery::SlotRepr::Absolute,
+                                 .stored = load<std::uint64_t>(__base + seat),
+                                 .expect = f.child_recovery, .nullable = f.nullable});
+            }
+        }
+        return 0;
+    });
+
+    // A nested attribute value is a run of offsets inside ATTRIBUTE_BYTES, whose
+    // slicing only ATTRIBUTE_SIZES knows. The word lives in the byte array, so
+    // that is the slot's parent.
+    if (__tag == constants::RecoveryCodes::RECOVER_ATTRIBUTES) {
+        const b::ATTRIBUTES attrs{__base, __at, __size, __version};
+        std::vector<AttributeSlice> slices;
+        if (slice_attributes(attrs, slices) != SliceError::NONE) return;
+        const Offset bytes = attrs.bytes_offset().__offset;
+        for (const AttributeSlice& slice : slices)
+            for (Size i = 0, n = slice.item_count(); i < n; ++i)
+                __slots.push_back({.parent = bytes,
+                                 .seat   = static_cast<Offset>(slice.value - __base) + i * b::NESTED_OFFSET_SIZE,
+                                 .repr   = Recovery::SlotRepr::Nested, .stored = slice.item(i),
+                                 .expect = constants::RecoveryCodes::RECOVER_ATTRIBUTES});
+    }
 }
 
 /// Record one block, keyed by offset. `size` is what the block occupies,

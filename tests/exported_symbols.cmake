@@ -39,7 +39,7 @@ endif()
 string(REPLACE "\n" ";" lines "${symbols}")
 set(leaked "")
 foreach(line IN LISTS lines)
-    # The PUBLIC API is namespace Iris::File (e.g. Iris::File::Recovery), so the
+    # The PUBLIC API is namespace Iris::File (e.g. Iris::File::Parser), so the
     # bare namespace does not mean "the generated layer" — matching it would
     # flag every exported symbol. The generated block layer lives in the THREE
     # sub-namespaces Iris::File::blocks / ::vtables / ::constants, whose mangled

@@ -28,7 +28,7 @@
     {
       "name": "asan",
       "displayName": "Ninja + ASan/UBSan (build-asan)",
-      "description": "The sanitizer build. Run the whole suite here after any change to the read path or recovery (CLAUDE.md): the damage sweep's faults are invisible without it.",
+      "description": "The sanitizer build. Run the whole suite here after any change to the read path (CLAUDE.md): a read past the end of a damaged file is invisible without it.",
       "inherits": "ninja",
       "binaryDir": "${sourceDir}/build-asan",
       "cacheVariables": {

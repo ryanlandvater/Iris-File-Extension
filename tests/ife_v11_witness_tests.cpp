@@ -37,26 +37,6 @@ using ::Iris::File::BYTE;
 namespace b = ::Iris::File::blocks;
 namespace k = ::Iris::File::constants;
 
-std::vector<BYTE> read_whole_file(const std::string& __path) {
-    std::FILE* in = std::fopen(__path.c_str(), "rb");
-    if (!in) {
-        std::fprintf(stderr, "ife_v11_witness_tests: could not open %s\n", __path.c_str());
-        return {};
-    }
-    std::vector<BYTE> bytes;
-    std::fseek(in, 0, SEEK_END);
-    const long n = std::ftell(in);
-    std::fseek(in, 0, SEEK_SET);
-    if (n > 0) bytes.resize(static_cast<std::size_t>(n));
-    const auto read = std::fread(bytes.data(), 1, bytes.size(), in);
-    std::fclose(in);
-    if (read != bytes.size()) {
-        std::fprintf(stderr, "ife_v11_witness_tests: short read from %s\n", __path.c_str());
-        return {};
-    }
-    return bytes;
-}
-
 // ---- the 1.1 witness: every 1.1 field present and correct ---------------- //
 void test_11_fields_present(const std::vector<BYTE>& f, const v11_fixture::Expected& e) {
     BYTE* p = const_cast<BYTE*>(f.data());
@@ -326,7 +306,7 @@ int main(int argc, const char* argv[]) {
     }
     test_11_fields_present(bytes11, expected);
 
-    const auto bytes10 = read_whole_file(corpus_dir + "/v1_0_witness.test_slide");
+    const auto bytes10 = ife_read_file(corpus_dir + "/v1_0_witness.test_slide");
     if (bytes10.empty()) {
         std::fprintf(stderr, "ife_v11_witness_tests: no 1.0 snapshot in %s\n",
                      corpus_dir.c_str());

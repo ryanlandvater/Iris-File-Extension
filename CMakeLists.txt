@@ -80,10 +80,59 @@ if (NOT DEFINED irisheaders_SOURCE_DIR)
     if (PROJECT_IS_TOP_LEVEL)
         set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.deps")
     endif()
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Iris-Headers source selection — fork-mirrored.
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # IFE and Iris-Headers move together: a change here can depend on an
+    # unreleased change there.  Landing that change in the Org's Iris-Headers
+    # would alter the dependency every downstream consumer (Iris-Codec, ...)
+    # already builds against.  So each fork fetches its OWN Iris-Headers — a
+    # checkout of ryanlandvater/Iris-File-Extension fetches
+    # ryanlandvater/Iris-Headers, a checkout of IrisDigitalPathology/... fetches
+    # the Org's — and an unreleased pair is proved in an insulated fork before
+    # either side reaches the Org.  The owner is taken from this repo's `origin`
+    # remote, so the two can never cross.  A tarball with no origin, or any
+    # unusual layout, overrides with -DIFE_IRIS_HEADERS_OWNER=<owner> or a full
+    # -DIFE_IRIS_HEADERS_REPOSITORY=<url>.
+    set(IFE_IRIS_HEADERS_OWNER "" CACHE STRING
+        "GitHub owner to fetch Iris-Headers from (empty: derive from origin)")
+    set(IFE_IRIS_HEADERS_GIT_TAG "main" CACHE STRING
+        "Iris-Headers ref to fetch")
+    set(IFE_IRIS_HEADERS_REPOSITORY "" CACHE STRING
+        "Full Iris-Headers git URL (empty: derive from the owner)")
+
+    if (NOT IFE_IRIS_HEADERS_REPOSITORY)
+        if (NOT IFE_IRIS_HEADERS_OWNER)
+            # GitHub Actions exports GITHUB_REPOSITORY=owner/repo, which is
+            # authoritative in CI (the runner's origin remote is unreliable).
+            if (DEFINED ENV{GITHUB_REPOSITORY})
+                string(REGEX REPLACE "/.*$" "" IFE_IRIS_HEADERS_OWNER
+                       "$ENV{GITHUB_REPOSITORY}")
+            else()
+                execute_process(
+                    COMMAND git remote get-url origin
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    OUTPUT_VARIABLE _ife_origin
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET RESULT_VARIABLE _ife_origin_rc)
+                if (_ife_origin_rc EQUAL 0 AND
+                    _ife_origin MATCHES "github\\.com[:/]([^/]+)/")
+                    set(IFE_IRIS_HEADERS_OWNER "${CMAKE_MATCH_1}")
+                else()
+                    set(IFE_IRIS_HEADERS_OWNER "IrisDigitalPathology")
+                endif()
+            endif()
+        endif()
+        set(IFE_IRIS_HEADERS_REPOSITORY
+            "https://github.com/${IFE_IRIS_HEADERS_OWNER}/Iris-Headers.git")
+    endif()
+
+    message(STATUS "IFE: Iris-Headers <- ${IFE_IRIS_HEADERS_REPOSITORY} "
+                   "@ ${IFE_IRIS_HEADERS_GIT_TAG}")
     FetchContent_Declare (
         IrisHeaders
-        GIT_REPOSITORY https://github.com/IrisDigitalPathology/Iris-Headers.git
-        GIT_TAG "main"
+        GIT_REPOSITORY "${IFE_IRIS_HEADERS_REPOSITORY}"
+        GIT_TAG "${IFE_IRIS_HEADERS_GIT_TAG}"
         GIT_SHALLOW ON
     )
     FetchContent_MakeAvailable(IrisHeaders)
@@ -95,13 +144,8 @@ endif()
 # -Wall and -Wextra are the new coverage. -Wswitch is named for a different
 # reason: it is already on by default in clang and gcc, so naming it is a
 # GUARD, not an addition -- it survives someone trimming -Wall, and it states
-# that a new RepairClass or GapClass member must fail at compile time rather
-# than be silently uncounted (FastFHIR's gap tally had exactly that bug).
-#
-# A flag only bites where the code gives it something to bite. The GapClass
-# tally in IFE_Recovery.cpp was an if/else-if chain, which -Wswitch cannot
-# see; it is a switch now. Verified by probe: appending an enumerator to
-# RepairClass warns at both switches, and to GapClass at the tally.
+# that a new enum member a switch must handle fails at compile time rather
+# than being silently uncounted (FastFHIR's gap tally had exactly that bug).
 #
 # Directory scope, deliberately placed AFTER FetchContent_MakeAvailable above:
 # add_compile_options only reaches targets created from here on, so the
@@ -128,6 +172,7 @@ set (
     ${IFE_INCLUDE_DIR}/IFE_Bytes.hpp
     ${IFE_INCLUDE_DIR}/IFE_Primitives.hpp
     ${IFE_INCLUDE_DIR}/IFE_Advanced.hpp
+    ${IFE_INCLUDE_DIR}/IFE_Recovery.hpp
     ${IFE_INCLUDE_DIR}/IFE_Builder.hpp
     ${IFE_INCLUDE_DIR}/IFE_Parser.hpp
     # The two Iris-Headers headers the public surface includes. IrisCore.hpp
@@ -162,7 +207,8 @@ set (
     IFE_Dependencies
     IrisHeaders
 )
-# Recovery::scan() runs the signature census on std::thread (RC-6 / REC-19.5);
+# The Builder is appended to from many std::threads (ife_builder_layered_tests
+# does exactly that), and the recovery census being rebuilt scans on them.
 # Threads::Threads is the portable way to get -pthread on glibc and the no-op
 # on macOS/Windows.
 find_package(Threads REQUIRED)

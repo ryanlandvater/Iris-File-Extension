@@ -138,10 +138,10 @@ credited with everything it declared.
 
 `TILE_FRAME` is worth a note: it carries no recovery tag and is addressed
 backward from the stream it precedes, so the offset graph has no edge leading
-to it and `generate_file_map` cannot see it at all. The harness unions in
-`recover_file_structure`, whose signature match does find it — which also means
-the corpus exercises the recovery path over real bytes, something nothing else
-did. See `CLAUDE.md` for why the frame grows backward.
+to it and `generate_file_map` cannot see it at all. Only the recovery census
+found it, and that engine is being rebuilt, so the manifest still declares
+TILE_FRAME and the gate skips it rather than fail on it. See `CLAUDE.md` for
+why the frame grows backward.
 
 **Optional values, not just optional blocks.** All eight nullable offsets are
 reached (five on `METADATA`, both `ANNOTATIONS` group offsets, and

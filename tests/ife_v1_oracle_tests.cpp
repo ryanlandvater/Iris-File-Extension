@@ -52,26 +52,6 @@ namespace k = ::Iris::File::constants;
 constexpr std::uint64_t EXTENTS_AT =
     b::FILE_HEADER::header_size_v1_0 + b::TILE_TABLE::header_size_v1_0;
 
-std::vector<BYTE> read_whole_file(const std::string& __path) {
-    std::FILE* in = std::fopen(__path.c_str(), "rb");
-    if (!in) {
-        std::fprintf(stderr, "ife_v1_oracle_tests: could not open %s\n", __path.c_str());
-        return {};
-    }
-    std::vector<BYTE> bytes;
-    std::fseek(in, 0, SEEK_END);
-    const long n = std::ftell(in);
-    std::fseek(in, 0, SEEK_SET);
-    if (n > 0) bytes.resize(static_cast<std::size_t>(n));
-    const auto read = std::fread(bytes.data(), 1, bytes.size(), in);
-    std::fclose(in);
-    if (read != bytes.size()) {
-        std::fprintf(stderr, "ife_v1_oracle_tests: short read from %s\n", __path.c_str());
-        return {};
-    }
-    return bytes;
-}
-
 // The complete snapshot, read through the generated layer. Every assertion
 // compares a generated read against a value v1 was asked to encode (the
 // fixture's expectations) -- never against v1's reader, which would just be
@@ -386,7 +366,7 @@ void test_v1_packed_widths_at_full_width(const std::string& __corpus_dir) {
     constexpr std::uint64_t OFFSET_MID = 0x000000FEDCBA9876ull;
     constexpr std::uint32_t SIZE_MID   = 0x00ABCDEFu;
 
-    const auto f = read_whole_file(__corpus_dir + "/v1_tile_offsets_full_width.bin");
+    const auto f = ife_read_file(__corpus_dir + "/v1_tile_offsets_full_width.bin");
     IFE_CHECK(f.size() == 32);   // ARRAY header + 2 * 8-byte entries
     if (f.size() != 32) return;
 

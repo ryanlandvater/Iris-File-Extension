@@ -100,24 +100,8 @@ namespace k = Iris::File::constants;
 std::string g_corpus_dir;
 
 std::vector<BYTE> load_fixture(const char* __name) {
-    const std::string path = g_corpus_dir + "/" + __name;
-    std::FILE* in = std::fopen(path.c_str(), "rb");
-    if (!in) {
-        std::fprintf(stderr, "FAIL: no fixture at %s\n", path.c_str());
-        ++g_failures;
-        return {};
-    }
-    std::fseek(in, 0, SEEK_END);
-    const auto size = static_cast<std::size_t>(std::ftell(in));
-    std::fseek(in, 0, SEEK_SET);
-    std::vector<BYTE> bytes(size);
-    const auto read = std::fread(bytes.data(), 1, size, in);
-    std::fclose(in);
-    if (read != size) {
-        std::fprintf(stderr, "FAIL: short read from %s\n", path.c_str());
-        ++g_failures;
-        return {};
-    }
+    auto bytes = ife_load_fixture(g_corpus_dir, __name);
+    if (bytes.empty()) ++g_failures;
     return bytes;
 }
 

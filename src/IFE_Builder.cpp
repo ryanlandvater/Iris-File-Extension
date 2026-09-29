@@ -120,15 +120,14 @@ void Builder_t::set_tile_table(const BuilderTileTableInfo& info)
             "IFE Builder: " + std::to_string(first.back()) +
             " tiles exceed what a u32 global tile index can address");
 
-    m_table       = info;
-    m_planes      = info.planes.empty() ? std::vector<std::uint16_t>(layers.size(), 0)
-                                        : info.planes;
+    m_table = info;
+    if (m_table.planes.empty()) m_table.planes.assign(layers.size(), 0);   // 0 = single plane
     m_layer_first = std::move(first);
     m_slots       = std::make_unique<TileSlot[]>(m_layer_first.back());
     m_table_ready.store(true, std::memory_order_release);
 }
 
-Builder_t::TileSlot& Builder_t::slot(std::uint32_t layer, std::uint32_t tile, std::uint64_t& global)
+std::uint64_t Builder_t::global_index(std::uint32_t layer, std::uint32_t tile) const
 {
     if (!m_table_ready.load(std::memory_order_acquire))
         throw std::logic_error("IFE Builder: append a tile only after set_tile_table");
@@ -139,16 +138,15 @@ Builder_t::TileSlot& Builder_t::slot(std::uint32_t layer, std::uint32_t tile, st
     if (tile >= count)
         throw std::out_of_range(where(layer, tile) + ": the layer has " +
                                 std::to_string(count) + " tiles");
-    global = m_layer_first[layer] + tile;
-    return m_slots[global];
+    return m_layer_first[layer] + tile;
 }
 
 Offset Builder_t::append_tile(std::uint32_t layer, std::uint32_t tile, const BYTE* data,
                               Size size, std::uint16_t z_planes)
 {
     ensure_open("append_tile");
-    std::uint64_t global = 0;
-    TileSlot& s = slot(layer, tile, global);
+    const std::uint64_t global = global_index(layer, tile);
+    TileSlot& s = m_slots[global];
 
     if (data == nullptr || size == 0)
         throw std::invalid_argument(where(layer, tile) +
@@ -161,39 +159,41 @@ Offset Builder_t::append_tile(std::uint32_t layer, std::uint32_t tile, const BYT
     // A Z-stacked layer frames every stream, because the frame is the only
     // place the format records how many planes a stream carries; a stream
     // may carry fewer than the layer's maximum, never more.
-    const std::uint16_t layer_planes = m_planes[layer];
+    const std::uint16_t layer_planes = m_table.planes[layer];
     const bool          z_stacked    = layer_planes > 1;
-    if (z_stacked ? z_planes > layer_planes : z_planes > 1)
+    const std::uint16_t max_planes   = z_stacked ? layer_planes : 1;
+    if (z_planes > max_planes)
         throw std::invalid_argument(where(layer, tile) + ": " + std::to_string(z_planes) +
-                                    " planes in a layer of at most " +
-                                    std::to_string(z_stacked ? layer_planes : 1));
+                                    " planes in a layer of at most " + std::to_string(max_planes));
 
     // Cheap early refusal; the CAS below is the authority.
     if (s.offset.load(std::memory_order_acquire) != UNWRITTEN)
         throw std::logic_error(where(layer, tile) + ": already appended");
 
-    Offset anchor = 0;
-    if (z_stacked || m_tile_frames) {
-        const Offset at = claim(b::TILE_PIXEL_DATA::header_size + size);
-        anchor = at + b::TILE_PIXEL_DATA::header_size;
+    // The frame, when there is one, sits immediately before the stream, so one
+    // claim covers both and the anchor is the first byte past the frame.
+    const bool   framed = z_stacked || m_tile_frames;
+    const Size   frame  = framed ? b::TILE_PIXEL_DATA::header_size : 0;
+    const Offset anchor = claim(frame + size) + frame;
+    // OFFSET is u40, and its maximum is NULL_TILE. Checked before any byte is
+    // written, so a refused tile leaves no frame naming a stream that is not there.
+    if (anchor > k::NULL_TILE - size)
+        throw std::runtime_error(where(layer, tile) + ": the stream at " + std::to_string(anchor) +
+                                 " lies past the 40-bit tile offset range");
+
+    if (framed) {
         // store() takes the ANCHOR — the stream's first byte, the one the tile
         // offsets entry names — and lays the frame out backward from it
-        // (CLAUDE.md, "TILE_PIXEL_DATA grows backwards"). Passing `at` would
-        // write a self-consistent frame five bytes early, attached to nothing.
+        // (CLAUDE.md, "TILE_PIXEL_DATA grows backwards"). Passing the frame's
+        // start would write a self-consistent frame five bytes early, attached
+        // to nothing.
         const b::Status status = b::store(m_base, anchor, b::TilePixelDataCreateInfo{
             .TILE_INDEX = static_cast<std::uint32_t>(global),
             .Z_PLANES   = z_planes});
         if (!status)
             throw std::runtime_error(where(layer, tile) + ": the tile frame failed to store (field '" +
                                      std::string(status.field) + "')");
-    } else {
-        anchor = claim(size);
     }
-    // OFFSET is u40, and its maximum is NULL_TILE.
-    if (anchor + size > k::NULL_TILE)
-        throw std::runtime_error(where(layer, tile) +
-                                 ": the stream lies past the 40-bit tile offset range");
-
     std::memcpy(m_base + anchor, data, size);
 
     std::uint64_t expected = UNWRITTEN;
@@ -207,8 +207,7 @@ Offset Builder_t::append_tile(std::uint32_t layer, std::uint32_t tile, const BYT
 void Builder_t::append_null_tile(std::uint32_t layer, std::uint32_t tile)
 {
     ensure_open("append_null_tile");
-    std::uint64_t global = 0;
-    TileSlot& s = slot(layer, tile, global);
+    TileSlot& s = m_slots[global_index(layer, tile)];
     std::uint64_t expected = UNWRITTEN;
     if (!s.offset.compare_exchange_strong(expected, k::NULL_TILE, std::memory_order_acq_rel,
                                           std::memory_order_acquire))
@@ -304,7 +303,7 @@ void Builder_t::finalize(const BuilderFinalizeInfo& info)
         extents.push_back({.X_TILES  = layers[l].xTiles,
                            .Y_TILES  = layers[l].yTiles,
                            .SCALE    = layers[l].scale,
-                           .Z_PLANES = m_planes[l]});
+                           .Z_PLANES = m_table.planes[l]});
     const Offset extents_at = append(b::LayerExtentsCreateInfo{.entries = extents});
 
     const Offset table_at = append(b::TileTableCreateInfo{
@@ -398,11 +397,10 @@ void Builder_t::seal(::Iris::File::blocks::FileHeaderCreateInfo header)
     // complete and closed — what a caller needs to move it. Without the
     // truncate the file fails its own validate_file_structure, which compares
     // FILE_SIZE against the size the OS reports.
-    const auto size = static_cast<std::uintmax_t>(m_head.load(std::memory_order_acquire));
     m_memory.close();
     m_base = nullptr;
     std::error_code error;
-    std::filesystem::resize_file(m_path, size, error);
+    std::filesystem::resize_file(m_path, m_head.load(std::memory_order_acquire), error);
     if (error)
         throw std::system_error(error, "IFE Builder: could not truncate " +
                                        m_path.string() + " to its written size");
@@ -414,13 +412,10 @@ void Builder_t::seal(::Iris::File::blocks::FileHeaderCreateInfo header)
 
 Builder Builder::create(const BuilderCreateInfo& info)
 {
-    Iris::MemoryCreateInfo arena_info;
-    arena_info.capacity = info.capacity;
-    arena_info.filepath = info.filepath;
-    // read_only defaults false: a builder needs a writable mapping.
-
+    // read_only stays false: a builder needs a writable mapping.
     Iris::Memory memory;
-    const Iris::Result made = Iris::create_memory(arena_info, memory);
+    const Iris::Result made = Iris::create_memory(
+        Iris::MemoryCreateInfo{.capacity = info.capacity, .filepath = info.filepath}, memory);
     if (!made)
         throw std::runtime_error("IFE Builder: could not create the arena (" +
                                  std::string(made.message) + ")");

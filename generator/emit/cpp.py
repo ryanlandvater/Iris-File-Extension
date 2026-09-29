@@ -229,6 +229,27 @@ def _emit_version_markers(
     out.append(f"{indent}static constexpr std::size_t {total_name} = {total_name}_v{newest};")
 
 
+def _size_at(total_name: str, sizes: tuple[tuple[str, int], ...], indent: str) -> list[str]:
+    """`<total_name>_at(version)`: the size a file of that version writes.
+
+    The per-version constants say what each version's layout holds; code that
+    learns the version at run time -- the recovery census deriving an older
+    file's array geometry -- needs the one that applies.
+    """
+    first = sizes[0][0].replace(".", "_")
+    out = [
+        f"{indent}/// The {total_name} a file of `__version` writes: the fields that version has.",
+        # One version needs no test, and an unnamed parameter says so to -Wextra.
+        f"{indent}static constexpr std::size_t {total_name}_at("
+        f"std::uint32_t{' __version' if len(sizes) > 1 else ''}) noexcept {{",
+    ]
+    for version, _ in reversed(sizes[1:]):
+        suffix = version.replace(".", "_")
+        out.append(f"{indent}    if (__version >= {_version_of(version):#010x}u) return {total_name}_v{suffix};")
+    out += [f"{indent}    return {total_name}_v{first};", f"{indent}}}"]
+    return out
+
+
 def _has_count(block: Any, layout: LayoutResult) -> bool:
     """Whether the block's primitive gives it a COUNT — i.e. something follows
     the header that has to be addressed."""
@@ -1549,6 +1570,7 @@ def emit_blocks_header(
             out.append(f"    struct {entry} {{")
             out.extend(_emit_size_offset(block.entry_fields, indent="        "))
             _emit_version_markers(out, "        ", "entry_size", block.entry_sizes)
+            out += _size_at("entry_size", block.entry_sizes, "        ")
             out += [
                 "        const ::Iris::File::BYTE* __base    = nullptr;",
                 "        ::Iris::File::Offset      __offset  = 0;",
@@ -1594,6 +1616,8 @@ def emit_blocks_header(
         out.append("    [[nodiscard]] Status validate_deep() const noexcept;")
         out.append("};")
         out.append("}  // namespace blocks")
+
+    out += _with_block(layout)
 
     out += [
         "",
@@ -2143,6 +2167,93 @@ def _emit_serialization_body(
     ]
 
 
+def _with_block(layout: LayoutResult) -> list[str]:
+    """with_block(): the handle of the block type a run-time tag names.
+
+    Code that learns a block's type only at run time -- the recovery census,
+    the file map -- reaches that type's generated extent() and entries through
+    this, so none of it keeps a per-type switch by hand. The switch has no
+    `default`, so a new tagged block is a -Wswitch warning until it is listed.
+    """
+    rc = "::Iris::File::constants::RecoveryCodes"
+    out = [
+        "",
+        "namespace blocks {",
+        "/// Call `__fn` with the handle of the block type `__tag` names, over",
+        "/// (__base, __off, __size, __version): how code that learns a block's type",
+        "/// at run time reaches its generated extent() and entries. Returns",
+        "/// `__otherwise` for a tag no block carries.",
+        "template <class R, class Fn>",
+        f"R with_block({rc} __tag, const ::Iris::File::BYTE* __base,",
+        "             ::Iris::File::Offset __off, ::Iris::File::Size __size,",
+        "             std::uint32_t __version, R __otherwise, Fn&& __fn) {",
+        "    switch (__tag) {",
+    ]
+    for name, block in layout.blocks.items():
+        if block.recovery_tag:
+            out.append(f"        case {rc}::{block.recovery_tag}:")
+            out.append(f"            return __fn({name}{{__base, __off, __size, __version}});")
+    out += [
+        f"        case {rc}::RECOVER_UNDEFINED:",
+        "            break;",
+        "    }",
+        "    return __otherwise;",
+        "}",
+        "}  // namespace blocks",
+    ]
+    return out
+
+
+def _reference_fields_view(layout: LayoutResult) -> list[str]:
+    """reference_fields_view(): every `points_to` field of each block type.
+
+    The recovery census walks the offset graph from this table (FastFHIR's
+    reflected_fields_view), as validate_deep walks it from the same
+    `points_to`. field_offset counts from the block's start; an entry field
+    names entry 0's copy. `since` is 0 for a 1.0 field, which the generated
+    accessors never gate either. The switch has no `default`, so a new tagged
+    block is a -Wswitch warning until it is listed.
+    """
+    rc = "::Iris::File::constants::RecoveryCodes"
+    out = [
+        "/// Every field of the block tagged `__owner` that names a child block, in",
+        "/// wire order: header fields, then entry fields. Empty for a block that",
+        "/// names none. Generated from the spec's `points_to`; see FieldInfo.",
+        f"inline std::span<const FieldInfo> reference_fields_view({rc} __owner) noexcept {{",
+        "    switch (__owner) {",
+    ]
+    leaves = []
+    for block in layout.blocks.values():
+        if not block.recovery_tag:
+            continue
+        fields = [(f, False) for f in block.header_fields if f.points_to]
+        fields += [(f, True) for f in block.entry_fields if f.points_to]
+        if not fields:
+            leaves.append(block.recovery_tag)
+            continue
+        out += [f"        case {rc}::{block.recovery_tag}: {{",
+                "            static constexpr FieldInfo fields[] = {"]
+        for f, in_entry in fields:
+            child = layout.blocks[f.points_to].recovery_tag
+            offset = block.header_size + f.offset if in_entry else f.offset
+            out.append(
+                f'                {{"{f.name}", {offset}, {rc}::{child}, '
+                f"{str(bool(f.nullable)).lower()}, {str(in_entry).lower()}, "
+                f"{0 if f.since == '1.0' else _version_of(f.since):#010x}u}},"
+            )
+        out += ["            };", "            return fields;", "        }"]
+    out += [f"        case {rc}::{tag}:" for tag in leaves]
+    out += [
+        f"        case {rc}::RECOVER_UNDEFINED:",
+        "            return {};",
+        "    }",
+        "    return {};",
+        "}",
+        "",
+    ]
+    return out
+
+
 def emit_map_header(
     layout: LayoutResult,
     header: dict[str, Any],
@@ -2201,6 +2312,7 @@ def emit_map_header(
         "    }",
         "}",
         "",
+        *_reference_fields_view(layout),
         "}  // namespace Abstraction",
         "}  // namespace Iris::File",
         "",

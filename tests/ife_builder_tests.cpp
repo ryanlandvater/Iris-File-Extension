@@ -274,6 +274,11 @@ int main() {
              [](auto& t) { t[0].OFFSET = k::NULL_TILE; t[0].SIZE = 0; }, true},
             {"a NULL_TILE entry with a nonzero SIZE",
              [](auto& t) { t[0].OFFSET = k::NULL_TILE; }, true},
+            // The layer extents declare 2x2; the array must hold exactly 4.
+            {"one tile entry fewer than the layer extents declare",
+             [](auto& t) { t.pop_back(); }, false},
+            {"one tile entry more than the layer extents declare",
+             [](auto& t) { t.push_back(t.back()); }, false},
         };
         for (const Case& c : cases) {
             std::vector<b::TileOffsetEntry> t;

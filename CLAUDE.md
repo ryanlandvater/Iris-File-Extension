@@ -50,7 +50,7 @@ stream at all. It was caught once (2026-08-18) only because the misplaced
 write happened to land inside a `CIPHER` block and broke validation there.
 
 The frame carries no recovery tag and is found by signature match, so it
-appears in `recover_file_structure` and **never** in `generate_file_map` —
+appears only in the recovery census and **never** in `generate_file_map` —
 the offset graph has no edge that leads to it. Any coverage check that only
 walks the graph will report a framed file as unframed.
 
@@ -96,7 +96,28 @@ compared for identity, not parsed as a colour profile.
 
 Recovery exists because every parent→child reference is written **twice**. Get
 this model right and the engine reads straightforwardly; get it wrong and every
-change to `src/IFE_Recovery.cpp` is a guess.
+change to the recovery engine is a guess. (The engine is being rebuilt on
+FastFHIR's census design -- `src/IFE_Recovery.cpp` ports `FF_Recovery.cpp` in
+its order and names; port from it, do not redesign. The census is back; the
+solver is not. Parts of this section name the removed engine.)
+
+### What IFE's wire adds to FastFHIR's census (RB-3, paid for by the flip sweep)
+
+* **A tile stream has no self-offset, so its place is its witness.** It starts
+  inside nothing, runs across nothing, never starts where a block vouches for
+  itself, and meets a neighbour. A frame that took a flip leaves a hole exactly
+  a frame wide in front of it.
+* **Only what is certain refuses a claim.** The scan refuses a stream only
+  where it would overlap the header or a block's 10-byte signature. Every
+  extent is a claim the census weighs; refusing against extents let a damaged
+  entry take its neighbours' bytes.
+* **A position is a boundary only when corroborated** (FastFHIR: a block that
+  vouches for itself and tiles). A stream counts when it meets both
+  neighbours; decide that before any array extent, which is measured against
+  those boundaries.
+* **An array covers what its bytes support** (`derive`, at the width the
+  file's version writes), not its stamp: an inflated COUNT or STRIDE would
+  swallow the streams after it.
 
 ```mermaid
 flowchart LR
@@ -196,9 +217,9 @@ recovered is asserting luck, and the first version of
   between three sibling `ATTRIBUTES` blocks.
 
 The one thing that IS contracted: an edge whose child carries an identity
-witness must never come back naming a different real block.
-`ife_recovery_bench_tests` asserts that at every damage level and prints the
-bits→percent curve beside it.
+witness must never come back naming a different real block. The removed
+`ife_recovery_bench_tests` asserted that at every damage level beside the
+bits→percent curve; the rebuild's bench must assert it too.
 
 ### Measuring recovery without fooling yourself
 
@@ -247,10 +268,14 @@ Both build systems compile first-party code with `-Wall -Wextra -Wswitch`
 
 `-Wswitch` is the reason the flags exist, and it is on by default in clang and
 gcc; naming it is a guard against someone trimming `-Wall`, not new coverage.
-What it actually buys is this: the `RepairClass` and `GapClass` tallies are
-exhaustive `switch`es, so a new member of either enum fails to compile until
-every tally handles it. Two ways to silently disarm that, both of which have
-shipped in this lineage's sibling repository:
+What it actually buys is this: an exhaustive `switch` over an enum warns at
+compile time when the enum gains a member it does not handle. Today that
+guards `to_result` over `Check` and the two `slice_attributes` switches over
+`SliceError` (all in `src/IFE_Runtime.cpp`). It was added for the recovery
+engine's `RepairClass` and `GapClass` tallies, which went with the engine; the
+rebuild's tallies must be written as the same kind of switch. Two ways to
+silently disarm one, both of which have shipped in this lineage's sibling
+repository:
 
 * **adding a `default:`** to one of those switches — the warning stops, and a
   new class lands in the default arm uncounted;
@@ -293,6 +318,8 @@ correctly reported nothing wrong.
   (`ORIENTATION_90` is `0x55A0`). The raw load in `IFE_Runtime.cpp` looks like
   it bypasses the accessor; that is the point.
 
-`ife_damage_sweep_tests` runs every public read entry point over every
-single-site damage. Run it under ASan+UBSan after any change here: the faults
-it finds are invisible without the sanitizer.
+`ife_damage_sweep_tests` runs every public read entry point over every single
+bit flip. Run it under ASan+UBSan after any change here (`ctest --preset
+asan`): the faults it finds are invisible without the sanitizer. It also holds
+the read path to one promise a caller relies on: a file that validates can be
+read.

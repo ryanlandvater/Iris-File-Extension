@@ -70,12 +70,40 @@ def translation_unit(code: str, mode: str, index: int) -> str:
     ])
 
 
-def compile_command(cxx: str, includes: list[str], source: Path) -> list[str]:
+def platform_flags(cxx: str) -> list[str]:
+    """Flags the configured compiler needs that CMake would otherwise supply.
+
+    A toolchain clang++ -- which is exactly what the Xcode generator puts in
+    CMAKE_CXX_COMPILER (XcodeDefault.xctoolchain/usr/bin/clang++) -- does not
+    locate the macOS SDK on its own, so a syntax-only compile cannot find
+    <cstddef>.  The /usr/bin shims do, which is why this only bites the Xcode
+    build.  Hand it the SDK explicitly; empty everywhere but macOS.
+    """
+    if sys.platform != "darwin":
+        return []
+    try:
+        sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True,
+                             text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return ["-isysroot", sdk] if sdk else []
+
+
+def compile_command(cxx: str, includes: list[str], source: Path,
+                    extra: list[str]) -> list[str]:
+    # MSVC (`cl`) and clang-cl take /Zs for syntax-only; clang and gcc take
+    # -fsyntax-only.  Match the driver name exactly: a bare `startswith("cl")`
+    # also matches `clang`/`clang++`, which would hand clang an MSVC command
+    # line -- invisible under a generator that names the driver `c++`, fatal
+    # under one that names it `clang++` (the Xcode generator does).
     name = Path(cxx).name.lower()
-    if name.startswith("cl") :   # MSVC and clang-cl: syntax-only is /Zs
+    if name.endswith(".exe"):
+        name = name[:-4]
+    if name == "cl" or name.startswith("clang-cl"):
         return [cxx, "/nologo", "/std:c++20", "/EHsc", "/Zs",
                 *[f"/I{d}" for d in includes], str(source)]
-    return [cxx, "-std=c++20", "-fsyntax-only", *[f"-I{d}" for d in includes], str(source)]
+    return [cxx, "-std=c++20", "-fsyntax-only", *extra,
+            *[f"-I{d}" for d in includes], str(source)]
 
 
 def main() -> int:
@@ -97,6 +125,7 @@ def main() -> int:
 
     failures = 0
     compiled = skipped = 0
+    extra = platform_flags(args.cxx)
     with tempfile.TemporaryDirectory() as scratch:
         for index, (line, code, mode) in enumerate(found):
             if mode is None:
@@ -109,7 +138,7 @@ def main() -> int:
                 continue
             source = Path(scratch) / f"readme_block_{index}.cpp"
             source.write_text(translation_unit(code, mode, index), encoding="utf-8")
-            result = subprocess.run(compile_command(args.cxx, includes, source),
+            result = subprocess.run(compile_command(args.cxx, includes, source, extra),
                                     capture_output=True, text=True)
             if result.returncode != 0:
                 print(f"README.md:{line}: block {index} ({mode}) does not compile "

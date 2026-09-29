@@ -1,11 +1,15 @@
 # IFE — Architecture Reference
 
-**Scope.** How this library is layered, and how the recovery engine works. The
-*format* — every block, field, offset and constant — is specified in
-`spec/ife_spec.adoc` and generated from `spec/*.json`; this document does not
-restate it. What it does explain is the machinery around those bytes: which
-layer owns which fact, what the recovery engine does in what order, and where
-in `src/IFE_Recovery.cpp` each step lives.
+**Scope.** How this library is layered. The *format* — every block, field,
+offset and constant — is specified in `spec/ife_spec.adoc` and generated from
+`spec/*.json`; this document does not restate it. What it does explain is the
+machinery around those bytes: which layer owns which fact.
+
+> **⚠ RECOVERY IS BEING REBUILT (2026-09-28)** on FastFHIR's census and
+branch-solver design (MIGRATION.md `# ▶ RECOVERY REBUILD`). The census is back
+(`Recovery::scan` / `census`, RB-3); the solver, the report and `apply()` are
+not. Sections §3–§5 below describe the removed engine and are kept as the
+design record; they do **not** describe the current tree.
 
 Read `CLAUDE.md` first. It carries the invariants and the traps; this file
 carries the shape.
@@ -23,10 +27,10 @@ flowchart TD
     G["generator/<br/>emitters"]
     B["generated_source/IFE_Blocks.hpp/.cpp<br/>one typed handle per block"]
     V["generated_source/IFE_Validation.cpp<br/>validate() / validate_deep()"]
-    M["generated_source/IFE_Map.hpp<br/>wire tag &lt;-&gt; MapEntryType"]
+    M["generated_source/IFE_Map.hpp<br/>wire tag &lt;-&gt; MapEntryType,<br/>reference_fields_view"]
     P["include/IFE_Primitives.hpp<br/>the 5 primitive shapes + reader policy"]
-    R["src/IFE_Recovery.cpp<br/>the recovery engine"]
     T["src/IFE_Runtime.cpp<br/>abstract_file_structure — the read path"]
+    R["src/IFE_Recovery.cpp<br/>the recovery census"]
     BU["src/IFE_Builder.cpp<br/>Iris::File::Builder — the write handle"]
     PA["src/IFE_Parser.cpp<br/>Iris::File::Parser — the read handle"]
     MEM["Iris-Headers Iris::Memory<br/>the never-remapped arena"]
@@ -36,9 +40,9 @@ flowchart TD
     J --> G --> B & V & M
     J --> D
     B --> P
-    P --> R & T
-    M --> R
-    A --> R & T
+    P --> T & R
+    M --> T & R
+    A --> T
     T --> PA
     B --> BU
     MEM --> BU & PA
@@ -53,12 +57,12 @@ schema edit needs a `cmake .` before it reaches a build directory.
 | Fact | Owner | Never |
 |---|---|---|
 | a field's offset and width | `spec/*.json` → generated handle | a literal in hand-written code |
-| what type a slot must point at | the parent's generated accessor (compiled) | read from the wire |
+| what type a slot must point at | the parent's generated accessor, and `reference_fields_view` for code that walks the graph generically (both compiled from `points_to`) | read from the wire |
 | a block's extent | the block's own `extent()` | fabricated, or taken from the arena's capacity |
 | an array's element shape | the parent's compiled handle | derived from the array's wire tag |
 | how many entries an array has | its stamped `COUNT`, bounded by arena geometry | a walk that stops at the first invalid entry |
 | whether a block is the one it claims to be | `validate()` — a handle's bool | an offset that merely lands in range (`in_bounds()` is for code that reads damaged files on purpose) |
-| how to repair a damaged block | `Recovery` | the read path, which refuses and never repairs (§6) |
+| how to repair a damaged block | the recovery engine — absent from this revision, being rebuilt | the read path, which refuses and never repairs (§6) |
 | where a tile or image stream lands, and the file's structure | `Builder` | the application calling it |
 | the file's name, and moving it | the application | the `Builder` |
 
@@ -303,7 +307,8 @@ Explicit so they are not rediscovered as bugs.
 * **The read path refuses; it does not repair.** Since RC-10.1 a handle's bool
   is `validate()`, so `abstract_file_structure()` throws on a structurally
   damaged file instead of reading it — 58–65% of one-bit trials. Reopening one
-  is `Recovery` + `apply()`. Reference-level integrity is still not
+  needs the recovery engine, which is being rebuilt; until it returns there is
+  no in-process path. Reference-level integrity is still not
   content-level integrity: a flipped inline scalar has no second witness and
   reads back changed (RC-10.2).
 * **Iris-Codec writes no tile frames yet.** `TILE_INDEX` is the only identity
@@ -317,9 +322,13 @@ Explicit so they are not rediscovered as bugs.
 * **Warnings are on but not fatal.** Both build systems set `-Wall -Wextra
   -Wswitch` (`/W4` on MSVC) and every first-party translation unit is clean,
   but there is no `-Werror`, so a new warning is visible rather than blocking.
-  `-Wswitch` protects the `RepairClass` and `GapClass` tallies only because
-  those are exhaustive `switch`es with no `default:` — adding a `default:` to
-  one silently disarms it.
+  `-Wswitch` protects `to_result` (over `Check`) and the `slice_attributes`
+  switches (over `SliceError`) only because those are exhaustive `switch`es
+  with no `default:` — adding a `default:` to one silently disarms it. The
+  rebuilt recovery tallies must follow the same rule (CLAUDE.md).
+* **Recovery finds damage but does not repair it yet.** `Recovery::census()`
+  opens a question for every reference a flip damages (RB-3); the branch solver
+  that answers them, and `apply()`, are RB-5 to RB-7.
 
 ---
 
@@ -327,14 +336,13 @@ Explicit so they are not rediscovered as bugs.
 
 | Target | Asks |
 |---|---|
-| `ife_recovery_tests` | per-class behaviour, generational cascade, tag consensus, contended repoints, apply()'s gates |
-| `ife_damage_sweep_tests` | every byte of every fixture damaged three ways — bounds, all-or-nothing, and every public read entry point on the damaged and the repaired copy; run it under ASan/UBSan |
-| `ife_recovery_bench_tests` | the bits→percent curve, with misattachment on a witnessed edge asserted at zero |
+| `ife_damage_sweep_tests` | every public read entry point over every single bit flip of every fixture: nothing reads outside the file (run it under ASan/UBSan), a file that validates can be read, and returned ranges and Parser spans lie inside the file |
+| `ife_recovery_tests` | the census, as FastFHIR tests its own: a clean file is one attached island matching `generate_file_map`; a newer writer's skew is no hole; every single flip opens exactly the points it explains |
 | `ife_v1_oracle_tests` | generated offsets against the frozen 1.0 witness |
 | `ife_builder_tests` | the block tier (`claim` / `append` / `seal`): the header region is reserved, tile entries are bounds-checked on read, Z-stacked tiles must be framed, the never-remapped reservation, a closed file at seal |
 | `ife_builder_layered_tests` | the application tier: threaded `append_tile` in any order, null tiles, images, `finalize` round-trips through the read path; misuse throws and a refused `finalize` writes nothing |
 | `ife_parser_tests` | `Parser::open` owns its mapping; zero-copy `tile()` / `image()` spans; `tile_planes()`; lifetime across handle copies |
 
-Every recovery target is registered in **both** `tests/tests.cmake` and
-`tests/tests.bzl`. A defect reachable through only one build system is
+Every test target — the rebuilt recovery targets included — is registered in
+**both** `tests/tests.cmake` and `tests/tests.bzl`. A defect reachable through only one build system is
 invisible, which has happened.

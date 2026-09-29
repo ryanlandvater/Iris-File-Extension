@@ -37,9 +37,9 @@ exports_files(["tools/fetch_corpus.py"])
 # misses the standard too, so the two cannot drift apart silently.
 #
 # -Wswitch is named even though -Wall implies it: it is the reason for the
-# change. A new RepairClass or GapClass member that no switch handles must
-# fail at compile time instead of being silently uncounted (FastFHIR's gap
-# tally had that bug), and naming it means dropping -Wall cannot take it too.
+# change. A new enum member a switch must handle must fail at compile time
+# instead of being silently uncounted (FastFHIR's gap tally had that bug), and
+# naming it means dropping -Wall cannot take it too.
 #
 # Unlike CMake's add_compile_options, copts are per-target, so @iris_headers
 # compiles under its own flags and cannot contribute warnings here. Not
@@ -88,9 +88,9 @@ filegroup(
         "include/IFE_Bytes.hpp",
         "include/IFE_Primitives.hpp",
         "include/IFE_Advanced.hpp",
+        "include/IFE_Recovery.hpp",
         "include/IFE_Builder.hpp",
         "include/IFE_Parser.hpp",
-        "include/IFE_Recovery.hpp",
         "include/IFE_Window.hpp",
     ],
 )
@@ -213,7 +213,6 @@ cc_binary(
     srcs = [
         "examples/slide_info_abstraction.cpp",
         "src/IFE_Runtime.cpp",
-        "src/IFE_Recovery.cpp",
         "src/IFE_Window.cpp",
         ":src_headers",
         ":generated_headers",

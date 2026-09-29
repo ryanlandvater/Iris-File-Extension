@@ -24,9 +24,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <functional>
-#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,11 +51,6 @@ bool throws(const std::function<void()>& fn) {
     return false;
 }
 
-std::vector<BYTE> read_whole_file(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -74,7 +67,7 @@ int main(int argc, char** argv) {
     IFE_CHECK(parser.validate_file_structure() == IRIS_SUCCESS);
 
     // ---- abstraction() is abstract_file_structure over the same bytes ------ //
-    const std::vector<BYTE> bytes = read_whole_file(witness);
+    const std::vector<BYTE> bytes = ife_read_file(witness);
     IFE_CHECK(bytes.size() == parser.size());
     const Abstraction::File borrowed = abstract_file_structure({bytes.data(), bytes.size()});
     const Abstraction::File& lifted  = parser.abstraction();

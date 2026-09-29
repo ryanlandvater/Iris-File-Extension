@@ -79,11 +79,9 @@ uint16_t Parser_t::tile_planes(uint32_t layer, uint32_t tile) const
     // already refused a file where one is not; checked again because this is
     // the read that depends on it.
     const b::FILE_HEADER header = versioned_root(m_info.file_ptr, m_info.file_size);
-    const uint64_t global = [&] {
-        uint64_t g = 0;
-        for (uint32_t l = 0; l < layer; ++l) g += file.tileTable.layers[l].size();
-        return g + tile;
-    }();
+    // Global indices ascend by layer, row-major within a layer.
+    uint64_t global = tile;
+    for (uint32_t l = 0; l < layer; ++l) global += file.tileTable.layers[l].size();
     if (const char* why = tile_frame_error(m_info.file_ptr, m_info.file_size, header.__version,
                                            entry.offset, global, layer_planes))
         throw std::runtime_error("IFE Parser: layer " + std::to_string(layer) + ", tile " +

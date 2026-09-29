@@ -43,8 +43,8 @@ returned per call, but the sink attributes diagnostics to the wrong store.
 
 Iris-Codec encodes tiles on `hardware_concurrency()` workers and claims each tile's
 space with `offset.fetch_add(entry.size)` after compression returns
-(`../Iris-Codec/src/IrisCodecEncoder.cpp:753`; `src/IFE_Recovery.cpp:1186` records the
-same claim discipline). A writer that validates `TILE_PIXEL_DATA` or the per-layer
+(`../Iris-Codec/src/IrisCodecEncoder.cpp:753`; IFE's own `Builder::append_tile` claims
+the same way, from any thread). A writer that validates `TILE_PIXEL_DATA` or the per-layer
 tables from those workers reaches `__report` from many threads at once.
 
 **Current exposure: latent.** In the checkouts read on 2026-09-15, Iris-Codec does not

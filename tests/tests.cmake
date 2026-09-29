@@ -133,7 +133,6 @@ if(IFE_BUILD_TESTS)
             ife_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/ife_corpus_tests.cpp
             ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-            ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
             ${IFE_SOURCE_DIR}/IFE_Window.cpp
             ${IFE_GENERATED_SOURCES}
         )
@@ -154,7 +153,6 @@ if(IFE_BUILD_TESTS)
         ife_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_runtime_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
     )
@@ -185,7 +183,6 @@ if(IFE_BUILD_TESTS)
         ife_api_contract_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_api_contract_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
     )
@@ -196,14 +193,13 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_api_contract_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_api_contract_tests COMMAND ife_api_contract_tests)
 
-    # The ADVANCED tier (IFE_Advanced.hpp): the recovery / modification API —
-    # file map, verdicts, and the two advanced entry points. Its counterpart
-    # above proves the PUBLIC tier does NOT carry these.
+    # The ADVANCED tier (IFE_Advanced.hpp): the modification API — the file
+    # map and generate_file_map. Its counterpart above proves the PUBLIC tier
+    # does NOT carry these.
     add_executable(
         ife_advanced_api_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_advanced_api_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
     )
@@ -220,7 +216,6 @@ if(IFE_BUILD_TESTS)
         ife_builder_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_builder_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Builder.cpp
         ${IFE_SOURCE_DIR}/IFE_Parser.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
@@ -245,7 +240,6 @@ if(IFE_BUILD_TESTS)
         ife_builder_layered_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_builder_layered_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Builder.cpp
         ${IFE_SOURCE_DIR}/IFE_Parser.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
@@ -268,7 +262,6 @@ if(IFE_BUILD_TESTS)
         ife_parser_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_parser_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Builder.cpp
         ${IFE_SOURCE_DIR}/IFE_Parser.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
@@ -285,38 +278,24 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_parser_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_parser_tests COMMAND ife_parser_tests ${IFE_CORPUS_DIR})
 
-    # RC-3: the two-witness reconciliation against damaged bytes. Writer-
-    # produced corpus witnesses, one damage per known edge, the repair
-    # asserted AND reported with its class and bit cost (MIGRATION.md RC-3).
-    add_executable(
-        ife_recovery_tests
-        ${PROJECT_SOURCE_DIR}/tests/ife_recovery_tests.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
-        ${IFE_GENERATED_SOURCES}
-    )
-    target_include_directories(
-        ife_recovery_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
-    )
-    target_compile_features(ife_recovery_tests PRIVATE cxx_std_20)
-    target_link_libraries(ife_recovery_tests PRIVATE ${IFE_Dependencies})
-    add_test(NAME ife_recovery_tests COMMAND ife_recovery_tests ${IFE_CORPUS_DIR})
-    set_tests_properties(ife_recovery_tests PROPERTIES TIMEOUT 120)
-
-    # The exhaustive counterpart to ife_recovery_tests: every byte of every
-    # corpus witness damaged three ways, run through the whole engine. Its
-    # point is to be run under a sanitizer — a hand-written suite only
-    # sanitizes the sites it happens to touch (see the file's header).
+    # Every public read entry point over every single-site damage of every
+    # fixture (RB-1). Its value is under ASan/UBSan, where it is the gate a
+    # hand-written suite cannot be: a sanitizer only sees what tests execute.
     add_executable(
         ife_damage_sweep_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_damage_sweep_tests.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
-        # Invariant 6 (RC-10.1) sweeps the read path too, so the runtime's
-        # entry points must link; Bazel gets them from :ife.
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
+        ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        ${IFE_SOURCE_DIR}/IFE_Parser.cpp
+        ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
+        ${irisheaders_SOURCE_DIR}/src/IrisMemory.cpp
     )
     target_include_directories(
         ife_damage_sweep_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+                                       ${PROJECT_SOURCE_DIR}/tests
+                                       ${irisheaders_SOURCE_DIR}/include
+                                       ${irisheaders_SOURCE_DIR}/priv
     )
     target_compile_features(ife_damage_sweep_tests PRIVATE cxx_std_20)
     target_link_libraries(ife_damage_sweep_tests PRIVATE ${IFE_Dependencies})
@@ -324,22 +303,29 @@ if(IFE_BUILD_TESTS)
     # Generous: a sanitizer build of this target is ~10x the plain one.
     set_tests_properties(ife_damage_sweep_tests PROPERTIES TIMEOUT 600)
 
-    # Bits flipped -> percent recovered: the FastFHIR-benchmark Test 5 curve,
-    # run as an assertion. It prints the curve (the benchmark) and fails the
-    # build if a WITNESSED edge ever misattaches (the contract RC-9 closed).
+    # The recovery census (RB-3), tested as FastFHIR tests its own: a clean
+    # file is one attached island, a newer writer's skew is no hole, and every
+    # point a single flip opens is one that flip explains.
     add_executable(
-        ife_recovery_bench_tests
-        ${PROJECT_SOURCE_DIR}/tests/ife_recovery_bench_tests.cpp
+        ife_recovery_tests
+        ${PROJECT_SOURCE_DIR}/tests/ife_recovery_tests.cpp
+        ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
         ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
+        ${IFE_SOURCE_DIR}/IFE_Builder.cpp
+        ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
+        ${irisheaders_SOURCE_DIR}/src/IrisMemory.cpp
     )
     target_include_directories(
-        ife_recovery_bench_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+        ife_recovery_tests PRIVATE ${IFE_INCLUDE_DIR} ${IFE_GENERATED_DIR}
+                                   ${PROJECT_SOURCE_DIR}/tests
+                                   ${irisheaders_SOURCE_DIR}/include
+                                   ${irisheaders_SOURCE_DIR}/priv
     )
-    target_compile_features(ife_recovery_bench_tests PRIVATE cxx_std_20)
-    target_link_libraries(ife_recovery_bench_tests PRIVATE ${IFE_Dependencies})
-    add_test(NAME ife_recovery_bench_tests COMMAND ife_recovery_bench_tests ${IFE_CORPUS_DIR})
-    set_tests_properties(ife_recovery_bench_tests PROPERTIES TIMEOUT 300)
+    target_compile_features(ife_recovery_tests PRIVATE cxx_std_20)
+    target_link_libraries(ife_recovery_tests PRIVATE ${IFE_Dependencies})
+    add_test(NAME ife_recovery_tests COMMAND ife_recovery_tests ${IFE_CORPUS_DIR})
+    set_tests_properties(ife_recovery_tests PROPERTIES TIMEOUT 600)
 
     # No member of the abstraction may view into the mapping it was built
     # from (XP-4): the tree is built from a heap buffer, the buffer is
@@ -349,7 +335,6 @@ if(IFE_BUILD_TESTS)
         ife_lifetime_tests
         ${PROJECT_SOURCE_DIR}/tests/ife_lifetime_tests.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
     )
@@ -438,7 +423,6 @@ if(IFE_BUILD_TESTS)
         ife_example_runtime
         ${PROJECT_SOURCE_DIR}/examples/slide_info_abstraction.cpp
         ${IFE_SOURCE_DIR}/IFE_Runtime.cpp
-        ${IFE_SOURCE_DIR}/IFE_Recovery.cpp
         ${IFE_SOURCE_DIR}/IFE_Window.cpp
         ${IFE_GENERATED_SOURCES}
         # The example maps the slide through Iris::Memory (same read-only

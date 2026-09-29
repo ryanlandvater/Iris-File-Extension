@@ -210,58 +210,11 @@ for (auto it = map.lower_bound(write_location); it != map.end(); ++it) {
 
 ### Recovering a Damaged File
 
-Every parent-to-child reference in an IFE file is written **twice** — the
-parent's slot holds the child's offset, and the child's header holds its own
-offset (`VALIDATION == its own address`) plus a type tag. A single-site
-corruption therefore leaves the other half standing as evidence, and
-`Iris::File::Recovery` is the machinery that turns that redundancy back into
-readable structure. It is also how you reopen a file `abstract_file_structure`
-refused: `recover()`, then `apply()` on a writable copy, then abstract again.
-
-<!-- ife-compile: fragment -->
-```cpp
-#include "IFE_Recovery.hpp"
-
-const Iris::File::FileAccessInfo info {file_ptr, file_size};
-Iris::File::Recovery recovery (info);
-
-// Read-only: reconcile both witnesses of every reference and report.
-const auto report = recovery.recover();
-printf("%zu references: %zu intact, %zu repaired, %zu ambiguous, %zu lost\n",
-       report.blocks_total, report.intact,
-       report.corroborated + report.tag_repaired + report.position_repaired,
-       report.ambiguous, report.unrecovered);
-
-// Every repair is itemised; nothing is silent.
-for (const auto& verdict : report.blocks)
-    if (verdict.class_ == Iris::File::Abstraction::RepairClass::Ambiguous) {
-        // reported WITH its candidates, never guessed between
-    }
-
-// apply() is the ONLY path that mutates, and it needs a writable mapping.
-// All-or-nothing: if any planned repair cannot be honoured, nothing is
-// written; every committed write is re-read and verified, and a failure rolls
-// the whole report back.
-if (!recovery.apply(report)) {
-    // refused — the bytes are untouched
-}
-```
-
-Three things worth knowing before relying on it:
-
-- **Ambiguous and Unrecovered are never written.** They are reported precisely
-  because the engine declined to choose between equally-good readings, and
-  writing a guess would turn a declared uncertainty into a silent one.
-- **Repair is not authentication.** A repaired file is not the same object as
-  an intact one. Every repair is reported so a caller can decide what to trust.
-- **Not everything has a second witness.** Inline scalar values, payload bytes
-  (`ICC_PROFILE`, `IMAGE_BYTES`, tile pixel data), an unframed tile stream, and
-  an absent (`NULL_OFFSET`) slot carry no redundancy — damage there is
-  undetectable by construction, and the engine does not pretend otherwise.
-
-The threat model is **bit flips**. Truncation, overwrite and memmove damage
-defeat the Hamming ranker; those cases are reported ambiguous or unrecovered
-rather than guessed.
+The recovery engine — the two-witness reconciliation that repairs a bit-flipped
+file — is **currently being rebuilt** against FastFHIR's census design (see
+`MIGRATION.md`). It is not present in this revision. `generate_file_map` above
+is the remaining advanced entry point; until the engine returns, a file
+`abstract_file_structure` refuses cannot be reopened in-process.
 
 ## Language Bindings
 

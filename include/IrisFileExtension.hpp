@@ -140,9 +140,10 @@ Result               IFE_EXPORT validate_file_structure (const FileAccessInfo&) 
  * validate() -- both witnesses agree, and every length the block declares fits
  * the file -- or this throws std::runtime_error naming the block and the check
  * that failed. A structurally damaged file is therefore refused here, not
- * opened. To reopen one, run Iris::File::Recovery (recover(), then apply()) and
- * call this again. validate_file_structure() checks the whole graph without
- * building anything; this checks the blocks it lifts, as it lifts them.
+ * opened. To reopen one, run the recovery engine (being rebuilt against
+ * FastFHIR's census design) and call this again. validate_file_structure()
+ * checks the whole graph without building anything; this checks the blocks it
+ * lifts, as it lifts them.
  *
  * Until RC-10.1 this read the bytes it was pointed at without checking them:
  * one flipped bit in a length field read a gigabyte past an 832-byte file.
@@ -167,9 +168,9 @@ class Parser_t;   ///< the read BODY — defined in "IFE_Parser.hpp"
  * Derives from `std::shared_ptr<Parser_t>`, so it IS the pointer it stands for:
  * copy it freely, pass it by value, test it with `if (parser)`. The `.` methods
  * are the read API a consumer uses; the body (`Parser_t`) is reached with `->`
- * when you include "IFE_Parser.hpp" — where the recovery / modification surface
- * (generate_file_map, recover_file_structure) lives. This mirrors the write
- * handle `Builder` beside it and FastFHIR's own `Parser` / `Builder` pair.
+ * when you include "IFE_Parser.hpp" — where the modification surface
+ * (generate_file_map) lives. This mirrors the write handle `Builder` beside it
+ * and FastFHIR's own `Parser` / `Builder` pair.
  *
  * Two ways to bind one. `Parser::open(path)` maps the file read-only and OWNS
  * the mapping: it stays mapped for as long as any copy of the handle lives, so
@@ -391,10 +392,9 @@ public:
     Size capacity() const noexcept;
 };
 
-// The ADVANCED tier — generate_file_map / recover_file_structure and their
-// file-map / verdict value types (FileMap, BlockVerdict, ...) — lives in
-// "IFE_Advanced.hpp". A consumer that only READS a slide includes this header
-// alone and never sees the recovery apparatus.
+// The ADVANCED tier — generate_file_map and its file-map value types
+// (FileMap, MapEntryType, Gap, ...) — lives in "IFE_Advanced.hpp". A consumer
+// that only READS a slide includes this header alone and never sees it.
 
 // MARK: - FILE ABSTRACTIONS
 // The file abstractions pull light-weight
@@ -568,9 +568,8 @@ struct IFE_EXPORT File {
     float            micronsPerPlane = 0.f;
 };
 
-// The file-map and recovery value types (MapEntryType, GapClass/Gap,
-// FileMapEntry, FileMap, ProducerFailure(Kind), BlockRef, RepairClass,
-// BlockVerdict, RecoveryReport) and the ADVANCED entry points moved out of
+// The file-map value types (MapEntryType, GapClass/Gap, FileMapEntry,
+// FileMap, ProducerFailure(Kind)) and the ADVANCED entry point moved out of
 // this header into the advanced tier — see "IFE_Advanced.hpp". This header is
 // the READ surface only: a consumer that opens a slide includes it alone.
 
@@ -587,7 +586,7 @@ struct IFE_EXPORT File {
 // (../FastFHIR/include/FastFHIR.hpp). Alias only: nothing here renames a
 // namespaced symbol, so existing consumers (Iris-Codec) are unaffected.
 //
-// The ADVANCED tier's aliases (FileMap, BlockRef, RecoveryReport, ...) live in
+// The ADVANCED tier's aliases (FileMap, MapEntryType, Gap, ...) live in
 // "IFE_Advanced.hpp" beside those types.
 //
 // Freeze: tests/ife_api_contract_tests.cpp asserts each of these resolves to
