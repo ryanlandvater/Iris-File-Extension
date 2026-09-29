@@ -123,9 +123,22 @@ jobs:
       # CI materializes exactly that layout. Plain git, not actions/checkout:
       # checkout@v4 rejects a `path:` outside the workspace ("Repository path
       # ... is not under ..."). The repo is public, so no token is needed.
+      # The clone prefers this owner's Iris-Headers fork, so a fork's CI builds
+      # against the fork's headers -- the same insulation the CMake fetch gives,
+      # and required here: the Org's Iris-Headers still lacks the Memory rename
+      # this branch depends on. Owners without a headers fork fall back to the
+      # upstream org.
       - name: Check out Iris-Headers beside the main repo
         shell: bash
-        run: git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-Headers.git ../Iris-Headers
+        run: |
+          if git clone --depth 1 "https://github.com/${{ github.repository_owner }}/Iris-Headers.git" ../Iris-Headers; then
+            echo "using ${{ github.repository_owner }}/Iris-Headers"
+          else
+            echo "no usable ${{ github.repository_owner }}/Iris-Headers" \
+                 "(any clone error above is expected) - falling back to IrisDigitalPathology"
+            rm -rf ../Iris-Headers
+            git clone --depth 1 https://github.com/IrisDigitalPathology/Iris-Headers.git ../Iris-Headers
+          fi
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true

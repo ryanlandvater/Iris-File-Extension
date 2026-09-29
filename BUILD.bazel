@@ -67,6 +67,7 @@ genrule(
     outs = [
         "generated_source/IFE_Blocks.hpp",
         "generated_source/IFE_Blocks.cpp",
+        "generated_source/IFE_Map.hpp",
         "generated_source/IFE_Validation.hpp",
         "generated_source/IFE_Validation.cpp",
     ],

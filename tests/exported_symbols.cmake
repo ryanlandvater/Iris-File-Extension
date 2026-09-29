@@ -44,8 +44,14 @@ foreach(line IN LISTS lines)
     # flag every exported symbol. The generated block layer lives in the THREE
     # sub-namespaces Iris::File::blocks / ::vtables / ::constants, whose mangled
     # spellings are the Itanium length-prefixed "4Iris4File6blocks" /
-    # "4Iris4File7vtables" / "4Iris4File9constants". Match those.
-    if(line MATCHES "4Iris4File(6blocks|7vtables|9constants)" AND NOT line MATCHES " U ")
+    # "4Iris4File7vtables" / "4Iris4File9constants" — but only when they LEAD
+    # the symbol. The bare substring also appears as a template ARGUMENT inside
+    # an unrelated symbol: std::set<std::pair<Offset, constants::RecoveryCodes>>
+    # mangles to _ZNSt8_Rb_tree...N4Iris4File9constants..., and libstdc++ leaves
+    # that weak emission externally visible where libc++ does not — so the bare
+    # match flagged it as a leak on the GCC legs only. Anchor at the symbol's
+    # leading "_ZN": a generated-layer symbol is always _ZN4Iris4File<subns>.
+    if(line MATCHES "_ZN4Iris4File(6blocks|7vtables|9constants)" AND NOT line MATCHES " U ")
         list(APPEND leaked "${line}")
     endif()
 endforeach()
