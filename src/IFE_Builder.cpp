@@ -362,10 +362,18 @@ void Builder_t::seal(::Iris::File::blocks::FileHeaderCreateInfo header)
 
 Builder Builder::create(const BuilderCreateInfo& info)
 {
+    // The arena is sized in std::size_t. On a 32-bit target (wasm32) a
+    // reservation past that range cannot be made: refuse it by name rather than
+    // let the conversion wrap the default 8 GiB to a few bytes.
+    if constexpr (sizeof(std::size_t) < sizeof(Size))
+        if (info.capacity > std::numeric_limits<std::size_t>::max())
+            throw std::invalid_argument("IFE Builder: a " + std::to_string(info.capacity) +
+                                        "-byte arena exceeds this platform's address space");
     // read_only stays false: a builder needs a writable mapping.
     Iris::Memory memory;
     const Iris::Result made = Iris::create_memory(
-        Iris::MemoryCreateInfo{.capacity = info.capacity, .filepath = info.filepath}, memory);
+        Iris::MemoryCreateInfo{.capacity = static_cast<std::size_t>(info.capacity),
+                               .filepath = info.filepath}, memory);
     if (!made)
         throw std::runtime_error("IFE Builder: could not create the arena (" +
                                  std::string(made.message) + ")");
