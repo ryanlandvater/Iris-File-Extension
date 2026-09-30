@@ -285,7 +285,7 @@ struct IFE_EXPORT BuilderTileTableInfo {
 /// What `Builder::finalize` writes into the FILE_HEADER: the two roots the
 /// caller placed, and the revision. The builder fills FILE_SIZE itself.
 struct IFE_EXPORT BuilderFinalizeInfo {
-    /// The TILE_TABLE block — what `append_tile_table` returned.
+    /// The TILE_TABLE block the caller placed (block tier: `append`).
     Offset   tileTable = ::Iris::File::constants::NULL_OFFSET;
     /// The METADATA block the caller placed (block tier: `append` or `fill`).
     Offset   metadata  = ::Iris::File::constants::NULL_OFFSET;
@@ -316,11 +316,11 @@ class Builder_t;   ///< the write BODY — defined in "IFE_Builder.hpp"
  * names the file and moves it once `finalize` returns.
  *
  * Usage: `create` → `set_tile_table` → `append_tile` / `append_null_tile` for
- * every tile (any order, any threads) → place the structure in the order you
- * choose: `append_tile_table`; `append_image` per associated image, then
- * `append_images`; `append_attributes`; the ICC profile and METADATA through
- * the block tier (`builder->append` / `claim` + `fill`) → `finalize` with the
- * tile table and metadata offsets.
+ * every tile (any order, any threads) and `append_image` per associated image
+ * → compose the structure in the order you choose through the block tier
+ * (`builder->append` / `claim` + `fill`), building the tile offsets from
+ * `tile_offsets()` and the images array from `image_entries()` → `finalize`
+ * with the tile table and metadata offsets.
  */
 class Builder : public std::shared_ptr<Builder_t>
 {
@@ -352,9 +352,9 @@ public:
      * Z-stacked one). Returns the stream's offset — the anchor the tile
      * offsets entry names; a frame, when written, sits just before it.
      *
-     * @throws std::logic_error before `set_tile_table`, after
-     *         `append_tile_table` or `finalize`, or if the tile was already
-     *         appended; std::out_of_range for a bad layer or tile;
+     * @throws std::logic_error before `set_tile_table` or after `finalize`,
+     *         or if the tile was already appended; std::out_of_range for a bad
+     *         layer or tile;
      *         std::invalid_argument for an empty stream, one of 16 MiB or
      *         more, or a plane count the layer does not allow.
      */
@@ -366,7 +366,7 @@ public:
     void append_null_tile(uint32_t layer, uint32_t tile) const;
 
     /** @brief Write one associated image (label + compressed stream) and record
-     *         its entry for `append_images`. Returns the IMAGE_BYTES block's
+     *         its entry for `image_entries`. Returns the IMAGE_BYTES block's
      *         offset.
      *  @throws std::invalid_argument for an empty stream, a label longer than
      *          65535 bytes, or a label already appended. */

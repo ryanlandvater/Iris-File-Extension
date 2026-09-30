@@ -38,11 +38,15 @@ Decisions (Ryan). The executable work orders live in the gitignored
   bytes ahead of the tile table; Iris-Codec could not reproduce the layout it
   has always written (fixed-size blocks ahead of ones an edit replaces:
   tiles → tile table → METADATA → ICC → images → attributes). `finalize` now
-  only seals (`BuilderFinalizeInfo{tileTable, metadata, revision}`); the
-  structure is placed by `append_tile_table`, `append_images` and
-  `append_attributes` on the handle and `claim` / `fill` / `append` behind
-  `->`, each landing at the head when called. Attributes are written in the
-  container's order. `ife_builder_layered_tests` (h) writes the same inputs in
+  only seals (`BuilderFinalizeInfo{tileTable, metadata, revision}`); the caller
+  composes every structure block through `claim` / `fill` / `append` behind
+  `->`, each landing at the head when called, from what the handle reports it
+  placed — `tile_offsets()` (refusing a tile nobody accounted for) and
+  `image_entries()`; `query()` reads the stream back. (Briefly the handle
+  placed the tile table, images array and attributes itself —
+  `append_tile_table` / `append_images` / `append_attributes`; folded into this
+  shape the same day, 4abcf16.) Nothing is sorted: attribute entries go down in
+  the order the caller writes them. `ife_builder_layered_tests` (h) writes the same inputs in
   two layouts; the shared sweep fixture is byte-identical to before.
 
 Implemented 2026-09-28: the rename; the Builder's application tier
@@ -57,12 +61,11 @@ arenas (Iris-Headers). Tests: `ife_builder_tests`, `ife_builder_layered_tests`,
 `ife_parser_tests`, `ife_blocks_tests`, and `ife_readme_compiles` (the README's
 examples, compiled as published).
 
-Consumed 2026-09-30 (Iris-Codec, uncommitted with this repository's layout
-change — land IFE first, since the codec calls `append_tile_table` et al.): the
-Encoder writes through a Builder — `append_tile` / `append_null_tile` from its
-pool, then its own layout (tile table, METADATA claimed early and filled last,
-ICC, images, attributes) and `finalize` — and moves the scratch file into
-place; the Slide holds a `Parser`. The codec's file-mapping layer
+Consumed 2026-09-30 (Iris-Codec 8a0f93f, landed with this repository's 4abcf16):
+the Encoder writes through a Builder — `append_tile` / `append_null_tile` from
+its pool, then composes its own layout from `tile_offsets()` / `image_entries()`
+(tile table, METADATA claimed early and filled last, ICC, images, attributes)
+and `finalize` — and moves the scratch file into place; the Slide holds a `Parser`. The codec's file-mapping layer
 (`IrisCodecFile.*`) is deleted. Its encoder output is byte-identical to its
 pre-Builder output. It writes no tile frames on single-plane layers; an Iris
 source's Z-stacked layers pass through framed, with their plane counts.

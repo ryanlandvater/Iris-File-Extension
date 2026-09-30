@@ -13,8 +13,8 @@
  *     recovery finds every reference intact.
  *   - NULL_TILE is a legitimate "no tile here"; an unaccounted tile is refused.
  *   - A Z-stacked layer frames every stream even with frames switched off.
- *   - Every misuse throws, and a refused `append_tile_table`,
- *     `append_attributes` or `finalize` writes nothing.
+ *   - Every misuse throws, and a refused `tile_offsets` or `finalize` writes
+ *     nothing.
  *   - The layout is the caller's: the same inputs placed in two orders give
  *     two valid files that read back alike, each block where it was put — a
  *     METADATA block `claim`ed early and `fill`ed last included.
