@@ -2261,7 +2261,7 @@ def emit_map_header(
 ) -> str:
     """IFE_Map.hpp — the generated wire-tag → map-entry vocabulary.
 
-    Included from IFE_Advanced.hpp (the advanced tier) after the Abstraction
+    Included from IFE_Recovery.hpp after the Abstraction
     namespace closes, so it may name MapEntryType; the file assumes that
     context and includes nothing itself. The mapping is derived from the
     spec's block inventory: every tagged block yields one case, so a new block
@@ -2273,7 +2273,7 @@ def emit_map_header(
         "#ifndef IFE_Map_hpp",
         "#define IFE_Map_hpp",
         "",
-        "// Included from IFE_Advanced.hpp after the Abstraction namespace.",
+        "// Included from IFE_Recovery.hpp after the Abstraction namespace.",
         "// One case per tagged block in the spec inventory; MAP_ENTRY_<name> is",
         "// a pure function of the inventory, so a renamed block breaks here",
         "// rather than silently mapping to UNDEFINED.",

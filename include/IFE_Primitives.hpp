@@ -54,7 +54,7 @@
 // The ADVANCED tier: `note()` below records into Abstraction::FileMap, so this
 // internal header depends on the advanced tier's value types. The edge is
 // deliberate — the primitives layer already reaches the semantic layer above.
-#include "IFE_Advanced.hpp"
+#include "IFE_Recovery.hpp"
 #include "IFE_Recovery.hpp"   // Recovery::Slot, which slots_of() fills
 
 namespace Iris::File {

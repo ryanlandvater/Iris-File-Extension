@@ -30,6 +30,20 @@ Decisions (Ryan). The executable work orders live in the gitignored
   (`IFE_EXPORT`, the `IFE_*` global aliases, `IFE_*.hpp`) name the product and
   stay. `Iris::File` no longer re-exports `Iris::` through a using-directive: a
   consumer that wants both unqualified writes both.
+- **The layout is the caller's (2026-09-30).** A Builder controls how the
+  stream is mutated — claim space at the head, fill it — and never where a
+  block goes: "like FastFHIR, that's up to the caller of Builder's API". The
+  first `finalize` wrote the whole structure in its own order and sorted the
+  attributes, which put METADATA after the mutable attribute blocks and image
+  bytes ahead of the tile table; Iris-Codec could not reproduce the layout it
+  has always written (fixed-size blocks ahead of ones an edit replaces:
+  tiles → tile table → METADATA → ICC → images → attributes). `finalize` now
+  only seals (`BuilderFinalizeInfo{tileTable, metadata, revision}`); the
+  structure is placed by `append_tile_table`, `append_images` and
+  `append_attributes` on the handle and `claim` / `fill` / `append` behind
+  `->`, each landing at the head when called. Attributes are written in the
+  container's order. `ife_builder_layered_tests` (h) writes the same inputs in
+  two layouts; the shared sweep fixture is byte-identical to before.
 
 Implemented 2026-09-28: the rename; the Builder's application tier
 (`set_tile_table` / `append_tile` / `append_null_tile` / `append_image` /
@@ -42,6 +56,16 @@ geometry (an ASan overflow); `Iris::Memory` reserve-not-commit on anonymous
 arenas (Iris-Headers). Tests: `ife_builder_tests`, `ife_builder_layered_tests`,
 `ife_parser_tests`, `ife_blocks_tests`, and `ife_readme_compiles` (the README's
 examples, compiled as published).
+
+Consumed 2026-09-30 (Iris-Codec, uncommitted with this repository's layout
+change — land IFE first, since the codec calls `append_tile_table` et al.): the
+Encoder writes through a Builder — `append_tile` / `append_null_tile` from its
+pool, then its own layout (tile table, METADATA claimed early and filled last,
+ICC, images, attributes) and `finalize` — and moves the scratch file into
+place; the Slide holds a `Parser`. The codec's file-mapping layer
+(`IrisCodecFile.*`) is deleted. Its encoder output is byte-identical to its
+pre-Builder output. It writes no tile frames on single-plane layers; an Iris
+source's Z-stacked layers pass through framed, with their plane counts.
 
 # ▶ RECOVERY REBUILD — the census engine (2026-09-28)
 
@@ -261,7 +285,7 @@ includes the ASan build (`cmake --build --preset asan && ctest --preset asan`).
   `walk_tile_entries`), and the sweep asserts that a file that validates can
   be read (red: removing the call fails it).
 - [x] **RB-2 — The generated reference table.** ✅ 2026-09-28.
-  `Abstraction::FieldInfo` (`IFE_Advanced.hpp`) mirrors FastFHIR's
+  `Abstraction::FieldInfo` (`IFE_Recovery.hpp`) mirrors FastFHIR's
   `FF_FieldInfo`, reference fields only: `name`, `field_offset`,
   `child_recovery`, `nullable`, `in_entry`, `since`.
   `reference_fields_view(owner)` is generated into `IFE_Map.hpp` from the

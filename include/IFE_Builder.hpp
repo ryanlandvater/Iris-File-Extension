@@ -7,13 +7,20 @@
  *   - PUBLIC  — `Iris::File::Builder` (declared in "IrisFileExtension.hpp"): a
  *               `std::shared_ptr<Builder_t>` handle. Its `.` methods are the
  *               application's write API — declare the tile table, append tiles
- *               and images, finalize. Code does not normally include this header.
+ *               and images, write the tile table, images array and attributes,
+ *               finalize.
  *   - BODY    — `Iris::File::Builder_t` (here): the heap-owned writer. It holds
  *               an `Iris::Memory` VMA and the arena's base pointer, and owns the
- *               claim/store arithmetic. Its block tier — `claim`,
- *               `append(XxxCreateInfo)`, `seal` — is for code that assembles
- *               blocks by hand (fixtures, tests). Reach it with `builder->…` by
+ *               claim/store arithmetic. Its block tier — `claim`, `fill`,
+ *               `append(XxxCreateInfo)`, `seal` — writes any block the caller
+ *               names, where the caller puts it: an encoder's ICC profile and
+ *               METADATA, fixtures, tests. Reach it with `builder->…` by
  *               including THIS header.
+ *
+ * LAYOUT IS THE CALLER'S. The builder claims space at the head and fills it;
+ * the order of the calls is the order on disk. It never reorders, defers or
+ * sorts what it is handed. A parent whose place is decided before its children
+ * exist is `claim`ed early and `fill`ed once their offsets are known.
  *
  * WHY THE SPLIT. `Builder_t` is only forward-declared in the public header, so
  * `builder->append(...)` resolves to nothing until "IFE_Builder.hpp" completes
@@ -71,12 +78,15 @@ namespace Iris::File {
  * `XxxCreateInfo` — the file's offsets are the caller's to place, exactly as
  * they are today, but the claim arithmetic and bounds are the builder's.
  *
- * THREADING. `claim()` is lock-free: the head is a `std::atomic` bumped with a
- * compare-exchange loop, so many producer threads may append concurrently and
- * each gets a distinct, whole range (the model the encoder's tile streams need).
- * `store()`/`size_of()` write only the range they claimed, so appends do not
- * race; `finalize()` is the single-threaded seal and must run once all appends
- * have joined.
+ * THREADING. The Builder is thread-safe for its write operations. `claim()` is
+ * lock-free — the head is a `std::atomic` bumped with a compare-exchange loop,
+ * so many producer threads may append concurrently and each gets a distinct,
+ * whole range (the model the encoder's tile streams need). The compound
+ * operations take a short mutex: `set_tile_table` (publishes the grid, slots and
+ * index together) and `append_image` / `image_entries` (a label set and the
+ * ordered entry vector move as one). `store()`/`size_of()` write only the range
+ * they claimed, so appends do not race. `finalize()` is the single-threaded seal
+ * and must run once all appends have joined.
  */
 class Builder_t
 {
@@ -105,17 +115,21 @@ class Builder_t
     /// bytes are reserved for `finalize`.
     std::atomic<::Iris::File::Offset> m_head{::Iris::File::blocks::FILE_HEADER::header_size};
     /// Set by `finalize`/`seal`; every later write throws.
-    std::atomic<bool> m_sealed{false};
+    std::atomic<bool> m_finalized{false};
 
     // ---- the tile table (set once by set_tile_table) ---------------------- //
     std::mutex                     m_table_mutex;  ///< serialises set_tile_table
     std::atomic<bool>              m_table_ready{false};
-    BuilderTileTableInfo           m_table;        ///< `planes` normalised to one per layer
+    /// The planes per layer, normalised (0 = single-plane). All the Builder keeps
+    /// from set_tile_table: it decides framing and the z-stack bound. The grid is
+    /// the CALLER's — it passed the BuilderTileTableInfo and keeps it to compose
+    /// the extent table; the Builder holds no such descriptor.
+    std::vector<std::uint16_t>     m_layer_planes;
     std::vector<std::uint64_t>     m_layer_first;  ///< global index of each layer's tile 0, + total
     std::unique_ptr<TileSlot[]>    m_slots;        ///< one per global tile index
 
     // ---- associated images ----------------------------------------------- //
-    std::mutex                          m_images_mutex;
+    mutable std::mutex                  m_images_mutex;
     std::vector<blocks::ImageEntry>     m_images;
     std::set<std::string>               m_image_labels;
 
@@ -136,8 +150,8 @@ public:
     /// Null after a file-backed `finalize` (the mapping is released); an
     /// anonymous builder keeps its bytes readable here after `finalize`.
     [[nodiscard]] ::Iris::File::BYTE* base() const noexcept { return m_base; }
-    /// Whether `finalize` / `seal` has run. A sealed builder accepts no writes.
-    [[nodiscard]] bool sealed() const noexcept { return m_sealed.load(std::memory_order_acquire); }
+    /// Whether `finalize` / `seal` has run. A finalized builder accepts no writes.
+    [[nodiscard]] bool is_finalized() const noexcept { return m_finalized.load(std::memory_order_acquire); }
     /// The committed write head: the offset the next block will land at.
     [[nodiscard]] ::Iris::File::Offset head() const noexcept {
         return m_head.load(std::memory_order_acquire);
@@ -149,12 +163,29 @@ public:
 
     // ---- the application tier (forwarded by the Builder handle) ----------- //
 
-    void   set_tile_table  (const BuilderTileTableInfo& info);
-    Offset append_tile     (std::uint32_t layer, std::uint32_t tile, const BYTE* data,
-                            Size size, std::uint16_t z_planes);
-    void   append_null_tile(std::uint32_t layer, std::uint32_t tile);
-    Offset append_image    (const AssociatedImageInfo& info, const BYTE* data, Size size);
-    void   finalize        (const BuilderFinalizeInfo& info);
+    void   set_tile_table   (const BuilderTileTableInfo& info);
+    Offset append_tile      (std::uint32_t layer, std::uint32_t tile, const BYTE* data,
+                             Size size, std::uint16_t z_planes);
+    void   append_null_tile (std::uint32_t layer, std::uint32_t tile);
+    Offset append_image     (const AssociatedImageInfo& info, const BYTE* data, Size size);
+    void   finalize         (const BuilderFinalizeInfo& info);
+
+    // ---- the write record: what the Builder placed, for the caller -------- //
+    // The caller composes the structure blocks, so it needs what the Builder
+    // recorded while placing: a tile's (offset, size) as it landed, and the
+    // image entries as they were appended. These are WRITE state, not a read
+    // of the file — a read of the arena is the Parser's job (see `query`).
+    [[nodiscard]] std::vector<blocks::TileOffsetEntry> tile_offsets() const;
+    [[nodiscard]] std::vector<blocks::ImageEntry>      image_entries() const;
+
+    // ---- the read side: the Builder mints a Parser ------------------------ //
+    // No read of the arena is re-implemented here. A caller that needs to read
+    // gets a Parser over this Builder's mapping — FastFHIR's
+    // `Builder_t::query()` returns `Parser(m_memory)`. The mapping stays the
+    // Builder's (it is writable); the Parser is a read lens sharing it.
+    // Meaningful once the file has a header (a mounted stream, or after
+    // `finalize`).
+    Parser query() const;
 
     // ---- the block tier (reached with `builder->…`) ----------------------- //
 
@@ -165,38 +196,61 @@ public:
      * loop, so concurrent callers each get a distinct whole range. A claim that
      * would pass the arena's capacity throws rather than writing out of bounds.
      * That is terminal by design: the reservation is never remapped. A claim on
-     * a sealed builder throws `std::logic_error`.
+     * a finalized builder throws `std::logic_error`.
      */
     ::Iris::File::Offset claim(::Iris::File::Size bytes);
 
     /**
-     * @brief Write one block and return its offset.
+     * @brief Write one block into space already claimed, at @p offset.
      *
-     * `size_of` gives the block's extent, `claim` reserves it, and `store`
-     * writes and self-validates it. The write is checked: a `store` that
-     * reports a failure is a bug in the CreateInfo, not a recoverable state,
-     * so it throws with the failing block named.
+     * The fill half of claim-and-fill: a block whose place is decided before
+     * its contents are known — a parent reserved ahead of the children it will
+     * name — is `claim`ed then, and filled here once they exist. `store` writes
+     * and self-validates it; a failure is a bug in the CreateInfo, not a
+     * recoverable state, so it throws with the failing block named.
+     * @throws std::out_of_range if the block would leave claimed space or
+     *         touch the FILE_HEADER region (which only `seal` writes);
+     *         std::logic_error on a finalized builder.
      */
     template <typename T_Info>
-    ::Iris::File::Offset append(const T_Info& info)
+    void fill(::Iris::File::Offset offset, const T_Info& info)
     {
-        const ::Iris::File::Offset offset = claim(::Iris::File::blocks::size_of(info));
+        ensure_open("fill");
+        const ::Iris::File::Size   size = ::Iris::File::blocks::size_of(info);
+        const ::Iris::File::Offset head = m_head.load(std::memory_order_acquire);
+        // Never `offset + size <= head`: that sum can wrap.
+        if (offset < ::Iris::File::blocks::FILE_HEADER::header_size || offset > head ||
+            head - offset < size)
+            throw std::out_of_range("IFE Builder: a " + std::to_string(size) +
+                                    "-byte block at offset " + std::to_string(offset) +
+                                    " leaves the claimed range [" +
+                                    std::to_string(::Iris::File::blocks::FILE_HEADER::header_size) +
+                                    ", " + std::to_string(head) + ")");
         const ::Iris::File::blocks::Status status = ::Iris::File::blocks::store(m_base, offset, info);
         if (!status)
             throw std::runtime_error("IFE Builder: store failed for block at offset " +
                                      std::to_string(offset) +
                                      " (status block '" + std::string(status.block) +
                                      "', field '" + std::string(status.field) + "')");
+    }
+
+    /// Claim a block's extent at the head, fill it, and return its offset.
+    template <typename T_Info>
+    ::Iris::File::Offset append(const T_Info& info)
+    {
+        const ::Iris::File::Offset offset = claim(::Iris::File::blocks::size_of(info));
+        fill(offset, info);
         return offset;
     }
 
     /**
      * @brief Write the FILE_HEADER at offset 0 and seal: the block tier's end.
      *
-     * `finalize` calls this after writing the structure; a caller assembling
-     * blocks by hand calls it directly. @p header must carry every header
-     * field except `FILE_SIZE`, which the builder fills with its committed
-     * head — the one field the writer knows and the caller should not restate.
+     * `finalize` forwards to this; a caller that needs header fields
+     * `BuilderFinalizeInfo` does not carry calls it directly. @p header must
+     * carry every header field except `FILE_SIZE`, which the builder fills with
+     * its committed head — the one field the writer knows and the caller
+     * should not restate.
      *
      * File-backed: the mapping is released FIRST, then the file is truncated
      * from its reservation to the committed size. The order matters on Windows,

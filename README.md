@@ -122,14 +122,16 @@ std::span<const BYTE> stream   = parser.tile(layer, tile); // zero-copy; empty =
 `validate_file_structure` deep-validates the offset graph and bounds-checks every tile entry. `abstraction()` and `abstract_file_structure` check every block they read — both witnesses, and every length the block declares — and throw `std::runtime_error` on a structurally damaged file rather than reading it. They never return values they could not verify, and never repair; to reopen a damaged file, see [Recovering a Damaged File](#recovering-a-damaged-file). A caller that maps the file itself can bind a Parser to that mapping instead — `Parser({ptr, size})` borrows it — or call the free functions `validate_file_structure` / `abstract_file_structure` directly.
 
 ### Writing a Slide
-The Builder lays the bytes down; your encoder runs the application. Declare the tile pyramid, append every tile (from any number of threads, in any order), append the associated images, and `finalize`. The Builder frames each tile stream by default (and always on a Z-stacked layer), refuses to finalize while any tile is unaccounted for, and leaves a complete, closed file.
+The Builder controls how the stream is mutated — it claims space at the head and fills it — and your encoder decides everything else, the layout included: every `append_*` lands where the head is when you call it, so the order of your calls is the order on disk. Declare the tile pyramid, append every tile (from any number of threads, in any order) and the associated images, then compose the structure — tile table, images array, attributes, METADATA — from the grid you declared and the Builder's report of what it placed (`tile_offsets`, `image_entries`), and `finalize` with the two roots. The Builder frames each tile stream by default (and always on a Z-stacked layer), refuses to report placements while any tile is unaccounted for, and leaves a complete, closed file. A block you want early but can only fill later (METADATA names the blocks after it) is `claim`ed early and `fill`ed once they exist.
 <!-- ife-compile: fragment -->
 ```cpp
 #include "IrisFileExtension.hpp"
+#include "IFE_Builder.hpp"   // the block tier: builder->claim / fill / append
 #include <filesystem>
 
 using namespace Iris;
 using namespace Iris::File;
+namespace b = Iris::File::blocks;
 
 // The encoder picks the file name; the builder writes where it is told.
 Builder builder = Builder::create({.filepath = temp_path});
@@ -145,7 +147,38 @@ builder.append_tile(layer, tile, jpeg.data(), jpeg.size());
 builder.append_null_tile(layer, blank);  // no tile at this position (NULL_TILE)
 
 builder.append_image(thumbnail_info, thumbnail.data(), thumbnail.size());
-builder.finalize({.metadata = metadata});
+
+// The layout is yours. The grid is the `table` you declared above; the
+// Builder reports where it placed the tiles (`tile_offsets`). Name each block
+// and its order. Here the fixed-size METADATA is reserved ahead of the blocks
+// a later edit replaces, and filled once their offsets exist.
+const auto tiles  = builder.tile_offsets();
+const auto planes = table.planes.empty()
+    ? std::vector<uint16_t>(table.extent.layers.size(), 0) : table.planes;
+std::vector<b::LayerExtentEntry> extents;
+for (std::size_t l = 0; l < table.extent.layers.size(); ++l)
+    extents.push_back({.X_TILES  = table.extent.layers[l].xTiles,
+                       .Y_TILES  = table.extent.layers[l].yTiles,
+                       .SCALE    = table.extent.layers[l].scale,
+                       .Z_PLANES = planes[l]});
+const Offset offsets_at = builder->append(b::TileOffsetsCreateInfo{.entries = tiles});
+const Offset extents_at = builder->append(b::LayerExtentsCreateInfo{.entries = extents});
+const Offset table_at   = builder->append(b::TileTableCreateInfo{
+    .ENCODING             = static_cast<constants::TileEncodings>(table.encoding),
+    .FORMAT               = static_cast<constants::PixelFormats>(table.format),
+    .TILE_OFFSETS_OFFSET  = offsets_at,
+    .LAYER_EXTENTS_OFFSET = extents_at,
+    .X_EXTENT             = table.extent.width,
+    .Y_EXTENT             = table.extent.height,
+    .TILE_LENGTH          = table.tileLength});
+const Offset metadata_at = builder->claim(b::METADATA::header_size);
+const auto   images      = builder.image_entries();
+const Offset images_at   = builder->append(b::ImagesCreateInfo{.entries = images});
+builder->fill(metadata_at, b::MetadataCreateInfo{
+    .ATTRIBUTES_OFFSET = constants::NULL_OFFSET,   // attributes omitted here
+    .IMAGES_OFFSET     = images_at,
+    .MICRONS_PIXEL     = metadata.micronsPerPixel});
+builder.finalize({.tileTable = table_at, .metadata = metadata_at});
 
 // Complete and closed: moving it into place is the encoder's job.
 std::filesystem::rename(temp_path, final_path);
@@ -190,7 +223,7 @@ for (uint32_t i = 0; offsets && i < offsets.count(); ++i) {
 **File data mapping is more advanced functionality.** A file map records the location, size and type of every block, keyed by offset (a `std::map`), so you can find every block at or after a byte you are about to write — critical when modifying or recovering a file. An entry carries the type and offset; build the handle you want from them.
 <!-- ife-compile: fragment -->
 ```cpp
-#include "IFE_Advanced.hpp"
+#include "IFE_Recovery.hpp"
 #include "IFE_Primitives.hpp"
 
 using namespace Iris::File;

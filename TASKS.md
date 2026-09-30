@@ -41,11 +41,11 @@ returned per call, but the sink attributes diagnostics to the wrong store.
 
 ### Where the concurrency comes from
 
-Iris-Codec encodes tiles on `hardware_concurrency()` workers and claims each tile's
-space with `offset.fetch_add(entry.size)` after compression returns
-(`../Iris-Codec/src/IrisCodecEncoder.cpp:753`; IFE's own `Builder::append_tile` claims
-the same way, from any thread). A writer that validates `TILE_PIXEL_DATA` or the per-layer
-tables from those workers reaches `__report` from many threads at once.
+Iris-Codec encodes tiles on `hardware_concurrency()` workers and hands each stream to
+`Builder::append_tile` after compression returns (since 2026-09-30; it used to claim
+with its own `offset.fetch_add`), which claims lock-free from any thread. A writer that
+validates `TILE_PIXEL_DATA` or the per-layer tables from those workers reaches
+`__report` from many threads at once.
 
 **Current exposure: latent.** In the checkouts read on 2026-09-15, Iris-Codec does not
 reference `ValidationHooks`, so no shipped path attaches the layer to the parallel

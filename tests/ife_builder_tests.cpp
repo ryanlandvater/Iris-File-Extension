@@ -337,7 +337,7 @@ int main() {
         Iris::File::Builder builder = build_minimal_slide(
             t, {}, Iris::File::BuilderCreateInfo{.filepath = written});   // default 8 GiB
         IFE_CHECK(builder.capacity() == (Iris::File::Size{8} << 30));
-        IFE_CHECK(builder->sealed());
+        IFE_CHECK(builder->is_finalized());
         IFE_CHECK(builder->base() == nullptr);                 // mapping released
         std::error_code ec;
         IFE_CHECK(fs::file_size(written, ec) == builder.head());

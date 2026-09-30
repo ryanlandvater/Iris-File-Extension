@@ -12,7 +12,7 @@
  * Self-contained; non-zero exit on failure.
  */
 #include "IrisFileExtension.hpp"
-#include "IFE_Advanced.hpp"   // generate_file_map + MapEntryType (advanced tier)
+#include "IFE_Recovery.hpp"   // the file-map surface (generate_file_map, MapEntryType)
 
 // The corruption test below has to reach one field of one entry to break it.
 // Included for the generated offsets rather than to test the block layer,

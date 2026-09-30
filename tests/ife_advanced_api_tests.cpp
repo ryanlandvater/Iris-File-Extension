@@ -1,16 +1,16 @@
 /**
  * @file ife_advanced_api_tests.cpp
- * @brief The ADVANCED tier (IFE_Advanced.hpp): the modification surface —
+ * @brief The file map (IFE_Recovery.hpp): the modification surface —
  *        the file map and the gap census, plus generate_file_map.
  *
- * Its counterpart, ife_api_contract_tests.cpp, proves the PUBLIC tier
+ * Its counterpart, ife_api_contract_tests.cpp, proves the PUBLIC read tier
  * (IrisFileExtension.hpp) carries the READ surface alone. Together they are
- * the tier boundary: this file includes the advanced header; that one does
- * not, and could not name FileMap.
+ * the boundary: this file includes IFE_Recovery.hpp; that one does not, and
+ * could not name FileMap.
  *
  * SELF-CONTAINED (no external framework). Non-zero exit on failure.
  */
-#include "IFE_Advanced.hpp"
+#include "IFE_Recovery.hpp"
 
 #include <cstdint>
 #include <cstdio>

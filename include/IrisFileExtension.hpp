@@ -282,19 +282,15 @@ struct IFE_EXPORT BuilderTileTableInfo {
     uint16_t              tileLength = 256;
 };
 
-/// What `Builder::finalize` needs beyond what was appended: the inverse of the
-/// metadata `abstract_file_structure` reads back.
+/// What `Builder::finalize` writes into the FILE_HEADER: the two roots the
+/// caller placed, and the revision. The builder fills FILE_SIZE itself.
 struct IFE_EXPORT BuilderFinalizeInfo {
-    /// Codec version, attributes, ICC profile, microns per pixel, magnification.
-    /// `associatedImages`, `annotations` and `annotationGroups` are not read:
-    /// images are appended with `append_image`, and annotations are not written
-    /// yet.
-    Metadata metadata;
-    /// Microns between adjacent focal planes of a Z-stacked slide; zero when it
-    /// is not Z-stacked or the spacing is unknown.
-    float    micronsPerPlane = 0.f;
+    /// The TILE_TABLE block — what `append_tile_table` returned.
+    Offset   tileTable = ::Iris::File::constants::NULL_OFFSET;
+    /// The METADATA block the caller placed (block tier: `append` or `fill`).
+    Offset   metadata  = ::Iris::File::constants::NULL_OFFSET;
     /// FILE_REVISION.
-    uint32_t revision        = 0;
+    uint32_t revision  = 0;
 };
 
 class Builder_t;   ///< the write BODY — defined in "IFE_Builder.hpp"
@@ -309,17 +305,22 @@ class Builder_t;   ///< the write BODY — defined in "IFE_Builder.hpp"
  * (`claim`, `append(XxxCreateInfo)`, `seal`). This mirrors FastFHIR's
  * `Builder` / `Builder_t` and the read handle `Parser` beside it.
  *
- * THE SPLIT. A builder lays bytes down; it does not run the application. It
- * claims space and writes every block, records where each tile landed, frames
- * the tiles, checks every tile was accounted for, and at `finalize` leaves a
- * complete file. It starts no threads and schedules no work — `append_tile`
+ * THE SPLIT. A builder controls how the stream is mutated: it claims space at
+ * the head and fills it, records where each tile landed, frames the tiles, and
+ * checks every tile was accounted for. It does NOT choose the layout. Every
+ * `append_*` lands at the head when it is called, so the order of the calls is
+ * the order on disk, and that order is the caller's to decide — as it is for a
+ * FastFHIR Builder. It starts no threads and schedules no work — `append_tile`
  * is safe to call from many threads at once, but which thread encodes which
  * tile is the caller's business. It does not choose or move files: the caller
  * names the file and moves it once `finalize` returns.
  *
  * Usage: `create` → `set_tile_table` → `append_tile` / `append_null_tile` for
- * every tile (any order, any threads) and `append_image` for each associated
- * image → `finalize`.
+ * every tile (any order, any threads) → place the structure in the order you
+ * choose: `append_tile_table`; `append_image` per associated image, then
+ * `append_images`; `append_attributes`; the ICC profile and METADATA through
+ * the block tier (`builder->append` / `claim` + `fill`) → `finalize` with the
+ * tile table and metadata offsets.
  */
 class Builder : public std::shared_ptr<Builder_t>
 {
@@ -351,10 +352,11 @@ public:
      * Z-stacked one). Returns the stream's offset — the anchor the tile
      * offsets entry names; a frame, when written, sits just before it.
      *
-     * @throws std::logic_error before `set_tile_table` or after `finalize`, or
-     *         if the tile was already appended; std::out_of_range for a bad
-     *         layer or tile; std::invalid_argument for an empty stream, one of
-     *         16 MiB or more, or a plane count the layer does not allow.
+     * @throws std::logic_error before `set_tile_table`, after
+     *         `append_tile_table` or `finalize`, or if the tile was already
+     *         appended; std::out_of_range for a bad layer or tile;
+     *         std::invalid_argument for an empty stream, one of 16 MiB or
+     *         more, or a plane count the layer does not allow.
      */
     Offset append_tile(uint32_t layer, uint32_t tile, const BYTE* data, Size size,
                        uint16_t z_planes = 0) const;
@@ -364,24 +366,43 @@ public:
     void append_null_tile(uint32_t layer, uint32_t tile) const;
 
     /** @brief Write one associated image (label + compressed stream) and record
-     *         its entry. Returns the IMAGE_BYTES block's offset.
+     *         its entry for `append_images`. Returns the IMAGE_BYTES block's
+     *         offset.
      *  @throws std::invalid_argument for an empty stream, a label longer than
      *          65535 bytes, or a label already appended. */
     Offset append_image(const AssociatedImageInfo& info, const BYTE* data, Size size) const;
 
+    // The structure blocks are the caller's to compose: the Builder placed the
+    // tiles and the images, so it reports what it placed, and the caller names
+    // each block (TileOffsetsCreateInfo, LayerExtentsCreateInfo, …) and its
+    // order. These two are that report — write state, not a read of the file.
+
+    /** @brief Every tile's placement, in global tile-index order (layer 0's
+     *         tiles first), as `append_tile` / `append_null_tile` recorded it.
+     *  @throws std::logic_error before `set_tile_table`, or for a tile that was
+     *         never appended. Call once every append has joined. */
+    std::vector<blocks::TileOffsetEntry> tile_offsets() const;
+
+    /** @brief The associated-image entries, in append order, as `append_image`
+     *         recorded them — the source a caller composes `ImagesCreateInfo`
+     *         from. */
+    std::vector<blocks::ImageEntry> image_entries() const;
+
+    /** @brief A Parser over the builder's own mapping, so a read is never
+     *         re-implemented here (FastFHIR's `Builder_t::query()`). Meaningful
+     *         once the stream has a header: a mounted stream, or after
+     *         `finalize`. */
+    Parser query() const;
+
     /**
-     * @brief Write the file's structure and seal it.
+     * @brief Seal the file: write the FILE_HEADER naming @p info's tile table
+     *        and metadata, with FILE_SIZE the committed head.
      *
-     * Every input is checked before anything is written, so a refused
-     * `finalize` leaves no half-written structure: every tile must have been
-     * appended (or appended null) — a tile nobody accounted for is reported,
-     * never published as "no tile here" — and the attributes, if any, must
-     * declare a format. Then the tile offsets, layer extents, tile table, ICC
-     * profile, images array, attributes and metadata are written, and the file
-     * header last. A file-backed builder releases its mapping and truncates
-     * the file to its written size, leaving it closed for the caller to move.
-     * After this the builder accepts no more writes. Call it once every append
-     * has joined.
+     * A file-backed builder releases its mapping and truncates the file to its
+     * written size, leaving it closed for the caller to move. After this the
+     * builder accepts no more writes. Call it once every append has joined.
+     * @throws std::invalid_argument, before any write, if either root is
+     *         NULL_OFFSET.
      */
     void finalize(const BuilderFinalizeInfo& info) const;
 
@@ -390,11 +411,15 @@ public:
 
     /** @brief The arena's reserved extent in bytes. */
     Size capacity() const noexcept;
+
+    /** @brief Whether `finalize` / `seal` has run; a finalized builder accepts
+     *         no more writes. */
+    [[nodiscard]] bool is_finalized() const noexcept;
 };
 
-// The ADVANCED tier — generate_file_map and its file-map value types
-// (FileMap, MapEntryType, Gap, ...) — lives in "IFE_Advanced.hpp". A consumer
-// that only READS a slide includes this header alone and never sees it.
+// generate_file_map and its file-map value types (FileMap, MapEntryType, Gap,
+// ...) live in "IFE_Recovery.hpp", with the recovery engine. A consumer that
+// only READS a slide includes this header alone and never sees them.
 
 // MARK: - FILE ABSTRACTIONS
 // The file abstractions pull light-weight
@@ -569,9 +594,9 @@ struct IFE_EXPORT File {
 };
 
 // The file-map value types (MapEntryType, GapClass/Gap, FileMapEntry,
-// FileMap, ProducerFailure(Kind)) and the ADVANCED entry point moved out of
-// this header into the advanced tier — see "IFE_Advanced.hpp". This header is
-// the READ surface only: a consumer that opens a slide includes it alone.
+// FileMap, ProducerFailure(Kind)) and generate_file_map live in
+// "IFE_Recovery.hpp", with the recovery engine. This header is the READ
+// surface only: a consumer that opens a slide includes it alone.
 
 }  // namespace Abstraction
 }  // namespace Iris::File
@@ -586,8 +611,8 @@ struct IFE_EXPORT File {
 // (../FastFHIR/include/FastFHIR.hpp). Alias only: nothing here renames a
 // namespaced symbol, so existing consumers (Iris-Codec) are unaffected.
 //
-// The ADVANCED tier's aliases (FileMap, MapEntryType, Gap, ...) live in
-// "IFE_Advanced.hpp" beside those types.
+// The file-map aliases (FileMap, MapEntryType, Gap, ...) live in
+// "IFE_Recovery.hpp" beside those types.
 //
 // Freeze: tests/ife_api_contract_tests.cpp asserts each of these resolves to
 // its namespaced type, so a rename on either side fails that build.

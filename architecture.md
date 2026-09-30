@@ -63,7 +63,8 @@ schema edit needs a `cmake .` before it reaches a build directory.
 | how many entries an array has | its stamped `COUNT`, bounded by arena geometry | a walk that stops at the first invalid entry |
 | whether a block is the one it claims to be | `validate()` — a handle's bool | an offset that merely lands in range (`in_bounds()` is for code that reads damaged files on purpose) |
 | how to repair a damaged block | the recovery engine — absent from this revision, being rebuilt | the read path, which refuses and never repairs (§6) |
-| where a tile or image stream lands, and the file's structure | `Builder` | the application calling it |
+| how the stream is mutated: claims, bounds, fills, tile placements and frames | `Builder` | the application calling it |
+| the layout — which block goes where, in what order | the application, through the order of its `append_*` / `claim` + `fill` calls | the `Builder` |
 | the file's name, and moving it | the application | the `Builder` |
 
 ### The handles, and the split with an application
@@ -75,8 +76,8 @@ depends on IFE, not the reverse.
 
 | Layer | Owns | Never |
 |---|---|---|
-| application (e.g. an encoder) | sources, compression, threads and which thread encodes which tile, progress, file names and moving files | offsets, blocks, `store` / `size_of` / `CreateInfo` |
-| `Builder` | the reservation, byte-space claims, every block write, the tile placements, tile frames, the completeness check, the header, a closed file at `finalize` | threads, scheduling, codecs, choosing or moving files |
+| application (e.g. an encoder) | sources, compression, threads and which thread encodes which tile, progress, the layout (the order it places blocks in), file names and moving files | claim arithmetic, bounds, `base + offset` writes, `store` / `size_of` |
+| `Builder` | the reservation, byte-space claims and fills, every block write, the tile placements, tile frames, the completeness check, the header, a closed file at `finalize` | threads, scheduling, codecs, the layout, choosing or moving files |
 | application (e.g. a slide reader) | decompression, pixel formats, output buffers | mapping the file, `base + offset` |
 | `Parser` | the read-only mapping (owned via `Parser::open`), validation, the lifted structure, bounds-checked byte spans | decoding |
 
@@ -85,7 +86,23 @@ into place is the application's policy. It names the temp file, hands the path
 to `Builder::create`, and moves the file once `finalize` returns; the Builder's
 contract is only to leave the file complete, truncated and closed. Ask of any
 new feature: does it decide *what or where* (application) or *how the bytes are
-laid down* (Builder)?
+laid down* (Builder)? The layout is a *where*: every `append_*` lands at the
+head when it is called, so the application's call order is the file's order.
+
+**The same verbs as FastFHIR.** The handles are FastFHIR's (`../FastFHIR`,
+`FF_Access.hpp` / `FF_Builder.hpp` and its Python module), so a programmer who
+knows one reads the other. Where a concept exists in both, it has the same name
+and shape; keep it that way, and model IFE's Python bindings (R-4) on
+FastFHIR's `ff.Memory` / `ff.Builder` the same way.
+
+| Concept | FastFHIR | IFE |
+|---|---|---|
+| make a writer | `FF_CreateBuilder({capacity, filepath, …})`; body `Builder_t(Memory, …)` | `Builder::create({capacity, filepath, tile_frames})`; body `Builder_t(Memory, info)` |
+| write a block at the head, get its offset | `builder->append(T)` | `builder->append(XxxCreateInfo)`; `append_tile` / `append_image` / `append_tile_table` / `append_images` / `append_attributes` |
+| reserve raw space | `claim_child_space(bytes)` | `builder->claim(bytes)` |
+| write into space claimed earlier | `claim_child_space` + a four-argument `STORE_*` | `builder->fill(offset, XxxCreateInfo)` |
+| name the root(s), then seal | `set_root(handle)` (Python `builder.root = node`), then `finalize(algo)` | `finalize({tileTable, metadata, revision})` — the header has two roots |
+| read | `Parser(buffer, size)`, `Parser(Memory)` | `Parser(FileAccessInfo)`, `Parser::open(path)` |
 
 **The arena never remaps.** A Builder reserves a large sparse range (8 GiB by
 default) and never moves it: growth is pages touched inside the reservation, and
@@ -340,7 +357,7 @@ Explicit so they are not rediscovered as bugs.
 | `ife_recovery_tests` | the census, as FastFHIR tests its own: a clean file is one attached island matching `generate_file_map`; a newer writer's skew is no hole; every single flip opens exactly the points it explains |
 | `ife_v1_oracle_tests` | generated offsets against the frozen 1.0 witness |
 | `ife_builder_tests` | the block tier (`claim` / `append` / `seal`): the header region is reserved, tile entries are bounds-checked on read, Z-stacked tiles must be framed, the never-remapped reservation, a closed file at seal |
-| `ife_builder_layered_tests` | the application tier: threaded `append_tile` in any order, null tiles, images, `finalize` round-trips through the read path; misuse throws and a refused `finalize` writes nothing |
+| `ife_builder_layered_tests` | the application tier: threaded `append_tile` in any order, null tiles, images, the caller-placed structure round-trips through the read path in either of two layouts (METADATA `claim`ed early and `fill`ed last, or appended last); misuse throws and a refused write writes nothing |
 | `ife_parser_tests` | `Parser::open` owns its mapping; zero-copy `tile()` / `image()` spans; `tile_planes()`; lifetime across handle copies |
 
 Every test target — the rebuilt recovery targets included — is registered in

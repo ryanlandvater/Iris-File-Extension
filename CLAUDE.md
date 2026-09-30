@@ -243,10 +243,20 @@ What survives a handoff belongs in `MIGRATION.md`, here, or in a test.
 
 ## The Builder lays bytes down; it does not run the application
 
-`Iris::File::Builder` claims space and writes every block; the application
-that owns it (Iris-Codec's Encoder) does sources, codecs, threads, and file
-names. Three things that look like missing features are that split:
+`Iris::File::Builder` controls how the stream is mutated: it claims space at
+the head and fills it. The application that owns it (Iris-Codec's Encoder)
+does sources, codecs, threads, file names — and the layout. Four things that
+look like missing features are that split:
 
+* **The Builder does not choose the layout.** Every `append_*` lands at the
+  head when it is called; the order of the calls is the order on disk, as with
+  a FastFHIR Builder. There is no "write the structure" call that fixes an
+  order, and nothing is deferred, reordered or sorted — attribute entries go
+  down in the order the container yields them. A block the caller wants early
+  but can only fill later (METADATA names the blocks after it) is `claim`ed
+  early and `fill`ed later. Do not add a finalize that lays blocks out: the
+  2026-09-30 one put METADATA after the attributes and image bytes ahead of
+  the tile table, and no caller could reproduce the layout it replaced.
 * **The Builder does not choose or move files.** An encoder writes to the temp
   directory and moves the finished file into place; the Builder writes where it
   is told and leaves the file complete and closed at `finalize`. Do not add

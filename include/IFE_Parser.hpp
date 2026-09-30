@@ -33,7 +33,7 @@
 #include <string>
 
 #include "IrisFileExtension.hpp"   // the Parser handle, FileAccessInfo, the read entry points
-#include "IFE_Advanced.hpp"        // the file-map surface (generate_file_map, ...)
+#include "IFE_Recovery.hpp"        // the file-map surface (generate_file_map, ...)
 
 namespace Iris::File {
 

@@ -171,7 +171,6 @@ set (
     ${IFE_INCLUDE_DIR}/IrisFileExtension.hpp
     ${IFE_INCLUDE_DIR}/IFE_Bytes.hpp
     ${IFE_INCLUDE_DIR}/IFE_Primitives.hpp
-    ${IFE_INCLUDE_DIR}/IFE_Advanced.hpp
     ${IFE_INCLUDE_DIR}/IFE_Recovery.hpp
     ${IFE_INCLUDE_DIR}/IFE_Builder.hpp
     ${IFE_INCLUDE_DIR}/IFE_Parser.hpp

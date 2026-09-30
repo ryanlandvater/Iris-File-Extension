@@ -6,6 +6,7 @@
  */
 
 #include "IFE_Builder.hpp"
+#include "IFE_Parser.hpp"       // Parser_t, for Builder_t::query()
 
 #include <algorithm>
 #include <cstddef>
@@ -57,7 +58,7 @@ Builder_t::Builder_t(const Iris::Memory& memory, const BuilderCreateInfo& info)
 
 void Builder_t::ensure_open(const char* what) const
 {
-    if (m_sealed.load(std::memory_order_acquire))
+    if (m_finalized.load(std::memory_order_acquire))
         throw std::logic_error(std::string("IFE Builder: ") + what +
                                " after finalize; the builder accepts no more writes");
 }
@@ -120,8 +121,8 @@ void Builder_t::set_tile_table(const BuilderTileTableInfo& info)
             "IFE Builder: " + std::to_string(first.back()) +
             " tiles exceed what a u32 global tile index can address");
 
-    m_table = info;
-    if (m_table.planes.empty()) m_table.planes.assign(layers.size(), 0);   // 0 = single plane
+    m_layer_planes = info.planes;
+    if (m_layer_planes.empty()) m_layer_planes.assign(layers.size(), 0);   // 0 = single plane
     m_layer_first = std::move(first);
     m_slots       = std::make_unique<TileSlot[]>(m_layer_first.back());
     m_table_ready.store(true, std::memory_order_release);
@@ -159,7 +160,7 @@ Offset Builder_t::append_tile(std::uint32_t layer, std::uint32_t tile, const BYT
     // A Z-stacked layer frames every stream, because the frame is the only
     // place the format records how many planes a stream carries; a stream
     // may carry fewer than the layer's maximum, never more.
-    const std::uint16_t layer_planes = m_table.planes[layer];
+    const std::uint16_t layer_planes = m_layer_planes[layer];
     const bool          z_stacked    = layer_planes > 1;
     const std::uint16_t max_planes   = z_stacked ? layer_planes : 1;
     if (z_planes > max_planes)
@@ -262,111 +263,60 @@ Offset Builder_t::append_image(const AssociatedImageInfo& info, const BYTE* data
     return at;
 }
 
+// ---- the write record, and the read side -------------------------------- //
+
+std::vector<b::TileOffsetEntry> Builder_t::tile_offsets() const
+{
+    if (!m_table_ready.load(std::memory_order_acquire))
+        throw std::logic_error("IFE Builder: tile_offsets before set_tile_table");
+    // Every tile must be accounted for — a tile nobody appended is reported,
+    // never published as NULL_TILE. Call once the appends have joined.
+    const std::uint64_t total = m_layer_first.back();
+    std::vector<b::TileOffsetEntry> tiles(total);
+    for (std::uint64_t g = 0; g < total; ++g) {
+        const Offset offset = m_slots[g].offset.load(std::memory_order_acquire);
+        if (offset == UNWRITTEN)
+            throw std::logic_error("IFE Builder: the tile at global index " +
+                                   std::to_string(g) + " was never appended");
+        tiles[g] = {.OFFSET = offset, .SIZE = m_slots[g].size};
+    }
+    return tiles;
+}
+
+std::vector<b::ImageEntry> Builder_t::image_entries() const
+{
+    std::lock_guard<std::mutex> lock(m_images_mutex);
+    return m_images;                  // the entries as append_image recorded them
+}
+
+Parser Builder_t::query() const
+{
+    // A Parser over this Builder's own mapping — FastFHIR's
+    // `Builder_t::query()`. The mapping stays the Builder's (it is writable);
+    // the Parser is a read lens that SHARES the memory handle, so a read of
+    // the arena is never re-implemented here. Meaningful once the stream has a
+    // header; a file-backed `finalize` releases the mapping, after which a
+    // reader opens the sealed file with Parser::open.
+    auto owner = std::make_shared<Iris::Memory>(m_memory);
+    return Parser(std::make_shared<Parser_t>(
+        FileAccessInfo{m_memory.base(), m_memory.capacity()},
+        std::shared_ptr<const void>(std::move(owner))));
+}
+
 // ---- finalize and seal --------------------------------------------------- //
 
 void Builder_t::finalize(const BuilderFinalizeInfo& info)
 {
-    ensure_open("finalize");
-    if (!m_table_ready.load(std::memory_order_acquire))
-        throw std::logic_error("IFE Builder: finalize before set_tile_table; a slide needs a tile table");
-
-    // Check every input before writing anything, so a refused finalize leaves
-    // no half-written structure behind.
-    const std::uint64_t total = m_layer_first.back();
-    for (std::uint64_t g = 0; g < total; ++g) {
-        if (m_slots[g].offset.load(std::memory_order_acquire) != UNWRITTEN) continue;
-        // A tile nobody accounted for — a failed worker, an interrupted encode —
-        // is reported, never published as NULL_TILE ("no tile here").
-        const auto layer = static_cast<std::uint32_t>(
-            std::upper_bound(m_layer_first.begin(), m_layer_first.end(), g) -
-            m_layer_first.begin() - 1);
-        throw std::logic_error(where(layer, static_cast<std::uint32_t>(g - m_layer_first[layer])) +
-                               ": never appended (append_null_tile records that a "
-                               "position has no tile)");
-    }
-    const Metadata& metadata   = info.metadata;
-    const auto&     attributes = metadata.attributes;
-    if (!attributes.empty() && attributes.type == METADATA_UNDEFINED)
-        throw std::invalid_argument("IFE Builder: the attributes declare no format (METADATA_UNDEFINED)");
-
-    // ---- the tile table ------------------------------------------------ //
-    std::vector<b::TileOffsetEntry> tiles(total);
-    for (std::uint64_t g = 0; g < total; ++g)
-        tiles[g] = {.OFFSET = m_slots[g].offset.load(std::memory_order_acquire),
-                    .SIZE   = m_slots[g].size};
-    const Offset tiles_at = append(b::TileOffsetsCreateInfo{.entries = tiles});
-
-    const auto& layers = m_table.extent.layers;
-    std::vector<b::LayerExtentEntry> extents;
-    extents.reserve(layers.size());
-    for (std::size_t l = 0; l < layers.size(); ++l)
-        extents.push_back({.X_TILES  = layers[l].xTiles,
-                           .Y_TILES  = layers[l].yTiles,
-                           .SCALE    = layers[l].scale,
-                           .Z_PLANES = m_table.planes[l]});
-    const Offset extents_at = append(b::LayerExtentsCreateInfo{.entries = extents});
-
-    const Offset table_at = append(b::TileTableCreateInfo{
-        .ENCODING             = static_cast<k::TileEncodings>(m_table.encoding),
-        .FORMAT               = static_cast<k::PixelFormats>(m_table.format),
-        .TILE_OFFSETS_OFFSET  = tiles_at,
-        .LAYER_EXTENTS_OFFSET = extents_at,
-        .X_EXTENT             = m_table.extent.width,
-        .Y_EXTENT             = m_table.extent.height,
-        .TILE_LENGTH          = m_table.tileLength});
-
-    // ---- the blocks metadata points at --------------------------------- //
-    Offset icc_at = k::NULL_OFFSET;
-    if (!metadata.ICC_profile.empty())
-        icc_at = append(b::IccProfileCreateInfo{
-            .bytes = reinterpret_cast<const BYTE*>(metadata.ICC_profile.data()),
-            .count = metadata.ICC_profile.size()});
-
-    Offset images_at = k::NULL_OFFSET;
-    {
-        std::lock_guard<std::mutex> lock(m_images_mutex);
-        if (!m_images.empty())
-            images_at = append(b::ImagesCreateInfo{.entries = m_images});
-    }
-
-    Offset attributes_at = k::NULL_OFFSET;
-    if (!attributes.empty()) {
-        std::vector<b::AttributeSizeEntry> pairs;
-        pairs.reserve(attributes.size());
-        for (const auto& [key, value] : attributes)
-            pairs.push_back({.key   = key,
-                             .value = std::string(reinterpret_cast<const char*>(value.data()),
-                                                  value.size())});
-        // Sorted, so the same metadata always produces the same bytes; the
-        // read side keys attributes by name, so order carries no meaning.
-        std::sort(pairs.begin(), pairs.end(),
-                  [](const auto& a, const auto& z) { return a.key < z.key; });
-        // The generated writer derives both the sizes array and the packed byte
-        // run from one payload, so the slicing cannot drift from the bytes.
-        const Offset sizes_at = append(b::AttributeSizesCreateInfo{.entries = pairs});
-        const Offset bytes_at = append(b::AttributeBytesCreateInfo{.entries = pairs});
-        attributes_at = append(b::AttributesCreateInfo{
-            .FORMAT       = static_cast<k::MetadataFormats>(attributes.type),
-            .VERSION      = attributes.version,
-            .SIZES_OFFSET = sizes_at,
-            .BYTES_OFFSET = bytes_at});
-    }
-
-    const Offset metadata_at = append(b::MetadataCreateInfo{
-        .CODEC_MAJOR       = static_cast<std::uint16_t>(metadata.codec.major),
-        .CODEC_MINOR       = static_cast<std::uint16_t>(metadata.codec.minor),
-        .CODEC_BUILD       = static_cast<std::uint16_t>(metadata.codec.build),
-        .ATTRIBUTES_OFFSET = attributes_at,
-        .IMAGES_OFFSET     = images_at,
-        .ICC_COLOR_OFFSET  = icc_at,
-        .MICRONS_PIXEL     = metadata.micronsPerPixel,
-        .MAGNIFICATION     = metadata.magnification,
-        .MICRONS_PLANE     = info.micronsPerPlane});
-
+    // Both roots are required: a header naming NULL_OFFSET for either is a
+    // file no reader opens. Checked before the header is written.
+    if (info.tileTable == k::NULL_OFFSET)
+        throw std::invalid_argument("IFE Builder: finalize without a tile table");
+    if (info.metadata == k::NULL_OFFSET)
+        throw std::invalid_argument("IFE Builder: finalize without a METADATA block");
     seal(b::FileHeaderCreateInfo{
         .FILE_REVISION     = info.revision,
-        .TILE_TABLE_OFFSET = table_at,
-        .METADATA_OFFSET   = metadata_at});
+        .TILE_TABLE_OFFSET = info.tileTable,
+        .METADATA_OFFSET   = info.metadata});
 }
 
 void Builder_t::seal(::Iris::File::blocks::FileHeaderCreateInfo header)
@@ -384,7 +334,7 @@ void Builder_t::seal(::Iris::File::blocks::FileHeaderCreateInfo header)
             std::string("IFE Builder: seal failed to write the FILE_HEADER (block '") +
             status.block + "', field '" + status.field + "')");
 
-    m_sealed.store(true, std::memory_order_release);
+    m_finalized.store(true, std::memory_order_release);
 
     // Anonymous: nothing is on disk. The bytes stay mapped and readable.
     if (m_path.empty()) return;
@@ -432,8 +382,12 @@ void   Builder::append_null_tile(uint32_t layer, uint32_t tile) const { get()->a
 Offset Builder::append_image(const AssociatedImageInfo& info, const BYTE* data, Size size) const {
     return get()->append_image(info, data, size);
 }
+std::vector<blocks::TileOffsetEntry> Builder::tile_offsets() const { return get()->tile_offsets(); }
+std::vector<blocks::ImageEntry>      Builder::image_entries() const { return get()->image_entries(); }
+Parser                               Builder::query() const { return get()->query(); }
 void   Builder::finalize(const BuilderFinalizeInfo& info) const { get()->finalize(info); }
 ::Iris::File::Offset Builder::head()     const noexcept { return get()->head(); }
 Size                 Builder::capacity() const noexcept { return get()->capacity(); }
+bool                 Builder::is_finalized() const noexcept { return get()->is_finalized(); }
 
 }  // namespace Iris::File

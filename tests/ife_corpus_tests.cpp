@@ -35,7 +35,7 @@
  * Self-contained; non-zero exit on failure.
  */
 #include "IrisFileExtension.hpp"
-#include "IFE_Advanced.hpp"   // generate_file_map + FileMap
+#include "IFE_Recovery.hpp"   // generate_file_map + FileMap
 
 #include "corpus_manifest.hpp"
 #include "ife_corpus_path.hpp"

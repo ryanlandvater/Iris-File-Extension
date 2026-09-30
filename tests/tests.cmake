@@ -193,8 +193,8 @@ if(IFE_BUILD_TESTS)
     target_link_libraries(ife_api_contract_tests PRIVATE ${IFE_Dependencies})
     add_test(NAME ife_api_contract_tests COMMAND ife_api_contract_tests)
 
-    # The ADVANCED tier (IFE_Advanced.hpp): the modification API — the file
-    # map and generate_file_map. Its counterpart above proves the PUBLIC tier
+    # The file map (IFE_Recovery.hpp): generate_file_map + FileMap. Its
+    # counterpart above proves the PUBLIC read tier (IrisFileExtension.hpp)
     # does NOT carry these.
     add_executable(
         ife_advanced_api_tests

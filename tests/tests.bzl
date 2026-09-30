@@ -257,7 +257,7 @@ def ife_tests(
         deps = [ife],
     )
 
-    # The ADVANCED tier (IFE_Advanced.hpp): the file map and generate_file_map.
+    # The file map (IFE_Recovery.hpp): generate_file_map + FileMap.
     cc_test(
         name = "ife_advanced_api_tests",
         srcs = ["tests/ife_advanced_api_tests.cpp"],
